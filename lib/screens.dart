@@ -14,6 +14,7 @@ class HomeScreen extends StatefulWidget {
     required this.onOpenFilters,
     required this.onOpenReminders,
     required this.onOpenRanking,
+    required this.onWatchLive,
   });
 
   final VoidCallback onOpenMatchDetails;
@@ -23,19 +24,55 @@ class HomeScreen extends StatefulWidget {
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
   final VoidCallback onOpenRanking;
+  final VoidCallback onWatchLive;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int topTab = 1;
+  int topTab = 0;
   int category = 0;
+
+  static const _liveHero = HeroFixture(
+    badge: 'LIVE',
+    series: '1st Test • Day 1',
+    date: 'West Indies tour of New Zealand, 2025',
+    time: '158/3 (38.4 OV)',
+    left: AppData.newZealand,
+    right: AppData.westIndies,
+    centerTitle: 'VS',
+    venue: 'NZ won the toss & chose to bat',
+    button: 'Watch Live',
+  );
+
+  HeroFixture _heroForTab() {
+    switch (topTab) {
+      case 0:
+        return _liveHero;
+      case 2:
+        return AppData.finishedHero;
+      default:
+        return AppData.upcomingHero;
+    }
+  }
+
+  VoidCallback _heroAction() {
+    switch (topTab) {
+      case 0:
+        return widget.onWatchLive;
+      case 2:
+        return widget.onOpenMatchDetails;
+      default:
+        return widget.onOpenReminders;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final categories = ['All', 'International', 'League', 'Domestic'];
+    final narrow = context.w <= 420;
     return Container(
       decoration: BoxDecoration(gradient: c.bgGradient),
       child: SafeArea(
@@ -81,29 +118,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 22),
             HomeHeroCard(
-              fixture: topTab == 2 ? AppData.finishedHero : AppData.upcomingHero,
+              fixture: _heroForTab(),
               finished: topTab == 2,
-              onButtonTap: widget.onOpenMatchDetails,
+              live: topTab == 0,
+              onButtonTap: _heroAction(),
             ),
             const SizedBox(height: 28),
             if (topTab == 1) ...[
               SectionHeader('Upcoming Series', icon: Icons.calendar_view_week_rounded, action: 'See All', onAction: widget.onOpenSeries),
               const SizedBox(height: 14),
-              Row(
+              _ResponsiveTwoUp(
+                stacked: narrow,
                 children: AppData.upcomingSeries
-                    .map((series) => Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.only(right: series == AppData.upcomingSeries.last ? 0 : 12),
-                            child: UpcomingSeriesMiniCard(series: series, onTap: widget.onOpenSeries),
-                          ),
-                        ))
+                    .map((series) => UpcomingSeriesMiniCard(series: series, onTap: widget.onOpenSeries))
                     .toList(),
               ),
               const SizedBox(height: 28),
               SectionHeader('Featured Fixtures', icon: Icons.star_border_rounded, action: 'See All', onAction: widget.onOpenSeries),
               const SizedBox(height: 14),
               SizedBox(
-                height: 232,
+                height: 248,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemBuilder: (_, i) => FeaturedFixtureCard(
@@ -117,14 +151,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ] else if (topTab == 2) ...[
               SectionHeader('Recent Results', icon: Icons.emoji_events_outlined, action: 'See All', onAction: widget.onOpenSeries),
               const SizedBox(height: 14),
-              Row(
+              _ResponsiveTwoUp(
+                stacked: narrow,
                 children: AppData.recentResults
-                    .map((result) => Expanded(
-                          child: Padding(
-                            padding: EdgeInsets.only(right: result == AppData.recentResults.last ? 0 : 12),
-                            child: RecentResultMiniCard(result: result, onTap: widget.onOpenMatchDetails),
-                          ),
-                        ))
+                    .map((result) => RecentResultMiniCard(result: result, onTap: widget.onOpenMatchDetails))
                     .toList(),
               ),
               const SizedBox(height: 28),
@@ -134,37 +164,165 @@ class _HomeScreenState extends State<HomeScreen> {
             ] else ...[
               SectionHeader('Live Centre', icon: Icons.live_tv_rounded, action: 'Open Match', onAction: widget.onOpenMatchDetails),
               const SizedBox(height: 14),
-              HomeHeroCard(
-                fixture: const HeroFixture(
-                  badge: 'LIVE',
-                  series: '1st Test • Day 1',
-                  date: 'West Indies tour of New Zealand, 2025',
-                  time: '158/3 (38.4 OV)',
-                  left: AppData.newZealand,
-                  right: AppData.westIndies,
-                  centerTitle: 'VS',
-                  venue: 'NZ won the toss & chose to bat',
-                  button: 'Watch Live',
-                ),
-                onButtonTap: widget.onOpenMatchDetails,
+              LiveMatchMiniCard(
+                onWatch: widget.onWatchLive,
+                onOpen: widget.onOpenMatchDetails,
+              ),
+              const SizedBox(height: 14),
+              LiveMatchMiniCard(
+                onWatch: widget.onWatchLive,
+                onOpen: widget.onOpenMatchDetails,
+                series: 'ENGLAND TOUR OF WEST INDIES',
+                title: 'ENG vs WI',
+                meta: '2nd ODI • 142/2 (28.5 OV)',
+                accent: AppData.england,
+                accent2: AppData.westIndies,
               ),
             ],
             const SizedBox(height: 28),
             SectionHeader('Quick Access', icon: Icons.flash_on_rounded, action: 'See All', onAction: widget.onOpenSeries),
             const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(child: QuickAccessCard(icon: Icons.emoji_events_outlined, title: 'Series', subtitle: 'All Series', onTap: widget.onOpenSeries, accent: const Color(0xff22d3ee))),
-                const SizedBox(width: 12),
-                Expanded(child: QuickAccessCard(icon: Icons.calendar_month_rounded, title: 'Schedule', subtitle: 'All Fixtures', onTap: widget.onOpenSeries, accent: const Color(0xff84cc16))),
-                const SizedBox(width: 12),
-                Expanded(child: QuickAccessCard(icon: Icons.bar_chart_rounded, title: 'Rankings', subtitle: 'ICC Rankings', onTap: widget.onOpenRanking, accent: const Color(0xffa855f7))),
-                const SizedBox(width: 12),
-                Expanded(child: QuickAccessCard(icon: Icons.confirmation_num_outlined, title: 'Tickets', subtitle: 'Book Now', onTap: widget.onOpenFilters, accent: const Color(0xfff59e0b))),
+            _QuickAccessGrid(
+              narrow: narrow,
+              cards: [
+                QuickAccessCard(icon: Icons.emoji_events_outlined, title: 'Series', subtitle: 'All Series', onTap: widget.onOpenSeries, accent: const Color(0xff22d3ee)),
+                QuickAccessCard(icon: Icons.calendar_month_rounded, title: 'Schedule', subtitle: 'All Fixtures', onTap: widget.onOpenSeries, accent: const Color(0xff84cc16)),
+                QuickAccessCard(icon: Icons.bar_chart_rounded, title: 'Rankings', subtitle: 'ICC Rankings', onTap: widget.onOpenRanking, accent: const Color(0xffa855f7)),
+                QuickAccessCard(icon: Icons.confirmation_num_outlined, title: 'Tickets', subtitle: 'Book Now', onTap: widget.onOpenFilters, accent: const Color(0xfff59e0b)),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ResponsiveTwoUp extends StatelessWidget {
+  const _ResponsiveTwoUp({required this.children, required this.stacked});
+
+  final List<Widget> children;
+  final bool stacked;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stacked) {
+      return Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            children[i],
+            if (i != children.length - 1) const SizedBox(height: 12),
+          ]
+        ],
+      );
+    }
+    return Row(
+      children: [
+        for (var i = 0; i < children.length; i++) ...[
+          Expanded(child: children[i]),
+          if (i != children.length - 1) const SizedBox(width: 12),
+        ]
+      ],
+    );
+  }
+}
+
+class _QuickAccessGrid extends StatelessWidget {
+  const _QuickAccessGrid({required this.cards, required this.narrow});
+
+  final List<Widget> cards;
+  final bool narrow;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!narrow) {
+      return Row(
+        children: [
+          for (var i = 0; i < cards.length; i++) ...[
+            Expanded(child: cards[i]),
+            if (i != cards.length - 1) const SizedBox(width: 12),
+          ]
+        ],
+      );
+    }
+    return Column(
+      children: [
+        Row(children: [Expanded(child: cards[0]), const SizedBox(width: 12), Expanded(child: cards[1])]),
+        const SizedBox(height: 12),
+        Row(children: [Expanded(child: cards[2]), const SizedBox(width: 12), Expanded(child: cards[3])]),
+      ],
+    );
+  }
+}
+
+class LiveMatchMiniCard extends StatelessWidget {
+  const LiveMatchMiniCard({
+    super.key,
+    required this.onWatch,
+    required this.onOpen,
+    this.series = 'WEST INDIES TOUR OF NEW ZEALAND',
+    this.title = 'NZ vs WI',
+    this.meta = '1st Test • Day 1 • 158/3 (38.4 OV)',
+    this.accent = AppData.newZealand,
+    this.accent2 = AppData.westIndies,
+  });
+
+  final VoidCallback onWatch;
+  final VoidCallback onOpen;
+  final String series;
+  final String title;
+  final String meta;
+  final TeamInfo accent;
+  final TeamInfo accent2;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onOpen,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              StatusBadge(label: 'LIVE', color: c.live, filled: true),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(series, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              TeamBadge(accent, size: 40),
+              const SizedBox(width: 6),
+              TeamBadge(accent2, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: context.sp(20))),
+                    const SizedBox(height: 4),
+                    Text(meta, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.muted, fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: GradientButton(
+              label: 'Watch Live',
+              icon: Icons.play_circle_fill_rounded,
+              height: 46,
+              onTap: onWatch,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -750,7 +908,9 @@ class TeamsScreen extends StatelessWidget {
 }
 
 class MatchDetailsScreen extends StatefulWidget {
-  const MatchDetailsScreen({super.key});
+  const MatchDetailsScreen({super.key, this.onWatchLive});
+
+  final VoidCallback? onWatchLive;
 
   @override
   State<MatchDetailsScreen> createState() => _MatchDetailsScreenState();
@@ -779,7 +939,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              const MatchDetailHeroCard(),
+              MatchDetailHeroCard(onWatchLive: widget.onWatchLive),
               const SizedBox(height: 16),
               SegmentedTabs(
                 items: const [
@@ -1381,17 +1541,23 @@ class HomeHeroCard extends StatelessWidget {
     required this.fixture,
     this.onButtonTap,
     this.finished = false,
+    this.live = false,
   });
 
   final HeroFixture fixture;
   final VoidCallback? onButtonTap;
   final bool finished;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final w = context.w;
+    final narrow = w <= 400;
+    final badgeSize = narrow ? 78.0 : (w <= 480 ? 90.0 : 110.0);
+    final cardPad = narrow ? 14.0 : 18.0;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(cardPad),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: c.border),
@@ -1423,49 +1589,54 @@ class HomeHeroCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  StatusBadge(label: fixture.badge, color: finished ? c.success : c.cyan, filled: true),
+                  StatusBadge(label: fixture.badge, color: finished ? c.success : (live ? c.live : c.cyan), filled: true),
                   const Spacer(),
-                  if (!finished)
-                    const SizedBox.shrink()
-                  else
-                    Text(fixture.date, style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700)),
+                  if (finished)
+                    Flexible(child: Text(fixture.date, textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700))),
                 ],
               ),
-              const SizedBox(height: 18),
+              SizedBox(height: narrow ? 14 : 18),
               Center(
-                child: Text(fixture.series, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: context.sp(15))),
+                child: Text(fixture.series, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: context.sp(15))),
               ),
               const SizedBox(height: 10),
               Center(
                 child: Text(
                   finished ? 'India vs Australia' : fixture.date,
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(24)),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(narrow ? 20 : 24)),
                 ),
               ),
               const SizedBox(height: 6),
               Center(
                 child: Text(
-                  finished ? fixture.time : fixture.time,
-                  style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(18)),
+                  fixture.time,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(17)),
                 ),
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: narrow ? 12 : 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  _heroTeamBlock(context, fixture.left, fixture.leftMeta ?? fixture.left.code),
+                  Expanded(child: _heroTeamBlock(context, fixture.left, fixture.leftMeta ?? fixture.left.code, badgeSize)),
                   Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: 68,
-                        height: 68,
+                        width: narrow ? 52 : 68,
+                        height: narrow ? 52 : 68,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.black.withValues(alpha: .22),
                           border: Border.all(color: c.border),
                         ),
                         alignment: Alignment.center,
-                        child: Text(fixture.centerTitle, style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                        child: Text(fixture.centerTitle, style: TextStyle(color: Colors.white, fontSize: narrow ? 18 : 22, fontWeight: FontWeight.w900)),
                       ),
                       if (fixture.result != null) ...[
                         const SizedBox(height: 10),
@@ -1473,13 +1644,13 @@ class HomeHeroCard extends StatelessWidget {
                       ]
                     ],
                   ),
-                  _heroTeamBlock(context, fixture.right, fixture.rightMeta ?? fixture.right.code),
+                  Expanded(child: _heroTeamBlock(context, fixture.right, fixture.rightMeta ?? fixture.right.code, badgeSize)),
                 ],
               ),
-              const SizedBox(height: 16),
+              SizedBox(height: narrow ? 12 : 16),
               if (finished)
                 Center(
-                  child: Text(fixture.venue, style: TextStyle(color: Colors.white.withValues(alpha: .82), fontWeight: FontWeight.w600)),
+                  child: Text(fixture.venue, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .82), fontWeight: FontWeight.w600)),
                 )
               else
                 Row(
@@ -1487,16 +1658,20 @@ class HomeHeroCard extends StatelessWidget {
                   children: [
                     Icon(Icons.location_on_outlined, color: Colors.white.withValues(alpha: .72), size: 18),
                     const SizedBox(width: 6),
-                    Text(fixture.venue.split('\n').first, style: TextStyle(color: Colors.white.withValues(alpha: .78), fontWeight: FontWeight.w600)),
+                    Flexible(child: Text(fixture.venue.split('\n').first, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .78), fontWeight: FontWeight.w600))),
                   ],
                 ),
-              const SizedBox(height: 20),
+              SizedBox(height: narrow ? 16 : 20),
               Center(
-                child: SizedBox(
-                  width: 270,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 280),
                   child: GradientButton(
                     label: fixture.button,
-                    icon: finished ? Icons.list_alt_rounded : Icons.notifications_none_rounded,
+                    icon: finished
+                        ? Icons.list_alt_rounded
+                        : live
+                            ? Icons.play_circle_fill_rounded
+                            : Icons.notifications_none_rounded,
                     outlined: finished,
                     onTap: onButtonTap,
                   ),
@@ -1527,18 +1702,15 @@ class HomeHeroCard extends StatelessWidget {
     );
   }
 
-  Widget _heroTeamBlock(BuildContext context, TeamInfo team, String stat) {
-    return SizedBox(
-      width: 130,
-      child: Column(
-        children: [
-          TeamBadge(team, size: 110),
-          const SizedBox(height: 10),
-          Text(team.shortName, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: context.sp(18))),
-          const SizedBox(height: 4),
-          Text(stat, style: TextStyle(color: Colors.white.withValues(alpha: .95), fontSize: context.sp(16), fontWeight: FontWeight.w700)),
-        ],
-      ),
+  Widget _heroTeamBlock(BuildContext context, TeamInfo team, String stat, double badgeSize) {
+    return Column(
+      children: [
+        TeamBadge(team, size: badgeSize),
+        const SizedBox(height: 10),
+        Text(team.shortName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: context.sp(16))),
+        const SizedBox(height: 4),
+        Text(stat, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .95), fontSize: context.sp(14), fontWeight: FontWeight.w700)),
+      ],
     );
   }
 }
@@ -1654,44 +1826,57 @@ class PlayerOfMatchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final narrow = context.w <= 400;
+    final avatarSize = narrow ? 88.0 : 122.0;
+    final headerSize = narrow ? 36.0 : 44.0;
     return PremiumCard(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.all(narrow ? 14 : 18),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Column(
             children: [
-              PlayerAvatar(player: AppData.indiaSquadTop.first, size: 122, borderColor: Colors.white.withValues(alpha: .42)),
+              PlayerAvatar(player: AppData.indiaSquadTop.first, size: avatarSize, borderColor: Colors.white.withValues(alpha: .42)),
               const SizedBox(height: 8),
-              Text('Rohit Sharma', style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 17)),
-              Text('India', style: TextStyle(color: c.muted)),
+              SizedBox(
+                width: avatarSize + 6,
+                child: Text(
+                  'Rohit Sharma',
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: context.sp(15)),
+                ),
+              ),
+              Text('India', style: TextStyle(color: c.muted, fontSize: 12)),
             ],
           ),
-          const SizedBox(width: 18),
+          SizedBox(width: narrow ? 12 : 18),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                StatusBadge(label: 'PLAYER OF THE MATCH', color: c.cyan, filled: true),
-                const SizedBox(height: 16),
-                Text('121*', style: TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.w900, height: .9)),
+                FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: StatusBadge(label: 'PLAYER OF THE MATCH', color: c.cyan, filled: true)),
+                const SizedBox(height: 14),
+                Text('121*', style: TextStyle(color: Colors.white, fontSize: headerSize, fontWeight: FontWeight.w900, height: .9)),
                 const SizedBox(height: 6),
                 Text('(107)', style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 12),
-                const Divider(color: Color(0xff1b4266)),
+                Divider(color: c.border),
                 const SizedBox(height: 12),
                 Row(
                   children: const [
                     Expanded(child: _StatValue(title: 'Runs', value: '121')),
                     Expanded(child: _StatValue(title: 'Balls', value: '107')),
-                    Expanded(child: _StatValue(title: 'Strike Rate', value: '113.08')),
+                    Expanded(child: _StatValue(title: 'SR', value: '113.08')),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 Row(
                   children: const [
                     Expanded(child: _StatValue(title: 'Fours', value: '11')),
                     Expanded(child: _StatValue(title: 'Sixes', value: '6')),
-                    Expanded(child: _StatValue(title: 'Wickets', value: '1')),
+                    Expanded(child: _StatValue(title: 'Wkts', value: '1')),
                   ],
                 ),
               ],
@@ -1772,27 +1957,34 @@ class UpcomingMatchCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(child: _matchTeamBlock(context, match.left)),
-              Column(
-                children: [
-                  Text(match.date.split('•').first.trim(), style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 16), textAlign: TextAlign.center),
-                  const SizedBox(height: 6),
-                  Text(match.date.split('•').last.trim(), style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: 17)),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
-                    alignment: Alignment.center,
-                    child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
-                  ),
-                ],
-              ),
-              Expanded(child: _matchTeamBlock(context, match.right)),
-            ],
-          ),
+          Builder(builder: (ctx) {
+            final w = ctx.w;
+            final narrow = w <= 400;
+            final vsSize = narrow ? 46.0 : 64.0;
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: _matchTeamBlock(context, match.left)),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(match.date.split('•').first.trim(), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: context.sp(14)), textAlign: TextAlign.center),
+                    const SizedBox(height: 6),
+                    Text(match.date.split('•').last.trim(), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(15))),
+                    const SizedBox(height: 10),
+                    Container(
+                      width: vsSize,
+                      height: vsSize,
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
+                      alignment: Alignment.center,
+                      child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: narrow ? 18 : 24)),
+                    ),
+                  ],
+                ),
+                Expanded(child: _matchTeamBlock(context, match.right)),
+              ],
+            );
+          }),
           const SizedBox(height: 18),
           Row(
             children: [
@@ -1825,11 +2017,14 @@ class UpcomingMatchCard extends StatelessWidget {
 
   Widget _matchTeamBlock(BuildContext context, TeamInfo team) {
     final c = context.cric;
+    final w = context.w;
+    final size = w <= 400 ? 64.0 : (w <= 480 ? 84.0 : 104.0);
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        TeamBadge(team, size: 104),
+        TeamBadge(team, size: size),
         const SizedBox(height: 12),
-        Text(team.name.toUpperCase(), style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 18), textAlign: TextAlign.center),
+        Text(team.shortName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: context.sp(15)), textAlign: TextAlign.center),
       ],
     );
   }
@@ -1857,43 +2052,66 @@ class FinishedMatchCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(child: _finishedTeamBlock(context, match.left, match.date.split('•').first.trim())),
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
-                alignment: Alignment.center,
-                child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
-              ),
-              Expanded(child: _finishedTeamBlock(context, match.right, match.date.split('•').last.trim())),
-            ],
-          ),
+          Builder(builder: (ctx) {
+            final narrow = ctx.w <= 400;
+            final vsSize = narrow ? 46.0 : 64.0;
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: _finishedTeamBlock(context, match.left, match.date.split('•').first.trim())),
+                Container(
+                  width: vsSize,
+                  height: vsSize,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
+                  alignment: Alignment.center,
+                  child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: narrow ? 18 : 24)),
+                ),
+                Expanded(child: _finishedTeamBlock(context, match.right, match.date.split('•').last.trim())),
+              ],
+            );
+          }),
           const SizedBox(height: 16),
-          Center(child: Text(match.venue, style: TextStyle(color: c.success, fontWeight: FontWeight.w800, fontSize: 18))),
+          Center(child: Text(match.venue, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.success, fontWeight: FontWeight.w800, fontSize: context.sp(16)))),
           const SizedBox(height: 18),
           PremiumCard(
             padding: const EdgeInsets.all(14),
             gradient: LinearGradient(colors: [c.card2, c.card]),
-            child: Row(
-              children: [
-                const CircleAvatar(radius: 28, backgroundColor: Color(0xff0a2748), child: Icon(Icons.person, color: Colors.white)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            child: Builder(builder: (ctx) {
+              final narrow = ctx.w <= 400;
+              final action = GradientButton(
+                label: match.action,
+                icon: match.action == 'Highlights' ? Icons.play_circle_outline_rounded : Icons.receipt_long_rounded,
+                outlined: true,
+                height: 44,
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text('Player of the Match', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 4),
-                      Text(match.playerOfMatch ?? '', style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16)),
-                      Text(match.playerStat ?? '', style: TextStyle(color: c.muted)),
+                      const CircleAvatar(radius: 24, backgroundColor: Color(0xff0a2748), child: Icon(Icons.person, color: Colors.white)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Player of the Match', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: 12)),
+                            const SizedBox(height: 4),
+                            Text(match.playerOfMatch ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: context.sp(15))),
+                            Text(match.playerStat ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.muted, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                      if (!narrow) action,
                     ],
                   ),
-                ),
-                GradientButton(label: match.action, icon: match.action == 'Highlights' ? Icons.play_circle_outline_rounded : Icons.receipt_long_rounded, outlined: true, height: 48),
-              ],
-            ),
+                  if (narrow) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(width: double.infinity, child: action),
+                  ],
+                ],
+              );
+            }),
           ),
         ],
       ),
@@ -1902,13 +2120,16 @@ class FinishedMatchCard extends StatelessWidget {
 
   Widget _finishedTeamBlock(BuildContext context, TeamInfo team, String score) {
     final c = context.cric;
+    final w = context.w;
+    final size = w <= 400 ? 64.0 : (w <= 480 ? 84.0 : 102.0);
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        TeamBadge(team, size: 102),
+        TeamBadge(team, size: size),
         const SizedBox(height: 10),
-        Text(team.name.toUpperCase(), style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16), textAlign: TextAlign.center),
+        Text(team.shortName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: context.sp(14)), textAlign: TextAlign.center),
         const SizedBox(height: 6),
-        Text(score, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18), textAlign: TextAlign.center),
+        Text(score, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(16)), textAlign: TextAlign.center),
       ],
     );
   }
@@ -3020,13 +3241,19 @@ class StatTile extends StatelessWidget {
 }
 
 class MatchDetailHeroCard extends StatelessWidget {
-  const MatchDetailHeroCard({super.key});
+  const MatchDetailHeroCard({super.key, this.onWatchLive});
+
+  final VoidCallback? onWatchLive;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final w = context.w;
+    final narrow = w <= 400;
+    final pad = narrow ? 14.0 : 16.0;
+    final badge = narrow ? 56.0 : 78.0;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(pad),
       decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: c.border)),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -3041,34 +3268,55 @@ class MatchDetailHeroCard extends StatelessWidget {
                 children: [
                   StatusBadge(label: 'LIVE', color: c.live, filled: true),
                   const SizedBox(width: 10),
-                  Text('1st Test • Day 1', style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700)),
-                  const Spacer(),
+                  Expanded(child: Text('1st Test • Day 1', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700))),
+                  const SizedBox(width: 8),
                   StatusBadge(label: '128K', color: Colors.white, filled: true),
                 ],
               ),
               const SizedBox(height: 12),
-              Align(alignment: Alignment.centerLeft, child: Text('West Indies Tour of New Zealand, 2025', style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700, fontSize: 16))),
-              const SizedBox(height: 22),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'West Indies Tour of New Zealand, 2025',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700, fontSize: context.sp(15)),
+                ),
+              ),
+              SizedBox(height: narrow ? 16 : 22),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  _compactTeam(context, AppData.newZealand),
+                  Expanded(child: _compactTeam(context, AppData.newZealand, badge)),
                   Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Text('VS', style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w800)),
                       const SizedBox(height: 8),
-                      Text('158/3', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(44), height: .95)),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('158/3', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(narrow ? 34 : 44), height: .95)),
+                      ),
                       const SizedBox(height: 4),
-                      Text('(38.4 OV)', style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700)),
+                      Text('(38.4 OV)', style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700, fontSize: context.sp(13))),
                     ],
                   ),
-                  _compactTeam(context, AppData.westIndies),
+                  Expanded(child: _compactTeam(context, AppData.westIndies, badge)),
                 ],
               ),
-              const SizedBox(height: 20),
-              Text('NZ won the toss & chose to bat', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+              SizedBox(height: narrow ? 14 : 20),
+              Text('NZ won the toss & chose to bat', textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(13))),
               const SizedBox(height: 16),
-              SizedBox(width: 220, child: const GradientButton(label: 'Watch Live', icon: Icons.play_circle_fill_rounded, height: 50)),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 240),
+                child: GradientButton(
+                  label: 'Watch Live',
+                  icon: Icons.play_circle_fill_rounded,
+                  height: 50,
+                  onTap: onWatchLive,
+                ),
+              ),
             ],
           ),
         ],
@@ -3076,16 +3324,20 @@ class MatchDetailHeroCard extends StatelessWidget {
     );
   }
 
-  Widget _compactTeam(BuildContext context, TeamInfo team) {
-    return SizedBox(
-      width: 110,
-      child: Column(
-        children: [
-          TeamBadge(team, size: 78),
-          const SizedBox(height: 10),
-          Text(team.name.toUpperCase(), textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-        ],
-      ),
+  Widget _compactTeam(BuildContext context, TeamInfo team, double badge) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TeamBadge(team, size: badge),
+        const SizedBox(height: 10),
+        Text(
+          team.shortName.toUpperCase(),
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: context.sp(13)),
+        ),
+      ],
     );
   }
 }
@@ -3259,6 +3511,10 @@ class MatchOversTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final w = context.w;
+    final narrow = w <= 400;
+    final cardPad = narrow ? 12.0 : 16.0;
+    final chartHeight = narrow ? 160.0 : (w <= 480 ? 190.0 : 220.0);
     final overs = [
       ('38', '8', 'Alzarri Joseph', 'Fast', ['1', '0', '4', '0', '1', '2'], 'Daryl Mitchell 64 (83)', 'Tom Latham 27 (38)'),
       ('37', '9', 'Jason Holder', 'Medium Fast', ['0', '4', '1', 'W', '2', '2'], 'Daryl Mitchell 60 (79)', 'Tom Latham 26 (36)'),
@@ -3268,59 +3524,76 @@ class MatchOversTab extends StatelessWidget {
     return Column(
       children: [
         PremiumCard(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(cardPad),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Expanded(child: Text('Run Progression', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18))),
+                  Expanded(child: Text('Run Progression', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: context.sp(17)))),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(color: c.card2, borderRadius: BorderRadius.circular(8), border: Border.all(color: c.border)),
+                    child: Icon(Icons.open_in_full_rounded, color: c.muted, size: 16),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
                   _legendDot(context, c.cyan, 'New Zealand'),
-                  const SizedBox(width: 10),
                   _legendDot(context, c.live, 'West Indies'),
-                  const SizedBox(width: 10),
-                  Container(width: 30, height: 30, decoration: BoxDecoration(color: c.card2, borderRadius: BorderRadius.circular(8), border: Border.all(color: c.border)), child: Icon(Icons.open_in_full_rounded, color: c.muted, size: 16)),
                 ],
               ),
               const SizedBox(height: 14),
-              SizedBox(height: 180, child: CustomPaint(painter: _RunChartPainter(c))),
+              LayoutBuilder(
+                builder: (ctx, constraints) {
+                  return SizedBox(
+                    width: constraints.maxWidth,
+                    height: chartHeight,
+                    child: CustomPaint(
+                      size: Size(constraints.maxWidth, chartHeight),
+                      painter: _RunChartPainter(c, compact: narrow),
+                    ),
+                  );
+                },
+              ),
               const SizedBox(height: 12),
               Divider(color: c.border, height: 1),
               const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Recent Overs', style: TextStyle(color: c.text, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 6),
-                        Text.rich(TextSpan(style: TextStyle(color: c.muted, fontSize: 12.5), children: [
-                          const TextSpan(text: 'Runs: '),
-                          TextSpan(text: '42', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
-                          const TextSpan(text: '   Wickets: '),
-                          TextSpan(text: '1', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
-                          const TextSpan(text: '   Avg: '),
-                          TextSpan(text: '7.00', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
-                        ])),
-                      ],
-                    ),
-                  ),
-                  Container(width: 1, height: 52, color: c.border),
-                  const SizedBox(width: 8),
-                  for (final item in [('34', '6'), ('35', '11'), ('36', '8'), ('37', '9'), ('38', '8*')])
-                    Padding(
-                      padding: const EdgeInsets.only(left: 5),
-                      child: Column(
-                        children: [
-                          Text(item.$1, style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 4),
-                          _BallChip(label: item.$2, highlight: item.$2 == '11' || item.$2 == '8*', wicket: item.$2 == '9'),
-                        ],
+              Text('Recent Overs', style: TextStyle(color: c.text, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              Text.rich(TextSpan(style: TextStyle(color: c.muted, fontSize: 12.5), children: [
+                const TextSpan(text: 'Runs: '),
+                TextSpan(text: '42', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                const TextSpan(text: '   Wickets: '),
+                TextSpan(text: '1', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                const TextSpan(text: '   Avg: '),
+                TextSpan(text: '7.00', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+              ])),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 60,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    for (final item in [('34', '6'), ('35', '11'), ('36', '8'), ('37', '9'), ('38', '8*')])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(item.$1, style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 4),
+                            _BallChip(label: item.$2, highlight: item.$2 == '11' || item.$2 == '8*', wicket: item.$2 == '9'),
+                          ],
+                        ),
                       ),
-                    )
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -3329,53 +3602,15 @@ class MatchOversTab extends StatelessWidget {
         for (final over in overs)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: PremiumCard(
-              padding: const EdgeInsets.all(14),
-              radius: 18,
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 54,
-                    child: Column(
-                      children: [
-                        Text('OVER', style: TextStyle(color: c.muted, fontSize: 10)),
-                        Text(over.$1, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 30)),
-                        Text('${over.$2} RUNS', style: TextStyle(color: c.cyan, fontSize: 10, fontWeight: FontWeight.w800)),
-                      ],
-                    ),
-                  ),
-                  VerticalDivider(color: c.border, width: 22),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [Container(width: 8, height: 8, decoration: BoxDecoration(color: c.live, shape: BoxShape.circle)), const SizedBox(width: 6), Text(over.$3, style: TextStyle(color: c.text, fontWeight: FontWeight.w800))]),
-                        Padding(padding: const EdgeInsets.only(left: 14, top: 2), child: Text(over.$4, style: TextStyle(color: c.muted, fontSize: 12))),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 6,
-                          children: [
-                            for (final ball in over.$5) _BallChip(label: ball, highlight: ball == '4' || ball == '6', wicket: ball == 'W'),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  VerticalDivider(color: c.border, width: 22),
-                  SizedBox(
-                    width: 138,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [Icon(Icons.sports_cricket_rounded, color: c.cyan, size: 14), const SizedBox(width: 6), Expanded(child: Text(over.$6, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 11, fontWeight: FontWeight.w700)))]),
-                        const SizedBox(height: 8),
-                        Padding(padding: const EdgeInsets.only(left: 20), child: Text(over.$7, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 11))),
-                      ],
-                    ),
-                  ),
-                  Icon(Icons.chevron_right_rounded, color: c.muted),
-                ],
-              ),
+            child: _OverRow(
+              overNumber: over.$1,
+              overRuns: over.$2,
+              bowler: over.$3,
+              bowlerType: over.$4,
+              balls: over.$5,
+              batter1: over.$6,
+              batter2: over.$7,
+              narrow: narrow,
             ),
           )
       ],
@@ -3384,6 +3619,7 @@ class MatchOversTab extends StatelessWidget {
 
   Widget _legendDot(BuildContext context, Color color, String label) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         CircleAvatar(radius: 4, backgroundColor: color),
         const SizedBox(width: 5),
@@ -3393,10 +3629,147 @@ class MatchOversTab extends StatelessWidget {
   }
 }
 
+class _OverRow extends StatelessWidget {
+  const _OverRow({
+    required this.overNumber,
+    required this.overRuns,
+    required this.bowler,
+    required this.bowlerType,
+    required this.balls,
+    required this.batter1,
+    required this.batter2,
+    required this.narrow,
+  });
+
+  final String overNumber;
+  final String overRuns;
+  final String bowler;
+  final String bowlerType;
+  final List<String> balls;
+  final String batter1;
+  final String batter2;
+  final bool narrow;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    if (narrow) {
+      return PremiumCard(
+        padding: const EdgeInsets.all(12),
+        radius: 18,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _overBlock(context, c),
+                const SizedBox(width: 12),
+                Expanded(child: _bowlerBlock(context, c)),
+                Icon(Icons.chevron_right_rounded, color: c.muted),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final ball in balls) _BallChip(label: ball, highlight: ball == '4' || ball == '6', wicket: ball == 'W'),
+            ]),
+            const SizedBox(height: 10),
+            Container(height: 1, color: c.border),
+            const SizedBox(height: 10),
+            _batterRow(context, c, batter1),
+            const SizedBox(height: 4),
+            _batterRow(context, c, batter2),
+          ],
+        ),
+      );
+    }
+    return PremiumCard(
+      padding: const EdgeInsets.all(14),
+      radius: 18,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _overBlock(context, c),
+          VerticalDivider(color: c.border, width: 22),
+          Expanded(
+            flex: 5,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _bowlerBlock(context, c),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final ball in balls) _BallChip(label: ball, highlight: ball == '4' || ball == '6', wicket: ball == 'W'),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          VerticalDivider(color: c.border, width: 22),
+          Expanded(
+            flex: 4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _batterRow(context, c, batter1),
+                const SizedBox(height: 6),
+                _batterRow(context, c, batter2),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right_rounded, color: c.muted),
+        ],
+      ),
+    );
+  }
+
+  Widget _overBlock(BuildContext context, CricColors c) {
+    return SizedBox(
+      width: 54,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('OVER', style: TextStyle(color: c.muted, fontSize: 10)),
+          Text(overNumber, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 28)),
+          Text('$overRuns RUNS', style: TextStyle(color: c.cyan, fontSize: 10, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
+
+  Widget _bowlerBlock(BuildContext context, CricColors c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [
+          Container(width: 8, height: 8, decoration: BoxDecoration(color: c.live, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          Expanded(child: Text(bowler, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800))),
+        ]),
+        Padding(padding: const EdgeInsets.only(left: 14, top: 2), child: Text(bowlerType, style: TextStyle(color: c.muted, fontSize: 12))),
+      ],
+    );
+  }
+
+  Widget _batterRow(BuildContext context, CricColors c, String name) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.sports_cricket_rounded, color: c.cyan, size: 14),
+        const SizedBox(width: 6),
+        Expanded(child: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 12, fontWeight: FontWeight.w700))),
+      ],
+    );
+  }
+}
+
 class _RunChartPainter extends CustomPainter {
-  _RunChartPainter(this.c);
+  _RunChartPainter(this.c, {this.compact = false});
 
   final CricColors c;
+  final bool compact;
 
   TextPainter _label(String t, {Color? color, double size = 10, FontWeight weight = FontWeight.w700}) {
     final tp = TextPainter(
@@ -3408,11 +3781,13 @@ class _RunChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const leftPad = 32.0;
-    const rightPad = 44.0;
+    if (size.width <= 0 || size.height <= 0) return;
+    final leftPad = compact ? 26.0 : 32.0;
+    final rightPad = compact ? 30.0 : 44.0;
     const bottomPad = 20.0;
     final chartW = size.width - leftPad - rightPad;
     final chartH = size.height - bottomPad;
+    if (chartW <= 0 || chartH <= 0) return;
 
     final grid = Paint()
       ..color = c.border.withValues(alpha: .55)
@@ -3423,13 +3798,17 @@ class _RunChartPainter extends CustomPainter {
       final label = _label('${200 - i * 50}');
       label.paint(canvas, Offset(leftPad - label.width - 8, y - label.height / 2));
     }
-    for (var i = 0; i <= 5; i++) {
-      final x = leftPad + chartW * i / 5;
-      final label = _label('${i * 10}');
+    final xSteps = compact ? 3 : 5;
+    final lastIndex = xSteps;
+    for (var i = 0; i <= xSteps; i++) {
+      final x = leftPad + chartW * i / xSteps;
+      if (i == lastIndex) continue;
+      final overNum = (i * 50 / xSteps).round();
+      final label = _label('$overNum');
       label.paint(canvas, Offset(x - label.width / 2, chartH + 4));
     }
-    final overs = _label('50OVERS', weight: FontWeight.w900);
-    overs.paint(canvas, Offset(leftPad + chartW + 4, chartH + 4));
+    final overs = _label('OVERS', weight: FontWeight.w900, size: compact ? 9 : 10);
+    overs.paint(canvas, Offset(leftPad + chartW - overs.width + 2, chartH + 4));
 
     final nz = [0, 12, 25, 38, 44, 56, 68, 80, 94, 105, 118, 127, 139, 145, 158];
     final wi = [0, 6, 11, 20, 25, 31, 38, 45, 52, 60, 66, 72, 78];
@@ -3467,8 +3846,10 @@ class _RunChartPainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
     canvas.drawCircle(lastPoint, 8, glow);
     canvas.drawCircle(lastPoint, 5, Paint()..color = c.cyan);
-    final label = _label('158/3', color: c.cyan, size: 14, weight: FontWeight.w900);
-    label.paint(canvas, Offset(lastPoint.dx + 8, lastPoint.dy - label.height / 2));
+    final label = _label('158/3', color: c.cyan, size: compact ? 12 : 14, weight: FontWeight.w900);
+    final fitsRight = lastPoint.dx + 8 + label.width <= size.width;
+    final labelDx = fitsRight ? lastPoint.dx + 8 : lastPoint.dx - 8 - label.width;
+    label.paint(canvas, Offset(labelDx, lastPoint.dy - label.height / 2));
   }
 
   @override
