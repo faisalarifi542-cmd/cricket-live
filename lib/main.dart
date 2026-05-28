@@ -5,34 +5,23 @@ import 'screens.dart';
 
 void main() => runApp(const CricProApp());
 
-class CricProApp extends StatefulWidget {
+class CricProApp extends StatelessWidget {
   const CricProApp({super.key});
-  @override
-  State<CricProApp> createState() => _CricProAppState();
-}
-
-class _CricProAppState extends State<CricProApp> {
-  bool dark = false;
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'CRICPRO',
-      theme: cricTheme(false),
+      theme: cricTheme(true),
       darkTheme: cricTheme(true),
-      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
-      home: RootShell(
-          isDark: dark,
-          onThemeChanged: (value) => setState(() => dark = value)),
+      themeMode: ThemeMode.dark,
+      home: const RootShell(),
     );
   }
 }
 
 class RootShell extends StatefulWidget {
-  const RootShell(
-      {super.key, required this.isDark, required this.onThemeChanged});
-  final bool isDark;
-  final ValueChanged<bool> onThemeChanged;
+  const RootShell({super.key});
   @override
   State<RootShell> createState() => _RootShellState();
 }
@@ -51,8 +40,6 @@ class _RootShellState extends State<RootShell> {
       AppTab.schedule => const ScheduleScreen(),
       AppTab.news => const NewsScreen(),
       AppTab.more => MoreScreen(
-          isDark: widget.isDark,
-          onThemeChanged: widget.onThemeChanged,
           onOpenRanking: () => _push(const RankingScreen()),
           onOpenTeams: () => _push(const TeamsScreen())),
     };

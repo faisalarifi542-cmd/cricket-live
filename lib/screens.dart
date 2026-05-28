@@ -342,7 +342,10 @@ class _MatchesScreenState extends State<MatchesScreen> {
                       ])),
               ...grouped.entries.expand((e) => [
                     const SizedBox(height: 24),
-                    SectionHeader(e.key, action: 'View All'),
+                    SectionHeader(e.key,
+                        action: 'View All',
+                        accentBar: true,
+                        uppercase: true),
                     const SizedBox(height: 14),
                     ...e.value.map((m) => Padding(
                         padding: const EdgeInsets.only(bottom: 16),
@@ -620,12 +623,8 @@ class SimpleTabPage extends StatelessWidget {
 class MoreScreen extends StatelessWidget {
   const MoreScreen(
       {super.key,
-      required this.isDark,
-      required this.onThemeChanged,
       required this.onOpenRanking,
       required this.onOpenTeams});
-  final bool isDark;
-  final ValueChanged<bool> onThemeChanged;
   final VoidCallback onOpenRanking;
   final VoidCallback onOpenTeams;
   @override
@@ -772,18 +771,15 @@ class MoreScreen extends StatelessWidget {
                       const Color(0xff20d0a6),
                       () {}
                     )
-                  ],
-                  footer: _AppearanceRow(
-                      isDark: isDark, onChanged: onThemeChanged)),
+                  ]),
             ])));
   }
 }
 
 class _MenuGroup extends StatelessWidget {
-  const _MenuGroup({required this.title, required this.items, this.footer});
+  const _MenuGroup({required this.title, required this.items});
   final String title;
   final List<(String, IconData, Color, VoidCallback)> items;
-  final Widget? footer;
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
@@ -799,7 +795,6 @@ class _MenuGroup extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(children: [
             for (final item in items) _menuRow(context, item),
-            if (footer != null) footer!,
           ])),
     ]);
   }
@@ -830,47 +825,6 @@ class _MenuGroup extends StatelessWidget {
               Icon(Icons.chevron_right_rounded, color: c.muted, size: 28),
               const SizedBox(width: 18)
             ])));
-  }
-}
-
-class _AppearanceRow extends StatelessWidget {
-  const _AppearanceRow({required this.isDark, required this.onChanged});
-  final bool isDark;
-  final ValueChanged<bool> onChanged;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return SizedBox(
-        height: 80,
-        child: Row(children: [
-          const SizedBox(width: 18),
-          Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: c.primary.withValues(alpha: .15)),
-              child: Icon(
-                  isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                  color: c.primary,
-                  size: 26)),
-          const SizedBox(width: 20),
-          Expanded(
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text('Appearance',
-                    style: TextStyle(
-                        color: c.text,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800)),
-                Text(isDark ? 'Dark Mode' : 'Light Mode',
-                    style: TextStyle(color: c.muted, fontSize: 13))
-              ])),
-          Switch(value: isDark, onChanged: onChanged),
-          const SizedBox(width: 18)
-        ]));
   }
 }
 
@@ -2506,9 +2460,4 @@ class _SquadRow extends StatelessWidget {
               color: context.cric.text,
               fontWeight: FontWeight.w800,
               fontSize: 10)));
-}
-          style: TextStyle(
-              color: context.cric.text,
-              fontSize: 10,
-              fontWeight: FontWeight.w800)));
 }
