@@ -12,18 +12,15 @@ class CricProApp extends StatefulWidget {
 }
 
 class _CricProAppState extends State<CricProApp> {
-  bool dark = false;
+  bool dark = true;
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'CRICPRO',
-      theme: cricTheme(false),
-      darkTheme: cricTheme(true),
-      themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+      theme: cricTheme(dark),
       home: RootShell(
-          isDark: dark,
-          onThemeChanged: (value) => setState(() => dark = value)),
+          isDark: dark, onThemeChanged: (v) => setState(() => dark = v)),
     );
   }
 }

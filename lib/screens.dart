@@ -342,7 +342,10 @@ class _MatchesScreenState extends State<MatchesScreen> {
                       ])),
               ...grouped.entries.expand((e) => [
                     const SizedBox(height: 24),
-                    SectionHeader(e.key, action: 'View All'),
+                    SectionHeader(e.key,
+                        action: 'View All',
+                        accentBar: true,
+                        uppercase: true),
                     const SizedBox(height: 14),
                     ...e.value.map((m) => Padding(
                         padding: const EdgeInsets.only(bottom: 16),
@@ -780,7 +783,8 @@ class MoreScreen extends StatelessWidget {
 }
 
 class _MenuGroup extends StatelessWidget {
-  const _MenuGroup({required this.title, required this.items, this.footer});
+  const _MenuGroup(
+      {required this.title, required this.items, this.footer});
   final String title;
   final List<(String, IconData, Color, VoidCallback)> items;
   final Widget? footer;
@@ -2025,39 +2029,39 @@ class OversContent extends StatelessWidget {
     final c = context.cric;
     return Column(children: [
       PremiumCard(
-          height: 275,
           padding: const EdgeInsets.all(16),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Wrap(
-                spacing: 12,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text('Run Progression',
+            Row(children: [
+              Expanded(
+                  child: Text('Run Progression',
                       style: TextStyle(
                           color: c.text,
                           fontWeight: FontWeight.w900,
-                          fontSize: 18)),
-                  _legend(context, c.cyan, 'New Zealand'),
-                  _legend(context, c.live, 'West Indies')
-                ]),
-            Expanded(
-                child: SizedBox(
-                    width: double.infinity,
-                    child: CustomPaint(painter: _RunChartPainter(c)))),
-            Row(children: [
-              Expanded(
-                  child: Text('Recent Overs',
-                      maxLines: 1,
-                      style: TextStyle(
-                          color: c.text, fontWeight: FontWeight.w800))),
-              for (final o in ['6', '11', '8', '9', '8*'])
-                Padding(
-                    padding: const EdgeInsets.only(left: 5),
-                    child: _BallChip(o,
-                        highlight: o == '11' || o == '8*', wicket: o == '9'))
-            ])
+                          fontSize: 18))),
+              _legend(context, c.cyan, 'New Zealand'),
+              const SizedBox(width: 10),
+              _legend(context, c.live, 'West Indies'),
+              const SizedBox(width: 10),
+              Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                      color: c.card2,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: c.border)),
+                  child: Icon(Icons.open_in_full_rounded,
+                      color: c.muted, size: 16))
+            ]),
+            const SizedBox(height: 14),
+            SizedBox(
+                height: 160,
+                width: double.infinity,
+                child: CustomPaint(painter: _RunChartPainter(c))),
+            const SizedBox(height: 14),
+            Divider(color: c.border, height: 1),
+            const SizedBox(height: 12),
+            _RecentOversRow(c: c),
           ])),
       const SizedBox(height: 14),
       const _OverRow(
@@ -2102,18 +2106,105 @@ class OversContent extends StatelessWidget {
       ]);
 }
 
+class _RecentOversRow extends StatelessWidget {
+  const _RecentOversRow({required this.c});
+  final CricColors c;
+  @override
+  Widget build(BuildContext context) {
+    final overs = [('34', '6'), ('35', '11'), ('36', '8'), ('37', '9'), ('38', '8*')];
+    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+      Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+            Text('Recent Overs',
+                style: TextStyle(
+                    color: c.text,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15)),
+            const SizedBox(height: 6),
+            DefaultTextStyle(
+                style: TextStyle(color: c.muted, fontSize: 12),
+                child: Row(children: [
+                  const Text('Runs: '),
+                  Text('42',
+                      style: TextStyle(
+                          color: c.cyan, fontWeight: FontWeight.w900)),
+                  const SizedBox(width: 10),
+                  const Text('Wickets: '),
+                  Text('1',
+                      style: TextStyle(
+                          color: c.cyan, fontWeight: FontWeight.w900)),
+                  const SizedBox(width: 10),
+                  const Text('Avg: '),
+                  Text('7.00',
+                      style: TextStyle(
+                          color: c.cyan, fontWeight: FontWeight.w900)),
+                ]))
+          ])),
+      Container(width: 1, height: 56, color: c.border),
+      const SizedBox(width: 8),
+      for (final o in overs)
+        Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(o.$1,
+                  style: TextStyle(
+                      color: c.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              _BallChip(o.$2,
+                  highlight: o.$2 == '11' || o.$2 == '8*',
+                  wicket: o.$2 == '9'),
+            ]))
+    ]);
+  }
+}
+
 class _RunChartPainter extends CustomPainter {
   _RunChartPainter(this.c);
   final CricColors c;
+
+  TextPainter _label(String t, {Color? color, double size = 10, FontWeight weight = FontWeight.w700}) {
+    final tp = TextPainter(
+        text: TextSpan(
+            text: t,
+            style: TextStyle(
+                color: color ?? c.muted, fontSize: size, fontWeight: weight)),
+        textDirection: TextDirection.ltr)
+      ..layout();
+    return tp;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
+    const leftPad = 32.0;
+    const bottomPad = 18.0;
+    const rightPad = 44.0;
+    final chartW = size.width - leftPad - rightPad;
+    final chartH = size.height - bottomPad;
+
     final grid = Paint()
       ..color = c.border.withValues(alpha: .55)
       ..strokeWidth = 1;
-    for (var i = 1; i < 5; i++) {
-      final y = size.height * i / 5;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    for (var i = 0; i <= 4; i++) {
+      final y = chartH * i / 4;
+      canvas.drawLine(
+          Offset(leftPad, y), Offset(leftPad + chartW, y), grid);
+      final label = _label('${200 - i * 50}');
+      label.paint(canvas, Offset(leftPad - 8 - label.width, y - label.height / 2));
     }
+    for (var i = 0; i <= 5; i++) {
+      final x = leftPad + chartW * i / 5;
+      final t = (i * 10).toString();
+      final label = _label(t);
+      label.paint(canvas, Offset(x - label.width / 2, chartH + 4));
+    }
+    final oversLabel = _label('OVERS', weight: FontWeight.w900);
+    oversLabel.paint(canvas,
+        Offset(leftPad + chartW + 4, chartH + 4));
+
     final p1 = Paint()
       ..color = c.cyan
       ..strokeWidth = 3
@@ -2124,26 +2215,14 @@ class _RunChartPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     Path path1 = Path(), path2 = Path();
     final pts = [
-      0,
-      12,
-      25,
-      38,
-      44,
-      56,
-      68,
-      80,
-      94,
-      105,
-      118,
-      127,
-      139,
-      145,
-      158
+      0, 12, 25, 38, 44, 56, 68, 80, 94, 105, 118, 127, 139, 145, 158
     ];
     final pts2 = [0, 6, 11, 20, 25, 31, 38, 45, 52, 60, 66, 72, 78];
+    Offset? lastP1;
     for (int i = 0; i < pts.length; i++) {
-      final x = size.width * i / (pts.length - 1);
-      final y = size.height - (pts[i] / 200) * size.height;
+      final x = leftPad + chartW * (i / (pts.length - 1)) * (42 / 50);
+      final y = chartH - (pts[i] / 200) * chartH;
+      lastP1 = Offset(x, y);
       if (i == 0) {
         path1.moveTo(x, y);
       } else {
@@ -2151,8 +2230,8 @@ class _RunChartPainter extends CustomPainter {
       }
     }
     for (int i = 0; i < pts2.length; i++) {
-      final x = size.width * i / (pts.length - 1);
-      final y = size.height - (pts2[i] / 200) * size.height;
+      final x = leftPad + chartW * (i / (pts.length - 1)) * (42 / 50);
+      final y = chartH - (pts2[i] / 200) * chartH;
       if (i == 0) {
         path2.moveTo(x, y);
       } else {
@@ -2161,6 +2240,18 @@ class _RunChartPainter extends CustomPainter {
     }
     canvas.drawPath(path1, p1);
     canvas.drawPath(path2, p2);
+
+    if (lastP1 != null) {
+      final glow = Paint()
+        ..color = c.cyan.withValues(alpha: .35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      canvas.drawCircle(lastP1, 8, glow);
+      canvas.drawCircle(lastP1, 5, Paint()..color = c.cyan);
+      final scoreLabel = _label('158/3',
+          color: c.cyan, size: 14, weight: FontWeight.w900);
+      scoreLabel.paint(
+          canvas, Offset(lastP1.dx + 8, lastP1.dy - scoreLabel.height / 2));
+    }
   }
 
   @override
@@ -2212,15 +2303,27 @@ class _OverRow extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                        Text(bowler,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.text,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 14)),
-                        Text(type,
-                            style: TextStyle(color: c.muted, fontSize: 11)),
+                        Row(children: [
+                          Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                  color: c.live, shape: BoxShape.circle)),
+                          const SizedBox(width: 6),
+                          Flexible(
+                              child: Text(bowler,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: c.text,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14))),
+                        ]),
+                        Padding(
+                            padding: const EdgeInsets.only(left: 14),
+                            child: Text(type,
+                                style:
+                                    TextStyle(color: c.muted, fontSize: 11))),
                         const SizedBox(height: 8),
                         Wrap(
                             spacing: 6,
@@ -2233,25 +2336,35 @@ class _OverRow extends StatelessWidget {
                       ]))),
               VerticalDivider(color: c.border, width: 20),
               SizedBox(
-                  width: context.w <= 430 ? 85 : 120,
+                  width: context.w <= 430 ? 95 : 130,
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(bat1,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.text,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700)),
+                        Row(children: [
+                          Icon(Icons.sports_cricket_rounded,
+                              color: c.cyan, size: 14),
+                          const SizedBox(width: 6),
+                          Expanded(
+                              child: Text(bat1,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: c.text,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700))),
+                        ]),
                         const SizedBox(height: 6),
-                        Text(bat2,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: c.text, fontSize: 11))
-                      ]))
+                        Padding(
+                            padding: const EdgeInsets.only(left: 20),
+                            child: Text(bat2,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style:
+                                    TextStyle(color: c.text, fontSize: 11)))
+                      ])),
+              Icon(Icons.chevron_right_rounded, color: c.muted, size: 22),
             ]))));
   }
 }
@@ -2506,9 +2619,4 @@ class _SquadRow extends StatelessWidget {
               color: context.cric.text,
               fontWeight: FontWeight.w800,
               fontSize: 10)));
-}
-          style: TextStyle(
-              color: context.cric.text,
-              fontSize: 10,
-              fontWeight: FontWeight.w800)));
 }

@@ -327,27 +327,44 @@ class PillChip extends StatelessWidget {
 
 class SectionHeader extends StatelessWidget {
   const SectionHeader(this.title,
-      {super.key, this.action, this.icon, this.onAction});
+      {super.key,
+      this.action,
+      this.icon,
+      this.onAction,
+      this.accentBar = false,
+      this.uppercase = false});
   final String title;
   final String? action;
   final IconData? icon;
   final VoidCallback? onAction;
+  final bool accentBar;
+  final bool uppercase;
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Row(children: [
-      if (icon != null) ...[
+    final accentColor = c.isDark ? c.cyan : c.primary;
+    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+      if (accentBar) ...[
+        Container(
+            width: 4,
+            height: 22,
+            decoration: BoxDecoration(
+                color: accentColor,
+                borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 12),
+      ] else if (icon != null) ...[
         Icon(icon, color: c.cyan, size: 26),
         const SizedBox(width: 10)
       ],
       Expanded(
-          child: Text(title,
+          child: Text(uppercase ? title.toUpperCase() : title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                   color: c.text,
-                  fontWeight: FontWeight.w800,
-                  fontSize: context.sp(22)))),
+                  fontWeight: FontWeight.w900,
+                  fontSize: context.sp(uppercase ? 18 : 22),
+                  letterSpacing: uppercase ? 0.6 : 0))),
       if (action != null)
         InkWell(
             onTap: onAction,
@@ -434,19 +451,25 @@ class MatchHeroCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   _heroTeam(context, AppData.nz),
-                  Column(children: [
-                    _vsCircle(context),
-                    const SizedBox(height: 12),
+                  Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text('VS',
+                        style: TextStyle(
+                            color: Colors.white.withValues(alpha: .9),
+                            fontSize: context.sp(15),
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.2)),
+                    const SizedBox(height: 8),
                     Text('158/3',
                         style: TextStyle(
                             color: Colors.white,
                             fontSize: context.w <= 390 ? 38 : 42,
                             fontWeight: FontWeight.w900,
                             height: 1)),
+                    const SizedBox(height: 4),
                     Text('(38.4 OV)',
                         style: TextStyle(
                             color: Colors.white.withValues(alpha: .95),
-                            fontSize: context.sp(17),
+                            fontSize: context.sp(15),
                             fontWeight: FontWeight.w700)),
                   ]),
                   _heroTeam(context, AppData.wi),
@@ -550,20 +573,6 @@ class MatchHeroCard extends StatelessWidget {
                 fontWeight: FontWeight.w800,
                 fontSize: context.w <= 390 ? 11 : context.sp(13)))
       ]));
-  Widget _vsCircle(BuildContext context) => Container(
-      width: 48,
-      height: 48,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: context.cric.card.withValues(alpha: .88),
-          border: Border.all(
-              color: Colors.white.withValues(alpha: .3), width: 1.5)),
-      child: Text('VS',
-          style: TextStyle(
-              color: context.cric.text,
-              fontWeight: FontWeight.w900,
-              fontSize: 14)));
 }
 
 class EmptyOrErrorImage extends StatelessWidget {
