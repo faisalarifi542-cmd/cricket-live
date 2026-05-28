@@ -16,6 +16,7 @@ class CricColors extends ThemeExtension<CricColors> {
     required this.warning,
     required this.nav,
   });
+
   final Color bg;
   final Color bg2;
   final Color card;
@@ -31,27 +32,33 @@ class CricColors extends ThemeExtension<CricColors> {
   final Color nav;
 
   bool get isDark => bg.computeLuminance() < .2;
-  LinearGradient get primaryGradient => LinearGradient(colors: [cyan, primary]);
-  LinearGradient get bgGradient => LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [bg, bg2]);
+  LinearGradient get primaryGradient =>
+      LinearGradient(colors: [cyan, primary], begin: Alignment.centerLeft, end: Alignment.centerRight);
+  LinearGradient get bgGradient => const LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xff020b1b), Color(0xff03142a), Color(0xff061c36)]);
+  LinearGradient get cardGradient => LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [card.withValues(alpha: .98), card2.withValues(alpha: .96)]);
 
   @override
-  CricColors copyWith(
-          {Color? bg,
-          Color? bg2,
-          Color? card,
-          Color? card2,
-          Color? border,
-          Color? text,
-          Color? muted,
-          Color? primary,
-          Color? cyan,
-          Color? live,
-          Color? success,
-          Color? warning,
-          Color? nav}) =>
+  CricColors copyWith({
+    Color? bg,
+    Color? bg2,
+    Color? card,
+    Color? card2,
+    Color? border,
+    Color? text,
+    Color? muted,
+    Color? primary,
+    Color? cyan,
+    Color? live,
+    Color? success,
+    Color? warning,
+    Color? nav,
+  }) =>
       CricColors(
         bg: bg ?? this.bg,
         bg2: bg2 ?? this.bg2,
@@ -90,34 +97,35 @@ class CricColors extends ThemeExtension<CricColors> {
 }
 
 const lightCric = CricColors(
-  bg: Color(0xfff4faff),
-  bg2: Color(0xfff0f7ff),
-  card: Colors.white,
-  card2: Color(0xfff9fcff),
-  border: Color(0xffddeaf7),
+  bg: Color(0xffeff6ff),
+  bg2: Color(0xffe5f0ff),
+  card: Color(0xffffffff),
+  card2: Color(0xfff5faff),
+  border: Color(0xffd3e3f8),
   text: Color(0xff061a35),
-  muted: Color(0xff6b7c99),
-  primary: Color(0xff147dff),
-  cyan: Color(0xff22d3ee),
-  live: Color(0xffff304f),
-  success: Color(0xff16a34a),
-  warning: Color(0xffffa500),
-  nav: Colors.white,
+  muted: Color(0xff6f84a1),
+  primary: Color(0xff007bff),
+  cyan: Color(0xff00d9ff),
+  live: Color(0xffff2d45),
+  success: Color(0xff21b96d),
+  warning: Color(0xffffc83d),
+  nav: Color(0xfffbfdff),
 );
+
 const darkCric = CricColors(
-  bg: Color(0xff031225),
-  bg2: Color(0xff041426),
-  card: Color(0xff09213d),
-  card2: Color(0xff0c294a),
-  border: Color(0xff1d4268),
+  bg: Color(0xff020b1b),
+  bg2: Color(0xff061c36),
+  card: Color(0xff071b35),
+  card2: Color(0xff0a2748),
+  border: Color(0xff1b4266),
   text: Color(0xffffffff),
-  muted: Color(0xffa9b8cf),
-  primary: Color(0xff147dff),
-  cyan: Color(0xff22d3ee),
-  live: Color(0xffff304f),
-  success: Color(0xff4ade80),
-  warning: Color(0xffffa500),
-  nav: Color(0xff051729),
+  muted: Color(0xffb9c7d8),
+  primary: Color(0xff007bff),
+  cyan: Color(0xff00d9ff),
+  live: Color(0xffff2d45),
+  success: Color(0xff38f28b),
+  warning: Color(0xffffc83d),
+  nav: Color(0xff071528),
 );
 
 ThemeData cricTheme(bool dark) {
@@ -128,8 +136,15 @@ ThemeData cricTheme(bool dark) {
     scaffoldBackgroundColor: c.bg,
     fontFamily: 'Roboto',
     colorScheme: ColorScheme.fromSeed(
-        seedColor: c.primary,
-        brightness: dark ? Brightness.dark : Brightness.light),
+      seedColor: c.primary,
+      brightness: dark ? Brightness.dark : Brightness.light,
+    ),
+    splashFactory: InkRipple.splashFactory,
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: c.cyan,
+      selectionColor: c.cyan.withValues(alpha: .25),
+      selectionHandleColor: c.cyan,
+    ),
     extensions: [c],
   );
 }
@@ -137,16 +152,20 @@ ThemeData cricTheme(bool dark) {
 extension CtxTheme on BuildContext {
   CricColors get cric => Theme.of(this).extension<CricColors>()!;
   double get w => MediaQuery.sizeOf(this).width;
+
   double get horizontalPadding {
-    if (w <= 390) return 20;
-    return 24;
+    if (w <= 360) return 18;
+    if (w <= 430) return 24;
+    return 30;
   }
 
-  double get mainBottomPadding => 120 + MediaQuery.paddingOf(this).bottom;
+  double get mainBottomPadding => 108 + MediaQuery.paddingOf(this).bottom;
   double get detailBottomPadding => 32 + MediaQuery.paddingOf(this).bottom;
+
   double sp(double value) {
-    if (w <= 360) return value * .90;
-    if (w <= 390) return value * .95;
+    if (w <= 360) return value * .88;
+    if (w <= 390) return value * .94;
+    if (w >= 720) return value * 1.05;
     return value;
   }
 }

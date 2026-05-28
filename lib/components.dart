@@ -1,239 +1,439 @@
 import 'package:flutter/material.dart';
+
 import 'app_theme.dart';
 import 'models.dart';
 
 enum AppTab { home, matches, schedule, news, more }
-
-enum MatchDetailTab { scorecard, commentary, overs, info, squads }
 
 String tabLabel(AppTab tab) => switch (tab) {
       AppTab.home => 'Home',
       AppTab.matches => 'Matches',
       AppTab.schedule => 'Schedule',
       AppTab.news => 'News',
-      AppTab.more => 'More'
+      AppTab.more => 'More',
     };
+
 IconData tabIcon(AppTab tab) => switch (tab) {
       AppTab.home => Icons.home_rounded,
       AppTab.matches => Icons.sports_cricket_rounded,
       AppTab.schedule => Icons.calendar_month_rounded,
-      AppTab.news => Icons.article_rounded,
-      AppTab.more => Icons.more_horiz_rounded
+      AppTab.news => Icons.newspaper_rounded,
+      AppTab.more => Icons.more_horiz_rounded,
     };
 
 class PremiumCard extends StatelessWidget {
-  const PremiumCard(
-      {super.key,
-      required this.child,
-      this.padding,
-      this.radius = 28,
-      this.height,
-      this.onTap});
+  const PremiumCard({
+    super.key,
+    required this.child,
+    this.padding,
+    this.radius = 26,
+    this.height,
+    this.onTap,
+    this.gradient,
+    this.borderColor,
+  });
+
   final Widget child;
   final EdgeInsetsGeometry? padding;
   final double radius;
   final double? height;
   final VoidCallback? onTap;
+  final Gradient? gradient;
+  final Color? borderColor;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final card = AnimatedContainer(
+    final body = AnimatedContainer(
       duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
       height: height,
       padding: padding,
       decoration: BoxDecoration(
-        color: c.card,
+        gradient: gradient ?? c.cardGradient,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: c.border, width: 1.2),
+        border: Border.all(color: borderColor ?? c.border, width: 1.15),
         boxShadow: [
           BoxShadow(
-              color: c.isDark
-                  ? Colors.black.withValues(alpha: .22)
-                  : const Color(0xff9bb7d6).withValues(alpha: .16),
-              blurRadius: 24,
-              offset: const Offset(0, 10)),
+            color: Colors.black.withValues(alpha: .28),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: c.cyan.withValues(alpha: .05),
+            blurRadius: 18,
+            offset: const Offset(0, 0),
+          ),
         ],
       ),
       child: child,
     );
     return onTap == null
-        ? card
+        ? body
         : InkWell(
             borderRadius: BorderRadius.circular(radius),
             onTap: onTap,
-            child: card);
+            child: body,
+          );
   }
 }
 
 class CricLogo extends StatelessWidget {
   const CricLogo({super.key, this.size = 34});
   final double size;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return RichText(
       text: TextSpan(
-          style: TextStyle(
-              fontSize: size,
-              fontWeight: FontWeight.w800,
-              fontStyle: FontStyle.italic,
-              letterSpacing: -1.2),
-          children: [
-            TextSpan(text: 'CRIC', style: TextStyle(color: c.text)),
-            TextSpan(text: 'PRO', style: TextStyle(color: c.primary)),
-          ]),
+        style: TextStyle(
+          fontSize: size,
+          fontWeight: FontWeight.w900,
+          fontStyle: FontStyle.italic,
+          letterSpacing: -1.4,
+        ),
+        children: [
+          TextSpan(text: 'CRIC', style: TextStyle(color: c.text)),
+          TextSpan(text: 'PRO', style: TextStyle(color: c.cyan)),
+        ],
+      ),
     );
   }
 }
 
-class LivePill extends StatelessWidget {
-  const LivePill({super.key, this.compact = false});
-  final bool compact;
+class GlowIconButton extends StatelessWidget {
+  const GlowIconButton({
+    super.key,
+    required this.icon,
+    this.onTap,
+    this.badge,
+  });
+
+  final IconData icon;
+  final VoidCallback? onTap;
+  final String? badge;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 1200),
-      builder: (context, value, child) {
-        return Container(
-          padding: EdgeInsets.symmetric(
-              horizontal: compact ? 10 : 14, vertical: compact ? 7 : 10),
-          decoration: BoxDecoration(
-              color: c.live,
-              borderRadius: BorderRadius.circular(compact ? 12 : 16)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            AnimatedOpacity(
-              opacity: value > 0.5 ? 1.0 : 0.4,
-              duration: const Duration(milliseconds: 600),
-              child: const CircleAvatar(radius: 4, backgroundColor: Colors.white),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: .02),
+              borderRadius: BorderRadius.circular(18),
             ),
-            const SizedBox(width: 7),
-            Text('LIVE',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: compact ? 13 : 16,
-                    fontWeight: FontWeight.w900)),
-          ]),
-        );
-      },
+            child: Icon(icon, color: c.text, size: 30),
+          ),
+        ),
+        if (badge != null)
+          Positioned(
+            right: -1,
+            top: -1,
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: c.live,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: c.live.withValues(alpha: .45),
+                    blurRadius: 12,
+                  )
+                ],
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                badge!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          )
+      ],
+    );
+  }
+}
+
+class AppHeader extends StatelessWidget {
+  const AppHeader({
+    super.key,
+    this.title,
+    this.showLogo = false,
+    this.leading,
+    this.trailing = const [],
+    this.subtitle,
+  });
+
+  final String? title;
+  final bool showLogo;
+  final Widget? leading;
+  final List<Widget> trailing;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            if (leading != null) ...[
+              leading!,
+              const SizedBox(width: 12),
+            ],
+            Expanded(
+              child: showLogo
+                  ? const CricLogo(size: 34)
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title ?? '',
+                          style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w900,
+                            fontSize: context.sp(33),
+                            height: .95,
+                          ),
+                        ),
+                        if (subtitle != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              subtitle!,
+                              style: TextStyle(
+                                color: c.muted,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            ...trailing,
+          ],
+        ),
+      ],
     );
   }
 }
 
 class TeamBadge extends StatelessWidget {
-  const TeamBadge(this.team, {super.key, this.size = 68});
-  final Team team;
+  const TeamBadge(this.team, {super.key, this.size = 76, this.borderColor});
+
+  final TeamInfo team;
   final double size;
+  final Color? borderColor;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: team.color.withValues(alpha: .2),
-            border: Border.all(
-                color: Colors.white.withValues(alpha: .88), width: 2.5),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withValues(alpha: .18),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6))
-            ]),
-        clipBehavior: Clip.antiAlias,
-        child: Image.asset(team.asset,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Center(
-                child: Text(team.short,
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w900)))));
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: team.color.withValues(alpha: .22),
+        border: Border.all(
+          color: borderColor ?? Colors.white.withValues(alpha: .62),
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: team.color.withValues(alpha: .28),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: team.asset != null
+          ? Image.asset(
+              team.asset!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _teamFallback(context),
+            )
+          : _teamFallback(context),
+    );
+  }
+
+  Widget _teamFallback(BuildContext context) {
+    return Center(
+      child: Text(
+        team.emoji ?? team.code,
+        style: TextStyle(fontSize: size * .46),
+      ),
+    );
   }
 }
 
 class PlayerAvatar extends StatelessWidget {
-  const PlayerAvatar(this.player, {super.key, this.size = 64});
-  final RankingPlayer player;
+  const PlayerAvatar({
+    super.key,
+    required this.player,
+    this.size = 62,
+    this.borderColor,
+  });
+
+  final PlayerInfo player;
   final double size;
+  final Color? borderColor;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return Container(
-        width: size,
-        height: size,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: c.card2,
-            border: Border.all(color: c.border, width: 1.2)),
-        child: Image.asset(player.asset,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Center(
-                child: Text(
-                    player.name.split(' ').map((e) => e[0]).take(2).join(),
-                    style: TextStyle(
-                        color: c.text, fontWeight: FontWeight.w900)))));
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: c.card2,
+        border: Border.all(color: borderColor ?? c.border, width: 1.2),
+      ),
+      child: player.asset != null
+          ? Image.asset(
+              player.asset!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _initials(context),
+            )
+          : _initials(context),
+    );
+  }
+
+  Widget _initials(BuildContext context) {
+    final c = context.cric;
+    final parts = player.name.split(' ');
+    final initials = parts.take(2).map((e) => e[0]).join();
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: c.text,
+          fontWeight: FontWeight.w900,
+          fontSize: size * .28,
+        ),
+      ),
+    );
+  }
+}
+
+class RankingAvatar extends StatelessWidget {
+  const RankingAvatar({super.key, required this.asset, required this.label, this.size = 54});
+
+  final String asset;
+  final String label;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: c.border),
+        color: c.card2,
+      ),
+      child: Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Center(
+          child: Text(
+            label,
+            style: TextStyle(color: c.text, fontWeight: FontWeight.w900),
+          ),
+        ),
+      ),
+    );
   }
 }
 
 class BottomNav extends StatelessWidget {
   const BottomNav({super.key, required this.active, required this.onTab});
+
   final AppTab active;
   final ValueChanged<AppTab> onTab;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return SafeArea(
       top: false,
-      bottom: false,
       child: Container(
-        height: 88 + MediaQuery.paddingOf(context).bottom,
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.paddingOf(context).bottom, top: 8),
+        margin: const EdgeInsets.fromLTRB(0, 6, 0, 0),
+        padding: EdgeInsets.only(bottom: MediaQuery.paddingOf(context).bottom + 10, top: 10),
         decoration: BoxDecoration(
-          color: c.nav,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border.all(color: c.border, width: 1.2),
+          color: c.nav.withValues(alpha: .96),
+          border: Border(top: BorderSide(color: c.border.withValues(alpha: .85))),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: c.isDark ? .35 : .08),
-                blurRadius: 24,
-                offset: const Offset(0, -8))
+              color: Colors.black.withValues(alpha: .35),
+              blurRadius: 26,
+              offset: const Offset(0, -8),
+            ),
           ],
         ),
         child: Row(
           children: AppTab.values.map((tab) {
             final selected = tab == active;
-            final color = selected ? (c.isDark ? c.cyan : c.primary) : c.muted;
+            final color = selected ? c.cyan : c.muted;
             return Expanded(
               child: InkWell(
                 onTap: () => onTab(tab),
                 child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                              color: selected ? color : Colors.transparent,
-                              borderRadius: BorderRadius.circular(4))),
-                      const SizedBox(height: 10),
-                      AnimatedScale(
-                        duration: const Duration(milliseconds: 200),
-                        scale: selected ? 1.1 : 1,
-                        child: Icon(tabIcon(tab), color: color, size: 28),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 240),
+                      curve: Curves.easeOutCubic,
+                      width: selected ? 34 : 0,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(99),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                  color: c.cyan.withValues(alpha: .45),
+                                  blurRadius: 12,
+                                )
+                              ]
+                            : null,
                       ),
-                      const SizedBox(height: 4),
-                      Text(tabLabel(tab),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: color,
-                              fontWeight:
-                                  selected ? FontWeight.w800 : FontWeight.w600,
-                              fontSize: 12)),
-                    ]),
+                    ),
+                    const SizedBox(height: 10),
+                    AnimatedScale(
+                      duration: const Duration(milliseconds: 220),
+                      scale: selected ? 1.05 : .92,
+                      child: Icon(tabIcon(tab), color: color, size: 29),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      tabLabel(tab),
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 13,
+                        fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }).toList(),
@@ -244,347 +444,331 @@ class BottomNav extends StatelessWidget {
 }
 
 class SegmentedTabs extends StatelessWidget {
-  const SegmentedTabs(
-      {super.key,
-      required this.items,
-      required this.selected,
-      required this.onChanged});
-  final List<(String, IconData)> items;
+  const SegmentedTabs({
+    super.key,
+    required this.items,
+    required this.selected,
+    required this.onChanged,
+    this.height = 62,
+  });
+
+  final List<(String, IconData?)> items;
   final int selected;
   final ValueChanged<int> onChanged;
+  final double height;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final labelSize = context.sp(15);
     return Container(
-      height: 64,
-      padding: const EdgeInsets.all(6),
+      height: height,
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-          color: c.card,
-          borderRadius: BorderRadius.circular(32),
-          border: Border.all(color: c.border, width: 1.2)),
-      child: Row(children: [
-        for (var i = 0; i < items.length; i++)
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(28),
-              onTap: () => onChanged(i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .015),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: c.border),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < items.length; i++)
+            Expanded(
+              child: InkWell(
+                onTap: () => onChanged(i),
+                borderRadius: BorderRadius.circular(28),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  decoration: BoxDecoration(
                     gradient: i == selected ? c.primaryGradient : null,
-                    borderRadius: BorderRadius.circular(28)),
-                child: Center(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(items[i].$2,
-                      color: i == selected ? Colors.white : c.muted, size: 20),
-                  const SizedBox(width: 8),
-                  Flexible(
-                      child: Text(items[i].$1,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: i == selected ? c.cyan.withValues(alpha: .65) : Colors.transparent,
+                    ),
+                    boxShadow: i == selected
+                        ? [
+                            BoxShadow(
+                              color: c.cyan.withValues(alpha: .18),
+                              blurRadius: 18,
+                              spreadRadius: 1,
+                            )
+                          ]
+                        : null,
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (items[i].$2 != null) ...[
+                          Icon(
+                            items[i].$2,
+                            color: i == selected ? Colors.white : c.muted,
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                        ],
+                        Flexible(
+                          child: Text(
+                            items[i].$1,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
                               color: i == selected ? Colors.white : c.text,
-                              fontWeight: FontWeight.w700,
-                              fontSize: labelSize))),
-                ])),
+                              fontWeight: i == selected ? FontWeight.w800 : FontWeight.w600,
+                              fontSize: context.sp(15.5),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-      ]),
+        ],
+      ),
     );
   }
 }
 
 class PillChip extends StatelessWidget {
-  const PillChip(this.label, {super.key, this.selected = false});
+  const PillChip(this.label, {super.key, this.selected = false, this.onTap});
+
   final String label;
   final bool selected;
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      height: 46,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: BoxDecoration(
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
-          color: selected ? null : c.card,
+          color: selected ? null : Colors.white.withValues(alpha: .015),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
-              color: selected ? Colors.transparent : c.border, width: 1.2)),
-      alignment: Alignment.center,
-      child: Text(label,
-          maxLines: 1,
+            color: selected ? c.cyan.withValues(alpha: .7) : c.border,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
           style: TextStyle(
-              color: selected ? Colors.white : c.text,
-              fontWeight: FontWeight.w700,
-              fontSize: 15)),
+            color: selected ? Colors.white : c.text,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            fontSize: 14.5,
+          ),
+        ),
+      ),
     );
   }
 }
 
 class SectionHeader extends StatelessWidget {
-  const SectionHeader(this.title,
-      {super.key,
-      this.action,
-      this.icon,
-      this.onAction,
-      this.accentBar = false,
-      this.uppercase = false});
+  const SectionHeader(
+    this.title, {
+    super.key,
+    this.action,
+    this.icon,
+    this.onAction,
+  });
+
   final String title;
   final String? action;
   final IconData? icon;
   final VoidCallback? onAction;
-  final bool accentBar;
-  final bool uppercase;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final accentColor = c.isDark ? c.cyan : c.primary;
-    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-      if (accentBar) ...[
-        Container(
-            width: 4,
-            height: 22,
-            decoration: BoxDecoration(
-                color: accentColor,
-                borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 12),
-      ] else if (icon != null) ...[
-        Icon(icon, color: c.cyan, size: 26),
-        const SizedBox(width: 10)
-      ],
-      Expanded(
-          child: Text(uppercase ? title.toUpperCase() : title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: c.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: context.sp(uppercase ? 18 : 22),
-                  letterSpacing: uppercase ? 0.6 : 0))),
-      if (action != null)
-        InkWell(
+    return Row(
+      children: [
+        if (icon != null) ...[
+          Icon(icon, color: c.cyan, size: 25),
+          const SizedBox(width: 10),
+        ],
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w900,
+              fontSize: context.sp(18.5),
+            ),
+          ),
+        ),
+        if (action != null)
+          InkWell(
             onTap: onAction,
-            child: Row(children: [
-              Text(action!,
+            child: Row(
+              children: [
+                Text(
+                  action!,
                   style: TextStyle(
-                      color: c.muted,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15)),
-              Icon(Icons.chevron_right_rounded, color: c.muted, size: 24)
-            ])),
-    ]);
+                    color: c.muted,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: c.muted),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 }
 
-class MatchHeroCard extends StatelessWidget {
-  const MatchHeroCard({super.key, this.compact = false, this.onWatch});
-  final bool compact;
-  final VoidCallback? onWatch;
+class GradientButton extends StatelessWidget {
+  const GradientButton({
+    super.key,
+    required this.label,
+    this.icon,
+    this.onTap,
+    this.outlined = false,
+    this.height = 56,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+  final bool outlined;
+  final double height;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final h = compact
-        ? (context.w <= 360 ? 360.0 : 380.0)
-        : (context.w <= 360
-            ? 340.0
-            : context.w <= 390
-                ? 350.0
-                : 360.0);
-    return Container(
-      height: h,
-      decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(
-              color: c.isDark ? c.border : Colors.white.withValues(alpha: .7),
-              width: 1.5),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: c.isDark ? .28 : .16),
-                blurRadius: 22,
-                offset: const Offset(0, 10))
-          ]),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(fit: StackFit.expand, children: [
-        Image.asset('assets/images/stadium_live.png', fit: BoxFit.cover),
-        Container(
-            decoration: BoxDecoration(
-                gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-              Colors.black.withValues(alpha: .22),
-              Colors.black.withValues(alpha: .48),
-              Colors.black.withValues(alpha: .75)
-            ]))),
-        Padding(
-          padding: EdgeInsets.all(context.w <= 360 ? 18 : 22),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              const LivePill(compact: true),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Text('1st Test • Day 1',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: .96),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16))),
-              _viewerPill('128K')
-            ]),
-            const SizedBox(height: 12),
-            Text('West Indies Tour of New Zealand, 2025',
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(28),
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+        decoration: BoxDecoration(
+          gradient: outlined ? null : c.primaryGradient,
+          color: outlined ? Colors.transparent : null,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: c.cyan, width: outlined ? 1.4 : 1.0),
+          boxShadow: outlined
+              ? null
+              : [
+                  BoxShadow(
+                    color: c.cyan.withValues(alpha: .24),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
+                  )
+                ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, color: Colors.white, size: 22),
+              const SizedBox(width: 10),
+            ],
+            Flexible(
+              child: Text(
+                label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: Colors.white.withValues(alpha: .96),
-                    fontWeight: FontWeight.w700,
-                    fontSize: context.sp(16))),
-            const Spacer(),
-            Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _heroTeam(context, AppData.nz),
-                  Column(mainAxisSize: MainAxisSize.min, children: [
-                    Text('VS',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .9),
-                            fontSize: context.sp(15),
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.2)),
-                    const SizedBox(height: 8),
-                    Text('158/3',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: context.w <= 390 ? 38 : 42,
-                            fontWeight: FontWeight.w900,
-                            height: 1)),
-                    const SizedBox(height: 4),
-                    Text('(38.4 OV)',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .95),
-                            fontSize: context.sp(15),
-                            fontWeight: FontWeight.w700)),
-                  ]),
-                  _heroTeam(context, AppData.wi),
-                ]),
-            const Spacer(),
-            Center(
-                child: Text('NZ won the toss & chose to bat',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.cyan,
-                        fontWeight: FontWeight.w800,
-                        fontSize: context.sp(15)))),
-            const SizedBox(height: 16),
-            Center(
-              child: GestureDetector(
-                onTap: onWatch,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  height: 54,
-                  width: 250,
-                  decoration: BoxDecoration(
-                    gradient: c.primaryGradient,
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: [
-                      BoxShadow(
-                          color: c.primary.withValues(alpha: .35),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6))
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.play_circle_fill_rounded,
-                          color: Colors.white, size: 26),
-                      SizedBox(width: 10),
-                      Text(
-                        'Watch Live',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ],
-                  ),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16.5,
                 ),
               ),
             ),
-            if (!compact) const SizedBox(height: 10),
-            if (!compact)
-              Center(
-                  child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                    for (int i = 0; i < 3; i++)
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        width: i == 0 ? 24 : 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                            color: i == 0
-                                ? c.cyan
-                                : Colors.white.withValues(alpha: .4),
-                            borderRadius: BorderRadius.circular(4)),
-                      )
-                  ])),
-          ]),
+            if (outlined) ...[
+              const SizedBox(width: 10),
+              const Icon(Icons.arrow_forward_rounded, color: Colors.white),
+            ]
+          ],
         ),
-      ]),
+      ),
     );
   }
+}
 
-  Widget _viewerPill(String text) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+class StatusBadge extends StatelessWidget {
+  const StatusBadge({
+    super.key,
+    required this.label,
+    this.color,
+    this.filled = false,
+    this.icon,
+  });
+
+  final String label;
+  final Color? color;
+  final bool filled;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final badgeColor = color ?? c.cyan;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .95),
-          borderRadius: BorderRadius.circular(18)),
-      child: Row(children: [
-        const Icon(Icons.visibility_rounded,
-            size: 18, color: Color(0xff061a35)),
-        const SizedBox(width: 5),
-        Text(text,
-            style: const TextStyle(
-                color: Color(0xff061a35),
-                fontWeight: FontWeight.w900,
-                fontSize: 13))
-      ]));
-  Widget _heroTeam(BuildContext context, Team team) => SizedBox(
-      width: context.w <= 390 ? 94 : 114,
-      child: Column(children: [
-        TeamBadge(team, size: context.w <= 390 ? 70 : 84),
-        const SizedBox(height: 10),
-        Text(team.name.toUpperCase(),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+        color: filled ? badgeColor.withValues(alpha: .18) : Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: badgeColor.withValues(alpha: .7)),
+        boxShadow: [
+          BoxShadow(
+            color: badgeColor.withValues(alpha: .10),
+            blurRadius: 14,
+          )
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, color: badgeColor, size: 16),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
             style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: context.w <= 390 ? 11 : context.sp(13)))
-      ]));
+              color: badgeColor,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class EmptyOrErrorImage extends StatelessWidget {
-  const EmptyOrErrorImage(
-      {super.key, required this.asset, required this.fallback});
-  final String asset;
-  final String fallback;
+  const EmptyOrErrorImage({super.key, required this.label, this.icon = Icons.image_rounded});
+
+  final String label;
+  final IconData icon;
+
   @override
-  Widget build(BuildContext context) => Image.asset(asset,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Center(
-          child: Text(fallback,
-              style: TextStyle(
-                  color: context.cric.text, fontWeight: FontWeight.w900))));
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      color: c.card2,
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: c.muted, size: 32),
+          const SizedBox(height: 8),
+          Text(label, style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
 }

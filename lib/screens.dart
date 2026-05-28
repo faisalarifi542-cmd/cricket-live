@@ -1,17 +1,258 @@
 import 'package:flutter/material.dart';
+
 import 'app_theme.dart';
 import 'components.dart';
 import 'models.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen(
-      {super.key,
-      required this.onOpenStream,
-      required this.onOpenMatch,
-      required this.onOpenRanking});
-  final VoidCallback onOpenStream;
-  final VoidCallback onOpenMatch;
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.onOpenMatchDetails,
+    required this.onOpenSeries,
+    required this.onOpenSearch,
+    required this.onOpenNotifications,
+    required this.onOpenFilters,
+    required this.onOpenReminders,
+    required this.onOpenRanking,
+  });
+
+  final VoidCallback onOpenMatchDetails;
+  final VoidCallback onOpenSeries;
+  final VoidCallback onOpenSearch;
+  final VoidCallback onOpenNotifications;
+  final VoidCallback onOpenFilters;
+  final VoidCallback onOpenReminders;
   final VoidCallback onOpenRanking;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int topTab = 1;
+  int category = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final categories = ['All', 'International', 'League', 'Domestic'];
+    return Container(
+      decoration: BoxDecoration(gradient: c.bgGradient),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(
+              context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(
+              showLogo: true,
+              trailing: [
+                GlowIconButton(icon: Icons.search_rounded, onTap: widget.onOpenSearch),
+                const SizedBox(width: 8),
+                GlowIconButton(
+                  icon: topTab == 2 ? Icons.notifications_none_rounded : Icons.notifications_rounded,
+                  badge: '3',
+                  onTap: widget.onOpenNotifications,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            SegmentedTabs(
+              items: const [
+                ('Live', Icons.podcasts_rounded),
+                ('Upcoming', Icons.calendar_month_rounded),
+                ('Finished', Icons.check_circle_outline_rounded),
+              ],
+              selected: topTab,
+              onChanged: (v) => setState(() => topTab = v),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 46,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (_, i) => PillChip(
+                  categories[i],
+                  selected: category == i,
+                  onTap: () => setState(() => category = i),
+                ),
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemCount: categories.length,
+              ),
+            ),
+            const SizedBox(height: 22),
+            HomeHeroCard(
+              fixture: topTab == 2 ? AppData.finishedHero : AppData.upcomingHero,
+              finished: topTab == 2,
+              onButtonTap: widget.onOpenMatchDetails,
+            ),
+            const SizedBox(height: 28),
+            if (topTab == 1) ...[
+              SectionHeader('Upcoming Series', icon: Icons.calendar_view_week_rounded, action: 'See All', onAction: widget.onOpenSeries),
+              const SizedBox(height: 14),
+              Row(
+                children: AppData.upcomingSeries
+                    .map((series) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: series == AppData.upcomingSeries.last ? 0 : 12),
+                            child: UpcomingSeriesMiniCard(series: series, onTap: widget.onOpenSeries),
+                          ),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 28),
+              SectionHeader('Featured Fixtures', icon: Icons.star_border_rounded, action: 'See All', onAction: widget.onOpenSeries),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 232,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemBuilder: (_, i) => FeaturedFixtureCard(
+                    fixture: AppData.featuredFixtures[i],
+                    onTap: widget.onOpenReminders,
+                  ),
+                  separatorBuilder: (_, __) => const SizedBox(width: 14),
+                  itemCount: AppData.featuredFixtures.length,
+                ),
+              ),
+            ] else if (topTab == 2) ...[
+              SectionHeader('Recent Results', icon: Icons.emoji_events_outlined, action: 'See All', onAction: widget.onOpenSeries),
+              const SizedBox(height: 14),
+              Row(
+                children: AppData.recentResults
+                    .map((result) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: result == AppData.recentResults.last ? 0 : 12),
+                            child: RecentResultMiniCard(result: result, onTap: widget.onOpenMatchDetails),
+                          ),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 28),
+              SectionHeader('Top Performers', icon: Icons.auto_graph_rounded, action: 'See All', onAction: widget.onOpenSeries),
+              const SizedBox(height: 14),
+              const PlayerOfMatchCard(),
+            ] else ...[
+              SectionHeader('Live Centre', icon: Icons.live_tv_rounded, action: 'Open Match', onAction: widget.onOpenMatchDetails),
+              const SizedBox(height: 14),
+              HomeHeroCard(
+                fixture: const HeroFixture(
+                  badge: 'LIVE',
+                  series: '1st Test • Day 1',
+                  date: 'West Indies tour of New Zealand, 2025',
+                  time: '158/3 (38.4 OV)',
+                  left: AppData.newZealand,
+                  right: AppData.westIndies,
+                  centerTitle: 'VS',
+                  venue: 'NZ won the toss & chose to bat',
+                  button: 'Watch Live',
+                ),
+                onButtonTap: widget.onOpenMatchDetails,
+              ),
+            ],
+            const SizedBox(height: 28),
+            SectionHeader('Quick Access', icon: Icons.flash_on_rounded, action: 'See All', onAction: widget.onOpenSeries),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(child: QuickAccessCard(icon: Icons.emoji_events_outlined, title: 'Series', subtitle: 'All Series', onTap: widget.onOpenSeries, accent: const Color(0xff22d3ee))),
+                const SizedBox(width: 12),
+                Expanded(child: QuickAccessCard(icon: Icons.calendar_month_rounded, title: 'Schedule', subtitle: 'All Fixtures', onTap: widget.onOpenSeries, accent: const Color(0xff84cc16))),
+                const SizedBox(width: 12),
+                Expanded(child: QuickAccessCard(icon: Icons.bar_chart_rounded, title: 'Rankings', subtitle: 'ICC Rankings', onTap: widget.onOpenRanking, accent: const Color(0xffa855f7))),
+                const SizedBox(width: 12),
+                Expanded(child: QuickAccessCard(icon: Icons.confirmation_num_outlined, title: 'Tickets', subtitle: 'Book Now', onTap: widget.onOpenFilters, accent: const Color(0xfff59e0b))),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class MatchesScreen extends StatefulWidget {
+  const MatchesScreen({
+    super.key,
+    required this.onOpenMatch,
+    required this.onOpenSearch,
+    required this.onOpenFilters,
+    required this.onOpenReminders,
+    required this.onOpenSeries,
+  });
+
+  final VoidCallback onOpenMatch;
+  final VoidCallback onOpenSearch;
+  final VoidCallback onOpenFilters;
+  final VoidCallback onOpenReminders;
+  final VoidCallback onOpenSeries;
+
+  @override
+  State<MatchesScreen> createState() => _MatchesScreenState();
+}
+
+class _MatchesScreenState extends State<MatchesScreen> {
+  int topTab = 1;
+  int category = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final filters = ['All', 'International', 'League', 'Domestic'];
+    final list = topTab == 2 ? AppData.matchesFinished : AppData.matchesUpcoming;
+    return Container(
+      decoration: BoxDecoration(gradient: c.bgGradient),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(
+              showLogo: true,
+              trailing: [
+                GlowIconButton(icon: Icons.search_rounded, onTap: widget.onOpenSearch),
+                const SizedBox(width: 8),
+                GlowIconButton(icon: Icons.filter_alt_outlined, onTap: widget.onOpenFilters),
+              ],
+            ),
+            const SizedBox(height: 22),
+            SegmentedTabs(
+              items: const [
+                ('Live', Icons.podcasts_rounded),
+                ('Upcoming', Icons.calendar_month_rounded),
+                ('Finished', Icons.check_circle_outline_rounded),
+              ],
+              selected: topTab,
+              onChanged: (v) => setState(() => topTab = v),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 46,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (_, i) => PillChip(filters[i], selected: category == i, onTap: () => setState(() => category = i)),
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemCount: filters.length,
+              ),
+            ),
+            const SizedBox(height: 22),
+            for (final item in list)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 18),
+                child: topTab == 2
+                    ? FinishedMatchCard(match: item, onTap: widget.onOpenMatch)
+                    : UpcomingMatchCard(match: item, onTap: widget.onOpenMatch, onReminder: widget.onOpenReminders),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ScheduleScreen extends StatelessWidget {
+  const ScheduleScreen({super.key, required this.onOpenSeries});
+
+  final VoidCallback onOpenSeries;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
@@ -19,2169 +260,3157 @@ class HomeScreen extends StatelessWidget {
       decoration: BoxDecoration(gradient: c.bgGradient),
       child: SafeArea(
         child: ListView(
-            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                context.horizontalPadding, context.mainBottomPadding),
-            children: [
-              Row(children: [
-                const CricLogo(size: 36),
-                const Spacer(),
-                Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                    decoration: BoxDecoration(
-                        color: c.live.withValues(alpha: .12),
-                        borderRadius: BorderRadius.circular(20)),
-                    child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                              width: 6,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                  shape: BoxShape.circle, color: c.live)),
-                          const SizedBox(width: 6),
-                          Text('LIVE',
-                              style: TextStyle(
-                                  color: c.live,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13))
-                        ])),
-                IconButton(
-                    onPressed: () {},
-                    icon: Icon(Icons.search_rounded, color: c.text, size: 30)),
-                Stack(children: [
-                  IconButton(
-                      onPressed: () {},
-                      icon: Icon(Icons.notifications_rounded,
-                          color: c.text, size: 30)),
-                  Positioned(
-                      right: 5,
-                      top: 5,
-                      child: CircleAvatar(
-                          radius: 11,
-                          backgroundColor: c.live,
-                          child: const Text('3',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w900))))
-                ])
-              ]),
-              const SizedBox(height: 22),
-              SegmentedTabs(items: const [
-                ('Live', Icons.podcasts_rounded),
-                ('Upcoming', Icons.calendar_month_rounded),
-                ('Finished', Icons.check_circle_outline_rounded)
-              ], selected: 0, onChanged: (_) {}),
-              const SizedBox(height: 24),
-              MatchHeroCard(onWatch: onOpenStream),
-              const SizedBox(height: 28),
-              SectionHeader('Trending Rankings',
-                  icon: Icons.trending_up_rounded,
-                  action: 'See All',
-                  onAction: onOpenRanking),
-              const SizedBox(height: 14),
-              _TrendingRankings(onTap: onOpenRanking),
-              const SizedBox(height: 28),
-              const SectionHeader('Quick Access', icon: Icons.flash_on_rounded),
-              const SizedBox(height: 14),
-              _QuickAccess(onOpenRanking: onOpenRanking),
-            ]),
-      ),
-    );
-  }
-}
-
-class _TrendingRankings extends StatelessWidget {
-  const _TrendingRankings({required this.onTap});
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      height: context.w <= 390 ? 220 : 215,
-      padding: const EdgeInsets.all(20),
-      onTap: onTap,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('ICC ODI Batsmen Rankings',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: c.text,
-                fontWeight: FontWeight.w800,
-                fontSize: context.sp(18))),
-        const SizedBox(height: 12),
-        Expanded(
-            child: Row(
-                children: AppData.homeRankings.asMap().entries.map((entry) {
-          final p = entry.value;
-          final isFirst = entry.key == 0;
-          return Expanded(
+          padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(title: 'SCHEDULE'),
+            const SizedBox(height: 22),
+            const PremiumCard(
+              padding: EdgeInsets.all(24),
               child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                Stack(clipBehavior: Clip.none, children: [
-                  Container(
-                    width: 66,
-                    height: 66,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: isFirst
-                              ? c.warning
-                              : c.border.withValues(alpha: .6),
-                          width: isFirst ? 2.5 : 1.5),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Image.asset(p.asset,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Center(
-                            child: Text(
-                                p.name
-                                    .split(' ')
-                                    .map((e) => e[0])
-                                    .take(2)
-                                    .join(),
-                                style: TextStyle(
-                                    color: c.text,
-                                    fontWeight: FontWeight.w900)))),
-                  ),
-                  Positioned(
-                      left: -8,
-                      top: -6,
-                      child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isFirst ? c.warning : c.card2,
-                              border: Border.all(
-                                  color: isFirst ? c.warning : c.border,
-                                  width: 1.5)),
-                          child: Center(
-                              child: Text('${p.rank}',
-                                  style: TextStyle(
-                                      color: isFirst ? Colors.white : c.text,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w900)))))
-                ]),
-                const SizedBox(height: 8),
-                Text(p.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14)),
-                Text(p.country,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: c.muted, fontSize: 12)),
-                const SizedBox(height: 2),
-                Text('${p.rating} Pts',
-                    style: TextStyle(
-                        color: c.isDark ? c.cyan : c.primary,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 22))
-              ]));
-        }).toList())),
-      ]),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Fixture Planner', style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w900)),
+                  SizedBox(height: 10),
+                  Text('The new CricPro schedule view will surface every series, calendar sync and reminders from the redesign.', style: TextStyle(color: Color(0xffb9c7d8), fontSize: 16, height: 1.5)),
+                  SizedBox(height: 18),
+                  Text('Use Quick Access → Schedule or the Add Series to Calendar flow from Series Detail while I wire the full planner in this branch.', style: TextStyle(color: Color(0xff7f8fa6), fontSize: 14.5, height: 1.5)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-class _QuickAccess extends StatelessWidget {
-  const _QuickAccess({required this.onOpenRanking});
-  final VoidCallback onOpenRanking;
+class NewsScreen extends StatefulWidget {
+  const NewsScreen({
+    super.key,
+    required this.onOpenSearch,
+    required this.onOpenFilters,
+    required this.onOpenArticle,
+  });
+
+  final VoidCallback onOpenSearch;
+  final VoidCallback onOpenFilters;
+  final VoidCallback onOpenArticle;
+
+  @override
+  State<NewsScreen> createState() => _NewsScreenState();
+}
+
+class _NewsScreenState extends State<NewsScreen> {
+  int tab = 0;
+
+  List<NewsArticle> get articles => switch (tab) {
+        0 => AppData.newsAll,
+        1 => AppData.newsInternational,
+        2 => AppData.newsLeagues,
+        _ => AppData.newsLatest,
+      };
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final items = [
-      ('Series', 'All Series', Icons.emoji_events_rounded, c.cyan, () {}),
-      (
-        'Schedule',
-        'Fixtures',
-        Icons.calendar_month_rounded,
-        const Color(0xff65cc18),
-        () {}
+    final current = articles;
+    return Container(
+      decoration: BoxDecoration(gradient: c.bgGradient),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(
+              showLogo: true,
+              subtitle: 'NEWS',
+              trailing: [
+                GlowIconButton(icon: Icons.search_rounded, onTap: widget.onOpenSearch),
+                const SizedBox(width: 8),
+                GlowIconButton(icon: Icons.filter_alt_outlined, onTap: widget.onOpenFilters),
+              ],
+            ),
+            const SizedBox(height: 18),
+            SegmentedTabs(
+              items: const [
+                ('All', null),
+                ('International', null),
+                ('Leagues', null),
+                ('Latest', null),
+              ],
+              selected: tab,
+              onChanged: (v) => setState(() => tab = v),
+            ),
+            const SizedBox(height: 18),
+            FeaturedNewsCard(article: current.first, onTap: widget.onOpenArticle),
+            const SizedBox(height: 14),
+            for (final article in current.skip(1))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: NewsListCard(article: article, onTap: widget.onOpenArticle),
+              ),
+          ],
+        ),
       ),
-      (
-        'Rankings',
-        'ICC Rankings',
-        Icons.bar_chart_rounded,
-        const Color(0xff8b4dff),
-        onOpenRanking
-      ),
-      (
-        'Highlights',
-        'Top Moments',
-        Icons.smart_display_rounded,
-        const Color(0xffff6a00),
-        () {}
-      ),
-    ];
-    return Row(
-      children: items
-          .map(
-            (e) => Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: PremiumCard(
-                  height: 110,
-                  padding: const EdgeInsets.all(10),
-                  onTap: e.$5,
-                  radius: 24,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
+    );
+  }
+}
+
+class HighlightsScreen extends StatefulWidget {
+  const HighlightsScreen({
+    super.key,
+    required this.onOpenVideo,
+    required this.onOpenSearch,
+    required this.onOpenNotifications,
+  });
+
+  final VoidCallback onOpenVideo;
+  final VoidCallback onOpenSearch;
+  final VoidCallback onOpenNotifications;
+
+  @override
+  State<HighlightsScreen> createState() => _HighlightsScreenState();
+}
+
+class _HighlightsScreenState extends State<HighlightsScreen> {
+  int tab = 0;
+  int category = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    const chips = ['All', 'T20I', 'ODI', 'Test', 'Batting', 'Bowling', 'Fielding'];
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+            children: [
+              AppHeader(
+                title: 'Highlights',
+                subtitle: 'Relive the best cricket moments',
+                trailing: [
+                  TextButton.icon(onPressed: () {}, icon: const Icon(Icons.history_rounded), label: const Text('History')),
+                ],
+              ),
+              const SizedBox(height: 18),
+              SegmentedTabs(
+                items: const [
+                  ('Top Moments', null),
+                  ('Shorts', null),
+                ],
+                selected: tab,
+                onChanged: (v) => setState(() => tab = v),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemBuilder: (_, i) => PillChip(chips[i], selected: category == i, onTap: () => setState(() => category = i)),
+                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  itemCount: chips.length,
+                ),
+              ),
+              const SizedBox(height: 18),
+              if (tab == 0) ...[
+                FeaturedVideoCard(video: AppData.topMoments.first, onTap: widget.onOpenVideo),
+                const SizedBox(height: 14),
+                for (final video in AppData.topMoments.skip(1))
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: VideoListCard(video: video, onTap: widget.onOpenVideo),
+                  ),
+              ] else ...[
+                GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: AppData.shorts.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: .66,
+                  ),
+                  itemBuilder: (_, i) => ShortCard(video: AppData.shorts[i], onTap: widget.onOpenVideo),
+                ),
+                const SizedBox(height: 18),
+                PremiumCard(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
                     children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: e.$4.withValues(alpha: .18),
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                                color: e.$4.withValues(alpha: .25),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4))
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Never miss a moment', style: TextStyle(color: c.text, fontSize: 20, fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 6),
+                            Text('Enable alerts for wickets, milestones and clips from your favourite teams.', style: TextStyle(color: c.muted, height: 1.5)),
                           ],
                         ),
-                        child: Icon(e.$3, color: e.$4, size: 24),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        e.$1,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w800,
-                            fontSize: context.sp(12.5)),
-                      ),
-                      Text(
-                        e.$2,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: c.muted, fontSize: 10.5),
-                      ),
+                      const SizedBox(width: 16),
+                      const GradientButton(label: 'Enable Alerts', icon: Icons.notifications_active_outlined),
                     ],
                   ),
-                ),
-              ),
-            ),
-          )
-          .toList(),
+                )
+              ]
+            ],
+          ),
+        ),
+      ),
     );
-  }
-}
-
-class MatchesScreen extends StatefulWidget {
-  const MatchesScreen({super.key, required this.onOpenMatch});
-  final VoidCallback onOpenMatch;
-  @override
-  State<MatchesScreen> createState() => _MatchesScreenState();
-}
-
-class _MatchesScreenState extends State<MatchesScreen> {
-  int selected = 0;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final list = selected == 1 ? AppData.upcomingMatches : AppData.liveMatches;
-    final grouped = <String, List<CricketMatch>>{};
-    for (final m in list) {
-      grouped.putIfAbsent(m.series, () => []).add(m);
-    }
-    return Container(
-        decoration: BoxDecoration(gradient: c.bgGradient),
-        child: SafeArea(
-            child: ListView(
-                padding: EdgeInsets.fromLTRB(context.horizontalPadding, 22,
-                    context.horizontalPadding, context.mainBottomPadding),
-                children: [
-              Row(children: [
-                Text('MATCHES',
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontStyle: FontStyle.italic,
-                        fontSize: context.sp(34))),
-                const Spacer(),
-                Icon(Icons.search_rounded, color: c.text, size: 32),
-                const SizedBox(width: 20),
-                Icon(Icons.filter_alt_rounded, color: c.text, size: 30)
-              ]),
-              const SizedBox(height: 22),
-              SegmentedTabs(
-                  items: const [
-                    ('Live', Icons.podcasts_rounded),
-                    ('Upcoming', Icons.calendar_month_rounded),
-                    ('Recent', Icons.check_circle_outline_rounded)
-                  ],
-                  selected: selected,
-                  onChanged: (v) => setState(() => selected = v)),
-              const SizedBox(height: 20),
-              SizedBox(
-                  height: 48,
-                  child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.only(right: 20),
-                      children: const [
-                        PillChip('All', selected: true),
-                        SizedBox(width: 12),
-                        PillChip('International'),
-                        SizedBox(width: 12),
-                        PillChip('League'),
-                        SizedBox(width: 12),
-                        PillChip('Domestic'),
-                        SizedBox(width: 20),
-                      ])),
-              ...grouped.entries.expand((e) => [
-                    const SizedBox(height: 24),
-                    SectionHeader(e.key,
-                        action: 'View All',
-                        accentBar: true,
-                        uppercase: true),
-                    const SizedBox(height: 14),
-                    ...e.value.map((m) => Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: MatchCard(
-                            match: m,
-                            upcoming: selected == 1,
-                            onTap: widget.onOpenMatch)))
-                  ])
-            ])));
-  }
-}
-
-class MatchCard extends StatelessWidget {
-  const MatchCard(
-      {super.key, required this.match, required this.upcoming, this.onTap});
-  final CricketMatch match;
-  final bool upcoming;
-  final VoidCallback? onTap;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final cardHeight = context.w <= 390 ? (upcoming ? 205.0 : 210.0) : (upcoming ? 195.0 : 205.0);
-    return PremiumCard(
-        height: cardHeight,
-        padding: const EdgeInsets.all(20),
-        onTap: onTap,
-        child: Column(children: [
-          Row(children: [
-            if (match.isLive)
-              const LivePill(compact: true)
-            else
-              Text(match.matchNo,
-                  style: TextStyle(
-                      color: c.muted,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15)),
-            if (match.isLive) ...[
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Text(match.matchNo,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15)))
-            ] else
-              const Spacer(),
-            Icon(Icons.notifications_rounded, color: c.muted, size: 26)
-          ]),
-          const Spacer(),
-          Row(children: [
-            TeamBadge(match.left, size: context.w <= 390 ? 62 : 68),
-            SizedBox(width: context.w <= 390 ? 12 : 14),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(match.left.short,
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: context.w <= 390 ? 26 : 28)),
-                  if (upcoming)
-                    Text(match.left.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13))
-                  else ...[
-                    Text(match.leftScore,
-                        maxLines: 1,
-                        overflow: TextOverflow.visible,
-                        softWrap: false,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w900,
-                            fontSize: context.w <= 390 ? 26 : 28)),
-                    Text(match.leftOvers,
-                        style: TextStyle(color: c.muted, fontSize: 14))
-                  ]
-                ])),
-            _vsSmall(context),
-            Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                  Text(match.right.short,
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: context.w <= 390 ? 26 : 28)),
-                  Text(upcoming ? match.right.name : match.rightScore,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.end,
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w700,
-                          fontSize: upcoming ? 13 : 15))
-                ])),
-            SizedBox(width: context.w <= 390 ? 12 : 14),
-            TeamBadge(match.right, size: context.w <= 390 ? 62 : 68)
-          ]),
-          const Spacer(),
-          Divider(color: c.border, height: 20),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.sports_cricket_rounded,
-                color: upcoming ? c.warning : (c.isDark ? c.cyan : c.primary),
-                size: 18),
-            const SizedBox(width: 8),
-            Flexible(
-                child: Text(match.status,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: c.isDark ? c.cyan : c.primary,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14)))
-          ]),
-          if (upcoming) ...[
-            const SizedBox(height: 8),
-            Container(
-                width: 180,
-                height: 30,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                    color: c.card2,
-                    borderRadius: BorderRadius.circular(15)),
-                child: Text('NOT STARTED',
-                    style: TextStyle(
-                        color: c.muted,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12)))
-          ]
-        ]));
-  }
-
-  Widget _vsSmall(BuildContext context) => Container(
-      width: 48,
-      height: 48,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: context.cric.card2,
-          border: Border.all(color: context.cric.border, width: 1.2)),
-      child: Text('VS',
-          style: TextStyle(
-              color: context.cric.text,
-              fontWeight: FontWeight.w900,
-              fontSize: 13)));
-}
-
-class ScheduleScreen extends StatelessWidget {
-  const ScheduleScreen({super.key});
-  @override
-  Widget build(BuildContext context) => SimpleTabPage(
-      title: 'Schedule',
-      icon: Icons.calendar_month_rounded,
-      heading: 'Today Fixtures',
-      children: AppData.upcomingMatches
-          .map((m) => Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: MatchCard(match: m, upcoming: true)))
-          .toList());
-}
-
-class NewsScreen extends StatelessWidget {
-  const NewsScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final items = [
-      'New Zealand build strong first innings before rain break',
-      'Bangladesh prepare for final T20I against Ireland',
-      'International League T20 season opener confirmed'
-    ];
-    return SimpleTabPage(
-      title: 'News',
-      icon: Icons.article_rounded,
-      heading: 'Top Stories',
-      children: items
-          .map(
-            (t) => Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: PremiumCard(
-                height: 112,
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        gradient: c.primaryGradient,
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Icon(Icons.article_rounded,
-                          color: Colors.white),
-                    ),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            t,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.text,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16),
-                          ),
-                          const SizedBox(height: 6),
-                          Text('2 hours ago • CricPro News',
-                              style: TextStyle(color: c.muted, fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-}
-
-class SimpleTabPage extends StatelessWidget {
-  const SimpleTabPage(
-      {super.key,
-      required this.title,
-      required this.icon,
-      required this.heading,
-      required this.children});
-  final String title;
-  final IconData icon;
-  final String heading;
-  final List<Widget> children;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-        decoration: BoxDecoration(gradient: c.bgGradient),
-        child: SafeArea(
-            child: ListView(
-                padding: EdgeInsets.fromLTRB(context.horizontalPadding, 24,
-                    context.horizontalPadding, context.mainBottomPadding),
-                children: [
-              Row(children: [
-                Text(title,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: context.sp(36))),
-                const Spacer(),
-                Icon(Icons.search_rounded, color: c.text, size: 32),
-                const SizedBox(width: 20),
-                Icon(Icons.filter_alt_rounded, color: c.text, size: 31)
-              ]),
-              const SizedBox(height: 28),
-              SectionHeader(heading, icon: icon),
-              const SizedBox(height: 16),
-              ...children,
-            ])));
   }
 }
 
 class MoreScreen extends StatelessWidget {
-  const MoreScreen(
-      {super.key,
-      required this.isDark,
-      required this.onThemeChanged,
-      required this.onOpenRanking,
-      required this.onOpenTeams});
+  const MoreScreen({
+    super.key,
+    required this.isDark,
+    required this.onThemeChanged,
+    required this.onOpenRanking,
+    required this.onOpenTeams,
+    required this.onOpenContact,
+    required this.onOpenPolicy,
+    required this.onOpenTerms,
+    required this.onOpenHighlights,
+  });
+
   final bool isDark;
   final ValueChanged<bool> onThemeChanged;
   final VoidCallback onOpenRanking;
   final VoidCallback onOpenTeams;
+  final VoidCallback onOpenContact;
+  final VoidCallback onOpenPolicy;
+  final VoidCallback onOpenTerms;
+  final VoidCallback onOpenHighlights;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return Container(
-        decoration: BoxDecoration(gradient: c.bgGradient),
-        child: SafeArea(
-            child: ListView(
-                padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                    context.horizontalPadding, context.mainBottomPadding),
-                children: [
-              Row(children: [
-                const CricLogo(size: 34),
-                const Spacer(),
-                Icon(Icons.search_rounded, color: c.text, size: 30),
-                const SizedBox(width: 20),
-                Stack(children: [
-                  Icon(Icons.notifications_rounded, color: c.text, size: 30),
-                  Positioned(
-                      right: 0,
-                      child: CircleAvatar(
-                          radius: 10,
-                          backgroundColor: c.live,
-                          child: const Text('3',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900))))
-                ])
-              ]),
-              const SizedBox(height: 24),
-              Container(
-                  height: 150,
-                  decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: c.border, width: 1.2),
-                      boxShadow: [
-                        BoxShadow(
-                            color: c.isDark
-                                ? Colors.black.withValues(alpha: .22)
-                                : const Color(0xff9bb7d6).withValues(alpha: .16),
-                            blurRadius: 24,
-                            offset: const Offset(0, 10)),
-                      ]),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(fit: StackFit.expand, children: [
-                    Image.asset('assets/images/stadium_live.png',
-                        fit: BoxFit.cover),
-                    Container(
-                        decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                          c.card.withValues(alpha: .92),
-                          c.card.withValues(alpha: .88)
-                        ]))),
-                    Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Row(children: [
-                          Stack(clipBehavior: Clip.none, children: [
-                            CircleAvatar(
-                                radius: 48,
-                                backgroundColor: c.card2,
-                                child: Text('RS',
-                                    style: TextStyle(
-                                        color: c.text,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 32))),
-                            Positioned(
-                                right: -2,
-                                bottom: -2,
-                                child: CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor: c.cyan,
-                                    child: const Icon(Icons.edit_rounded,
-                                        color: Colors.white, size: 18)))
-                          ]),
-                          const SizedBox(width: 20),
-                          Expanded(
-                              child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                Text('Rohit Sharma',
-                                    style: TextStyle(
-                                        color: c.text,
-                                        fontSize: 26,
-                                        fontWeight: FontWeight.w900)),
-                                const SizedBox(height: 4),
-                                Text('♛  Pro Member',
-                                    style: TextStyle(
-                                        color: c.cyan,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 16)),
-                                const SizedBox(height: 10),
-                                Text('⭐ 1240   |   🛡 Level 7',
-                                    style: TextStyle(
-                                        color: c.text,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 15))
-                              ])),
-                          Icon(Icons.chevron_right_rounded,
-                              color: c.muted, size: 36)
-                        ]))
-                  ])),
-              const SizedBox(height: 26),
-              _MenuGroup(title: 'RANKINGS & TEAMS', items: [
-                (
-                  'ICC Men Ranking',
-                  Icons.bar_chart_rounded,
-                  c.cyan,
-                  onOpenRanking
-                ),
-                (
-                  'ICC Women Ranking',
-                  Icons.bar_chart_rounded,
-                  const Color(0xff8b4dff),
-                  () {}
-                ),
-                (
-                  'Teams',
-                  Icons.groups_rounded,
-                  const Color(0xff20d0a6),
-                  onOpenTeams
-                )
-              ]),
-              const SizedBox(height: 24),
-              _MenuGroup(
-                  title: 'SUPPORT & MORE',
-                  items: [
-                    ('Invite Friends', Icons.share_rounded, c.cyan, () {}),
-                    ('Contact Us', Icons.email_rounded, c.warning, () {}),
-                    (
-                      'Terms & Conditions',
-                      Icons.description_rounded,
-                      const Color(0xff8b4dff),
-                      () {}
-                    ),
-                    (
-                      'Privacy Policy',
-                      Icons.security_rounded,
-                      const Color(0xff20d0a6),
-                      () {}
-                    )
-                  ],
-                  footer: _AppearanceRow(
-                      isDark: isDark, onChanged: onThemeChanged)),
-            ])));
+      decoration: BoxDecoration(gradient: c.bgGradient),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(
+              showLogo: true,
+              trailing: [
+                GlowIconButton(icon: Icons.search_rounded),
+                const SizedBox(width: 8),
+                GlowIconButton(icon: Icons.notifications_none_rounded, badge: '3'),
+              ],
+            ),
+            const SizedBox(height: 22),
+            _MenuGroup(
+              title: 'EXPLORE',
+              items: [
+                ('ICC Men Ranking', Icons.bar_chart_rounded, const Color(0xff22d3ee), onOpenRanking),
+                ('ICC Women Ranking', Icons.show_chart_rounded, const Color(0xff8b5cf6), onOpenRanking),
+                ('Teams', Icons.groups_rounded, const Color(0xff36d399), onOpenTeams),
+                ('Highlights', Icons.play_circle_outline_rounded, const Color(0xff00d9ff), onOpenHighlights),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _MenuGroup(
+              title: 'SUPPORT & MORE',
+              items: [
+                ('Invite Friends', Icons.share_rounded, const Color(0xff22d3ee), () {}),
+                ('Contact Us', Icons.email_outlined, const Color(0xffffc83d), onOpenContact),
+                ('Terms & Conditions', Icons.description_outlined, const Color(0xff8b5cff), onOpenTerms),
+                ('Privacy Policy', Icons.shield_outlined, const Color(0xff38f28b), onOpenPolicy),
+              ],
+              footer: _AppearanceRow(isDark: isDark, onChanged: onThemeChanged),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
 class _MenuGroup extends StatelessWidget {
-  const _MenuGroup(
-      {required this.title, required this.items, this.footer});
+  const _MenuGroup({required this.title, required this.items, this.footer});
+
   final String title;
   final List<(String, IconData, Color, VoidCallback)> items;
   final Widget? footer;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
           style: TextStyle(
-              color: c.muted,
-              fontSize: 12,
-              letterSpacing: 2.2,
-              fontWeight: FontWeight.w900)),
-      const SizedBox(height: 14),
-      PremiumCard(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(children: [
-            for (final item in items) _menuRow(context, item),
-            if (footer != null) footer!,
-          ])),
-    ]);
-  }
-
-  Widget _menuRow(
-      BuildContext context, (String, IconData, Color, VoidCallback) item) {
-    final c = context.cric;
-    return InkWell(
-        onTap: item.$4,
-        child: SizedBox(
-            height: 76,
-            child: Row(children: [
-              const SizedBox(width: 18),
-              Container(
-                  width: 54,
-                  height: 54,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: item.$3.withValues(alpha: .15)),
-                  child: Icon(item.$2, color: item.$3, size: 26)),
-              const SizedBox(width: 20),
-              Expanded(
-                  child: Text(item.$1,
-                      style: TextStyle(
-                          color: c.text,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800))),
-              Icon(Icons.chevron_right_rounded, color: c.muted, size: 28),
-              const SizedBox(width: 18)
-            ])));
+            color: c.muted,
+            letterSpacing: 2.2,
+            fontWeight: FontWeight.w800,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 12),
+        PremiumCard(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              for (final item in items)
+                InkWell(
+                  onTap: item.$4,
+                  child: SizedBox(
+                    height: 74,
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 18),
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: item.$3.withValues(alpha: .14),
+                          ),
+                          child: Icon(item.$2, color: item.$3),
+                        ),
+                        const SizedBox(width: 18),
+                        Expanded(
+                          child: Text(
+                            item.$1,
+                            style: TextStyle(color: c.text, fontSize: 17, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded, color: c.muted),
+                        const SizedBox(width: 18),
+                      ],
+                    ),
+                  ),
+                ),
+              if (footer != null) footer!,
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }
 
 class _AppearanceRow extends StatelessWidget {
   const _AppearanceRow({required this.isDark, required this.onChanged});
+
   final bool isDark;
   final ValueChanged<bool> onChanged;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return SizedBox(
-        height: 80,
-        child: Row(children: [
-          const SizedBox(width: 18),
-          Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: c.primary.withValues(alpha: .15)),
-              child: Icon(
-                  isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                  color: c.primary,
-                  size: 26)),
-          const SizedBox(width: 20),
-          Expanded(
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text('Appearance',
-                    style: TextStyle(
-                        color: c.text,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800)),
-                Text(isDark ? 'Dark Mode' : 'Light Mode',
-                    style: TextStyle(color: c.muted, fontSize: 13))
-              ])),
-          Switch(value: isDark, onChanged: onChanged),
-          const SizedBox(width: 18)
-        ]));
-  }
-}
-
-class LiveStreamScreen extends StatelessWidget {
-  const LiveStreamScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Scaffold(
-      body: Container(
-          decoration: BoxDecoration(gradient: c.bgGradient),
-          child: SafeArea(
-              child: ListView(
-                  padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                      context.horizontalPadding, context.detailBottomPadding),
-                  children: [
-                Row(children: [
-                  IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: Icon(Icons.arrow_back_rounded,
-                          color: c.text, size: 32)),
-                  Expanded(
-                      child: Text('LIVE',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: c.text,
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900))),
-                  Icon(Icons.share_rounded, color: c.text, size: 30)
-                ]),
-                const SizedBox(height: 14),
-                PremiumCard(
-                    height: context.w <= 390 ? 148 : 132,
-                    padding: const EdgeInsets.all(18),
-                    child: Row(children: [
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                            Row(children: [
-                              Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                      color: c.live.withValues(alpha: .12),
-                                      borderRadius: BorderRadius.circular(12)),
-                                  child: Text('● LIVE',
-                                      style: TextStyle(
-                                          color: c.live,
-                                          fontWeight: FontWeight.w900,
-                                          fontSize: 12))),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                  child: Text('1st Test • Day 1',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: c.text,
-                                          fontSize: context.sp(15),
-                                          fontWeight: FontWeight.w800)))
-                            ]),
-                            const SizedBox(height: 10),
-                            Text('New Zealand vs West Indies',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: c.text,
-                                    fontSize: context.sp(20),
-                                    fontWeight: FontWeight.w900)),
-                            const SizedBox(height: 10),
-                            Text(
-                                'NZ 158/3 (38.4 ov) • NZ won the toss & chose to bat',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: c.isDark ? c.cyan : c.primary,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 13))
-                          ])),
-                      const SizedBox(width: 12),
-                      _smallPill(context, Icons.visibility_rounded, '128K')
-                    ])),
-                const SizedBox(height: 22),
-                Container(
-                    height: 300,
-                    decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: c.border, width: 1.2)),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(fit: StackFit.expand, children: [
-                      Image.asset('assets/images/stadium_live.png',
-                          fit: BoxFit.cover),
-                      Container(color: Colors.black.withValues(alpha: .18)),
-                      const Positioned(left: 18, top: 18, child: LivePill()),
-                      Positioned(
-                          right: 18,
-                          top: 18,
-                          child: Container(
-                              width: 54,
-                              height: 54,
-                              decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: .92),
-                                  borderRadius: BorderRadius.circular(18)),
-                              child: const Icon(Icons.fullscreen_rounded,
-                                  color: Color(0xff061a35), size: 28))),
-                      Center(
-                          child: CircleAvatar(
-                              radius: 54,
-                              backgroundColor:
-                                  Colors.white.withValues(alpha: .88),
-                              child: Icon(Icons.play_arrow_rounded,
-                                  color: c.primary, size: 68)))
-                    ])),
-                const SizedBox(height: 22),
-                PremiumCard(
-                    height: 96,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    radius: 26,
-                    child: Row(children: [
-                      Container(
-                          width: 52,
-                          height: 52,
-                          decoration: BoxDecoration(
-                              color: c.cyan.withValues(alpha: .15),
-                              borderRadius: BorderRadius.circular(16)),
-                          child: Icon(Icons.shield_rounded,
-                              color: c.cyan, size: 30)),
-                      const SizedBox(width: 20),
-                      Expanded(
-                          child: Text(
-                              'If you are facing any buffering issue,\nplease switch to another stable link/server.',
-                              style: TextStyle(
-                                  color: c.text, fontSize: 15, height: 1.5)))
-                    ])),
-                const SizedBox(height: 18),
-                const _QualityCard(
-                    title: 'FULL HD', sub: 'Best Quality • 1080p'),
-                const SizedBox(height: 14),
-                const _QualityCard(title: 'HD', sub: 'High Quality • 720p'),
-                const SizedBox(height: 14),
-                const _QualityCard(
-                    title: 'SD', sub: 'Currently Playing', selected: true),
-                const SizedBox(height: 22),
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(Icons.lock_outline_rounded, color: c.muted, size: 18),
-                  const SizedBox(width: 8),
-                  Text('All streams are secure and encrypted',
-                      style: TextStyle(color: c.muted))
-                ]),
-              ]))),
-    );
-  }
-
-  Widget _smallPill(BuildContext context, IconData icon, String txt) =>
-      Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-              color: context.cric.card2,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: context.cric.border, width: 1.2)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 18, color: context.cric.text),
-            const SizedBox(width: 6),
-            Text(txt,
-                style: TextStyle(
-                    color: context.cric.text, fontWeight: FontWeight.w900))
-          ]));
-}
-
-class _QualityCard extends StatelessWidget {
-  const _QualityCard(
-      {required this.title, required this.sub, this.selected = false});
-  final String title;
-  final String sub;
-  final bool selected;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-        decoration: selected
-            ? BoxDecoration(
-                border: Border.all(color: c.cyan, width: 3),
-                borderRadius: BorderRadius.circular(26))
-            : null,
-        child: PremiumCard(
-            height: 96,
-            padding: const EdgeInsets.all(18),
-            radius: 22,
-            child: Row(children: [
-              Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                      gradient: selected ? c.primaryGradient : null,
-                      color: selected ? null : c.card2,
-                      borderRadius: BorderRadius.circular(18)),
-                  child: Icon(
-                      selected
-                          ? Icons.play_arrow_rounded
-                          : Icons.desktop_windows_rounded,
-                      color: selected
-                          ? Colors.white
-                          : (c.isDark ? c.cyan : c.primary),
-                      size: 34)),
-              const SizedBox(width: 20),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                    Text(title,
-                        style: TextStyle(
-                            color: c.text,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900)),
-                    Text(sub,
-                        style: TextStyle(
-                            color: selected ? c.success : c.muted,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700))
-                  ])),
-              selected
-                  ? CircleAvatar(
-                      radius: 28,
-                      backgroundColor: c.cyan,
-                      child: const Icon(Icons.check_rounded,
-                          color: Colors.white, size: 36))
-                  : Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 11),
-                      decoration: BoxDecoration(
-                          color: c.primary.withValues(alpha: .12),
-                          borderRadius: BorderRadius.circular(16)),
-                      child: Text('LIVE',
-                          style: TextStyle(
-                              color: c.primary, fontWeight: FontWeight.w900)))
-            ])));
-  }
-}
-
-class RankingScreen extends StatelessWidget {
-  const RankingScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Scaffold(
-        body: Container(
-            decoration: BoxDecoration(gradient: c.bgGradient),
-            child: SafeArea(
-                child: ListView(
-                    padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                        context.horizontalPadding, context.detailBottomPadding),
-                    children: [
-                  Row(children: [
-                    IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: Icon(Icons.arrow_back_rounded,
-                            color: c.text, size: 32)),
-                    Expanded(
-                        child: Text("ICC Men's Ranking",
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.text,
-                                fontSize: context.sp(26),
-                                fontWeight: FontWeight.w900))),
-                    Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: c.card,
-                            border: Border.all(color: c.border, width: 1.2)),
-                        child: Icon(Icons.tune_rounded, color: c.text, size: 26))
-                  ]),
-                  const SizedBox(height: 18),
-                  const Row(children: [
-                    Expanded(
-                        child:
-                            _DropPill('BATSMEN', Icons.sports_cricket_rounded)),
-                    SizedBox(width: 14),
-                    Expanded(
-                        child: _DropPill('TEST', Icons.sports_cricket_rounded))
-                  ]),
-                  const SizedBox(height: 20),
-                  ...AppData.rankings.map((p) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: _RankingCard(player: p))),
-                ]))));
-  }
-}
-
-class _DropPill extends StatelessWidget {
-  const _DropPill(this.title, this.icon);
-  final String title;
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => PremiumCard(
-      height: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      radius: 24,
-      child: Row(children: [
-        Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-                color: (context.cric.isDark
-                        ? context.cric.cyan
-                        : context.cric.primary)
-                    .withValues(alpha: .15),
-                borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon,
-                color: context.cric.isDark
-                    ? context.cric.cyan
-                    : context.cric.primary,
-                size: 22)),
-        const SizedBox(width: 12),
-        Expanded(
-            child: Text(title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: context.cric.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 17))),
-        Icon(Icons.keyboard_arrow_down_rounded,
-            color: context.cric.text, size: 28)
-      ]));
-}
-
-class _RankingCard extends StatelessWidget {
-  const _RankingCard({required this.player});
-  final RankingPlayer player;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final isFirst = player.rank == 1;
-    return Container(
-        decoration: isFirst
-            ? BoxDecoration(
-                border: Border.all(color: c.cyan, width: 2.5),
-                borderRadius: BorderRadius.circular(30))
-            : null,
-        child: PremiumCard(
-            height: isFirst ? 132 : 118,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(children: [
-              SizedBox(
-                  width: 68,
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (isFirst)
-                          Text('♛',
-                              style: TextStyle(color: c.warning, fontSize: 28)),
-                        Text('${player.rank}',
-                            style: TextStyle(
-                                color: isFirst ? c.warning : c.text,
-                                fontSize: 28,
-                                fontWeight: FontWeight.w900)),
-                        if (player.move != 0)
-                          Text(
-                              '${player.move > 0 ? '▲' : '▼'} ${player.move.abs()}',
-                              style: TextStyle(
-                                  color: player.move > 0 ? c.success : c.live,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13))
-                      ])),
-              VerticalDivider(color: c.border, width: 24, thickness: 1.2),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                    Text(player.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.text,
-                            fontSize: context.sp(21),
-                            fontWeight: FontWeight.w900,
-                            height: 1)),
-                    const SizedBox(height: 6),
-                    Text('${player.flag}  ${player.country}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.muted,
-                            fontSize: context.sp(14),
-                            height: 1)),
-                    const SizedBox(height: 6),
-                    Text('${player.rating} RATING',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.isDark ? c.cyan : c.primary,
-                            fontWeight: FontWeight.w900,
-                            fontSize: context.sp(19),
-                            height: 1))
-                  ])),
-              const SizedBox(width: 12),
-              ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                      width: 80,
-                      height: 80,
-                      color: c.card2,
-                      child: Image.asset(player.asset,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Center(
-                              child: Text(
-                                  player.name
-                                      .split(' ')
-                                      .map((e) => e[0])
-                                      .take(2)
-                                      .join(),
-                                  style: TextStyle(
-                                      color: c.text,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 20)))))),
-            ])));
-  }
-}
-
-class TeamsScreen extends StatelessWidget {
-  const TeamsScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final teams = [
-      AppData.nz,
-      AppData.wi,
-      AppData.ban,
-      AppData.ire,
-      AppData.vic,
-      AppData.wa,
-      AppData.qld,
-      AppData.sa,
-      AppData.dcp,
-      AppData.dv
-    ];
-    return Scaffold(
-        body: Container(
-            decoration: BoxDecoration(gradient: context.cric.bgGradient),
-            child: SafeArea(
-                child: GridView.builder(
-                    padding: const EdgeInsets.all(22),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 14,
-                            mainAxisSpacing: 14,
-                            childAspectRatio: 1.25),
-                    itemCount: teams.length + 1,
-                    itemBuilder: (context, i) {
-                      if (i == 0) {
-                        return Center(
-                            child: Text('Teams',
-                                style: TextStyle(
-                                    color: context.cric.text,
-                                    fontSize: 34,
-                                    fontWeight: FontWeight.w900)));
-                      }
-                      final team = teams[i - 1];
-                      return PremiumCard(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                TeamBadge(team, size: 72),
-                                const SizedBox(height: 10),
-                                Text(team.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        color: context.cric.text,
-                                        fontWeight: FontWeight.w900))
-                              ]));
-                    }))));
-  }
-}
-
-class MatchDetailsScreen extends StatefulWidget {
-  const MatchDetailsScreen({super.key});
-  @override
-  State<MatchDetailsScreen> createState() => _MatchDetailsScreenState();
-}
-
-class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
-  MatchDetailTab tab = MatchDetailTab.scorecard;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Scaffold(
-      body: Container(
-          decoration: BoxDecoration(gradient: c.bgGradient),
-          child: SafeArea(
-              child: ListView(
-                  padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                      context.horizontalPadding, context.detailBottomPadding),
-                  children: [
-                Row(children: [
-                  IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: Icon(Icons.arrow_back_rounded,
-                          color: c.text, size: 32)),
-                  Expanded(
-                      child: Text('Match Details',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: c.text,
-                              fontSize: context.sp(28),
-                              fontWeight: FontWeight.w900))),
-                  Icon(Icons.search_rounded, color: c.text, size: 31),
-                  const SizedBox(width: 16),
-                  Icon(Icons.filter_alt_rounded,
-                      color: c.isDark ? c.cyan : c.text, size: 30)
-                ]),
-                const SizedBox(height: 14),
-        MatchHeroCard(
-            compact: true,
-            onWatch: () => Navigator.of(context).push(PageRouteBuilder<void>(
-                transitionDuration: const Duration(milliseconds: 260),
-                pageBuilder: (_, animation, __) => FadeTransition(
-                    opacity: animation, child: const LiveStreamScreen())))),
-                const SizedBox(height: 16),
-                _DetailTabs(
-                    selected: tab, onSelected: (v) => setState(() => tab = v)),
-                const SizedBox(height: 16),
-                switch (tab) {
-                  MatchDetailTab.scorecard => const ScorecardContent(),
-                  MatchDetailTab.commentary => const CommentaryContent(),
-                  MatchDetailTab.overs => const OversContent(),
-                  MatchDetailTab.info => const InfoContent(),
-                  MatchDetailTab.squads => const SquadsContent()
-                },
-              ]))),
-    );
-  }
-}
-
-class _DetailTabs extends StatelessWidget {
-  const _DetailTabs({required this.selected, required this.onSelected});
-  final MatchDetailTab selected;
-  final ValueChanged<MatchDetailTab> onSelected;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final items = [
-      (MatchDetailTab.scorecard, 'Scorecard', Icons.list_alt_rounded),
-      (
-        MatchDetailTab.commentary,
-        'Commentary',
-        Icons.chat_bubble_outline_rounded
-      ),
-      (MatchDetailTab.overs, 'Overs', Icons.speed_rounded),
-      (MatchDetailTab.info, 'Info', Icons.info_outline_rounded),
-      (MatchDetailTab.squads, 'Squads', Icons.groups_rounded),
-    ];
-    return PremiumCard(
-      height: 82,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      radius: 24,
+      height: 78,
       child: Row(
         children: [
-          for (final e in items)
-            Expanded(
-              child: InkWell(
-                onTap: () => onSelected(e.$1),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      e.$3,
-                      color: selected == e.$1
-                          ? (c.isDark ? c.cyan : c.primary)
-                          : c.muted,
-                      size: context.w <= 390 ? 22 : 25,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      e.$2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: selected == e.$1
-                            ? (c.isDark ? c.cyan : c.primary)
-                            : c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: context.w <= 390 ? 10 : 11.5,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 46,
-                      height: 3.5,
-                      decoration: BoxDecoration(
-                        color: selected == e.$1
-                            ? (c.isDark ? c.cyan : c.primary)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          const SizedBox(width: 18),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.cyan.withValues(alpha: .14),
             ),
+            child: Icon(isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded, color: c.cyan),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Appearance', style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 17)),
+                Text(isDark ? 'Dark Mode' : 'Light Mode', style: TextStyle(color: c.muted, fontSize: 13)),
+              ],
+            ),
+          ),
+          Switch(value: isDark, onChanged: onChanged),
+          const SizedBox(width: 18),
         ],
       ),
     );
   }
 }
 
-class ScorecardContent extends StatelessWidget {
-  const ScorecardContent({super.key});
+class RankingScreen extends StatelessWidget {
+  const RankingScreen({super.key});
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Column(children: [
-      PremiumCard(
-          padding: const EdgeInsets.all(14),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'Rankings',
+              ),
+              const SizedBox(height: 18),
+              for (final player in AppData.homeRankings)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: PremiumCard(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(color: c.card2, shape: BoxShape.circle),
+                          alignment: Alignment.center,
+                          child: Text('${player.rank}', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                        ),
+                        const SizedBox(width: 14),
+                        RankingAvatar(asset: player.asset, label: player.name.substring(0, 1), size: 58),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(player.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 18)),
+                              Text(player.country, style: TextStyle(color: c.muted)),
+                            ],
+                          ),
+                        ),
+                        Text('${player.rating}', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 22)),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TeamsScreen extends StatelessWidget {
+  const TeamsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final teams = [
+      AppData.india,
+      AppData.australia,
+      AppData.england,
+      AppData.newZealand,
+      AppData.pakistan,
+      AppData.southAfrica,
+      AppData.sriLanka,
+      AppData.bangladesh,
+      AppData.westIndies,
+    ];
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'Teams',
+              ),
+              const SizedBox(height: 18),
+              SegmentedTabs(items: const [('International', null), ('Franchise', null)], selected: 0, onChanged: (_) {}),
+              const SizedBox(height: 18),
+              for (final team in teams)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: PremiumCard(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        TeamBadge(team, size: 42),
+                        const SizedBox(width: 14),
+                        Expanded(child: Text(team.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+                        Icon(Icons.chevron_right_rounded, color: c.muted),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MatchDetailsScreen extends StatefulWidget {
+  const MatchDetailsScreen({super.key});
+
+  @override
+  State<MatchDetailsScreen> createState() => _MatchDetailsScreenState();
+}
+
+class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
+  int tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'Match Details',
+                trailing: [
+                  GlowIconButton(icon: Icons.search_rounded),
+                  const SizedBox(width: 8),
+                  GlowIconButton(icon: Icons.filter_alt_outlined),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const MatchDetailHeroCard(),
+              const SizedBox(height: 16),
+              SegmentedTabs(
+                items: const [
+                  ('Scorecard', null),
+                  ('Commentary', null),
+                  ('Overs', null),
+                  ('Info', null),
+                  ('Squads', null),
+                ],
+                selected: tab,
+                onChanged: (v) => setState(() => tab = v),
+                height: 58,
+              ),
+              const SizedBox(height: 16),
+              if (tab == 0) const MatchScorecardTab(),
+              if (tab == 1) const MatchCommentaryTab(),
+              if (tab == 2) const MatchOversTab(),
+              if (tab == 3) const MatchInfoTab(),
+              if (tab == 4) const MatchSquadsTab(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SeriesDetailScreen extends StatefulWidget {
+  const SeriesDetailScreen({
+    super.key,
+    this.initialTab = 0,
+    required this.onOpenReminders,
+    required this.onOpenCalendar,
+    required this.onOpenPlayer,
+  });
+
+  final int initialTab;
+  final VoidCallback onOpenReminders;
+  final VoidCallback onOpenCalendar;
+  final VoidCallback onOpenPlayer;
+
+  @override
+  State<SeriesDetailScreen> createState() => _SeriesDetailScreenState();
+}
+
+class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
+  late int tab = widget.initialTab;
+  int squadTeam = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                showLogo: true,
+                trailing: [
+                  GlowIconButton(icon: Icons.notifications_none_rounded, badge: '3'),
+                  const SizedBox(width: 8),
+                  GlowIconButton(icon: Icons.more_vert_rounded),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const SeriesHeroCard(),
+              const SizedBox(height: 16),
+              SegmentedTabs(
+                items: const [('Overview', null), ('Matches', null), ('Squads', null), ('Stats', null)],
+                selected: tab,
+                onChanged: (v) => setState(() => tab = v),
+                height: 58,
+              ),
+              const SizedBox(height: 18),
+              if (tab == 0) SeriesOverviewTab(onOpenReminder: widget.onOpenReminders),
+              if (tab == 1) SeriesMatchesTab(onOpenCalendar: widget.onOpenCalendar),
+              if (tab == 2) SeriesSquadsTab(
+                squadTeam: squadTeam,
+                onTeamChanged: (v) => setState(() => squadTeam = v),
+                onOpenPlayer: widget.onOpenPlayer,
+              ),
+              if (tab == 3) const SeriesStatsTab(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SearchScreen extends StatelessWidget {
+  const SearchScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              Row(
                 children: [
-                  Text('NZ 158/3  (38.4 OV)',
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: context.sp(24))),
-                  _tinyBluePill(context, '1st Innings')
-                ]),
-            const SizedBox(height: 12),
-            const _TableHeader(cols: ['Batting', 'R', 'B', '4s', '6s', 'SR']),
-            const _BatRow('K Williamson', '64*', '78', '6', '1', '82.05'),
-            const _BatRow('R Ravindra', '22*', '29', '3', '0', '75.86'),
-            const _BatRow('D Conway', '28', '42', '4', '0', '66.67',
-                note: 'c Chase b Holder'),
-            const _BatRow('T Latham (wk)', '16', '24', '1', '0', '66.67',
-                note: 'lbw b Alzarri'),
-            const _BatRow('G Phillips', '8', '10', '0', '1', '80.00',
-                note: 'c Hope b Chase'),
-            Divider(color: c.border),
-            Row(children: [
-              Expanded(
-                  child: Text('Extras',
-                      style: TextStyle(
-                          color: c.text, fontWeight: FontWeight.w800))),
-              Text('(b 1, lb 2, w 3, nb 0)', style: TextStyle(color: c.muted)),
-              const Spacer(),
-              Text('6',
-                  style: TextStyle(color: c.text, fontWeight: FontWeight.w900))
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              Text('Total',
-                  style: TextStyle(
-                      color: c.isDark ? c.cyan : c.primary,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18)),
-              const Spacer(),
-              Text('158/3 (38.4 OV)',
-                  style: TextStyle(
-                      color: c.isDark ? c.cyan : c.primary,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18))
-            ]),
-          ])),
-      const SizedBox(height: 14),
-      if (context.w < 600) ...[
-        _BowlingCard(),
-        const SizedBox(height: 14),
-        const _PartnershipCard(),
-        const SizedBox(height: 12),
-        const _FallOfWicketsCard(),
-      ] else
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: _BowlingCard()),
-          const SizedBox(width: 12),
-          const Expanded(
-              child: Column(children: [
-            _PartnershipCard(),
-            SizedBox(height: 12),
-            _FallOfWicketsCard()
-          ]))
-        ]),
-      const SizedBox(height: 14),
-      _RecentOvers(),
-    ]);
-  }
-
-  Widget _tinyBluePill(BuildContext context, String t) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-          color: context.cric.primary.withValues(alpha: .12),
-          borderRadius: BorderRadius.circular(12)),
-      child: Text(t,
-          style: TextStyle(
-              color: context.cric.primary,
-              fontWeight: FontWeight.w900,
-              fontSize: 12)));
-}
-
-class _TableHeader extends StatelessWidget {
-  const _TableHeader({required this.cols});
-  final List<String> cols;
-  @override
-  Widget build(BuildContext context) => Container(
-      height: 34,
-      decoration: BoxDecoration(
-          color: context.cric.card2, borderRadius: BorderRadius.circular(10)),
-      child: Row(children: [
-        Expanded(
-            flex: 4,
-            child: Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(cols[0],
-                    style: TextStyle(
-                        color: context.cric.text,
-                        fontWeight: FontWeight.w900)))),
-        for (final c in cols.skip(1))
-          Expanded(
-              child: Center(
-                  child: Text(c,
-                      style: TextStyle(
-                          color: context.cric.text,
-                          fontWeight: FontWeight.w900))))
-      ]));
-}
-
-class _BatRow extends StatelessWidget {
-  const _BatRow(this.name, this.r, this.b, this.fours, this.sixes, this.sr,
-      {this.note});
-  final String name, r, b, fours, sixes, sr;
-  final String? note;
-  @override
-  Widget build(BuildContext context) => SizedBox(
-      height: 44,
-      child: Row(children: [
-        Expanded(
-            flex: 4,
-            child: Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: context.cric.text,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13.2)),
-                      if (note != null)
-                        Text(note!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: context.cric.muted, fontSize: 11))
-                    ]))),
-        for (final t in [r, b, fours, sixes, sr])
-          Expanded(
-              child: Center(
-                  child: Text(t,
-                      style: TextStyle(
-                          color: context.cric.text,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12.8))))
-      ]));
-}
-
-class _BowlingCard extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final rows = [
-      ('A Joseph', '8.0', '0', '32', '0', '4.00'),
-      ('A Alzarri', '8.0', '2', '29', '1', '3.63'),
-      ('J Holder', '9.0', '1', '33', '1', '3.67'),
-      ('R Chase', '7.4', '0', '32', '1', '4.17'),
-      ('G Motie', '6.0', '0', '25', '0', '4.17')
-    ];
-    return PremiumCard(
-        height: 256,
-        padding: const EdgeInsets.all(14),
-        radius: 20,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Bowling',
-              style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 8),
-          const _TableHeader(cols: ['Bowler', 'O', 'M', 'R', 'W', 'E']),
-          for (final r in rows)
-            SizedBox(
-                height: 32,
-                child: Row(children: [
+                  IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                   Expanded(
-                      flex: 4,
-                      child: Text(r.$1,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: c.text, fontSize: 12.4))),
-                  for (final v in [r.$2, r.$3, r.$4, r.$5, r.$6])
-                    Expanded(
-                        child: Center(
-                            child: Text(v,
-                                style: TextStyle(color: c.text, fontSize: 12))))
-                ]))
-        ]));
-  }
-}
-
-class _PartnershipCard extends StatelessWidget {
-  const _PartnershipCard();
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(14),
-      radius: 20,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Partnership',
-            style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 7),
-        Text('K Williamson & R Ravindra',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 10),
-        Text('46 (57)',
-            style: TextStyle(
-                color: c.text, fontWeight: FontWeight.w900, fontSize: 22)),
-      ]),
+                    child: Container(
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: c.card.withValues(alpha: .92),
+                        borderRadius: BorderRadius.circular(26),
+                        border: Border.all(color: c.border),
+                      ),
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Row(
+                        children: [
+                          Icon(Icons.search_rounded, color: c.muted),
+                          const SizedBox(width: 10),
+                          Text('Search teams, players, series...', style: TextStyle(color: c.muted)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 26),
+              SectionHeader('Recent Searches', icon: Icons.history_rounded),
+              const SizedBox(height: 12),
+              Wrap(spacing: 10, runSpacing: 10, children: AppData.searchTopics.map((e) => PillChip(e)).toList()),
+              const SizedBox(height: 26),
+              SectionHeader('Trending Topics', icon: Icons.trending_up_rounded),
+              const SizedBox(height: 12),
+              for (final topic in AppData.searchTopics)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.search_rounded, color: Colors.white),
+                  title: Text(topic),
+                  trailing: const Icon(Icons.north_west_rounded),
+                ),
+              const SizedBox(height: 18),
+              SectionHeader('Popular Players', icon: Icons.person_outline_rounded),
+              const SizedBox(height: 12),
+              for (final player in AppData.trendingPlayers)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: PremiumCard(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        const CircleAvatar(radius: 22, backgroundColor: Color(0xff0a2748), child: Icon(Icons.person, color: Colors.white)),
+                        const SizedBox(width: 14),
+                        Expanded(child: Text(player, style: const TextStyle(fontWeight: FontWeight.w700))),
+                        const Icon(Icons.chevron_right_rounded),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _FallOfWicketsCard extends StatelessWidget {
-  const _FallOfWicketsCard();
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(14),
-      radius: 20,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Fall of Wickets',
-            style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 7),
-        Text(
-            '1-41  (D Conway, 11.3 OV)\n2-62  (T Latham, 17.6 OV)\n3-112 (G Phillips, 28.2 OV)',
-            style: TextStyle(color: c.text, height: 1.45, fontSize: 12.5)),
-      ]),
-    );
-  }
-}
+class NotificationsScreen extends StatelessWidget {
+  const NotificationsScreen({super.key});
 
-class _RecentOvers extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final balls = [
-      ('38.4', '1'),
-      ('38.3', '•'),
-      ('38.2', '4'),
-      ('38.1', '1'),
-      ('38.0', '2'),
-      ('37.6', '1')
+    final today = [
+      ('Match Alert', 'India vs Australia starts in 30 minutes', Icons.notifications_active_outlined),
+      ('Wicket Alert', 'Bumrah removes Smith for 12', Icons.sports_cricket_rounded),
+      ('Reminder', 'Series calendar sync confirmed', Icons.calendar_month_rounded),
     ];
+    final yesterday = [
+      ('Four Alert', 'Rohit Sharma reaches 100 with a boundary', Icons.flash_on_rounded),
+      ('Six Alert', 'Pant launches Starc into the second tier', Icons.local_fire_department_outlined),
+    ];
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'Notifications',
+                trailing: [TextButton(onPressed: () {}, child: const Text('Mark all as read'))],
+              ),
+              const SizedBox(height: 22),
+              _NotificationGroup(title: 'Today', items: today),
+              const SizedBox(height: 22),
+              _NotificationGroup(title: 'Yesterday', items: yesterday),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class NewsDetailScreen extends StatelessWidget {
+  const NewsDetailScreen({super.key, this.article});
+
+  final NewsArticle? article;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final a = article ?? AppData.newsAll.first;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'News Detail',
+                trailing: [GlowIconButton(icon: Icons.share_outlined)],
+              ),
+              const SizedBox(height: 16),
+              PremiumCard(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: SizedBox(
+                        height: 210,
+                        width: double.infinity,
+                        child: Image.asset(
+                          a.asset ?? 'assets/images/stadium_live.png',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Article image'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(a.title, style: TextStyle(color: c.text, fontSize: 30, fontWeight: FontWeight.w900, height: 1.1)),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const CircleAvatar(radius: 18, backgroundColor: Color(0xff0a2748), child: Icon(Icons.edit, size: 18)),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('CricPro Staff', style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+                            Text('Nov 29, 2024 • 10:30 AM', style: TextStyle(color: c.muted, fontSize: 13)),
+                          ],
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '${a.subtitle}\n\nVirat Kohli smashed a magnificent century as India chased down 280 to beat Australia by 4 wickets in the second ODI at Adelaide Oval.\n\nKohli scored 110 off 112 balls, stitching crucial partnerships with Rohit Sharma (52) and KL Rahul (45) to take India home with 8 balls to spare.\n\n“It was a total team effort. The bowlers did really well in the first innings,” said Kohli.',
+                      style: TextStyle(color: c.muted, fontSize: 16, height: 1.7),
+                    ),
+                    const SizedBox(height: 18),
+                    SectionHeader('Related News'),
+                    const SizedBox(height: 12),
+                    NewsListCard(article: AppData.newsAll[1], compact: true, onTap: () {}),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ContactUsScreen extends StatelessWidget {
+  const ContactUsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final options = [
+      ('Live Chat', 'Chat with our support team', Icons.forum_outlined),
+      ('Email Us', 'support@cricpro.app', Icons.mail_outline_rounded),
+      ('Call Us', '+91 98765 43210', Icons.call_outlined),
+      ('FAQs', 'Find answers to common questions', Icons.help_outline_rounded),
+      ('Share Feedback', 'Help us improve the app', Icons.rate_review_outlined),
+    ];
+    return _SimpleInfoScreen(
+      title: 'Contact Us',
+      header: "We're here to help!",
+      body: 'Feel free to reach out to us for any queries or support.',
+      icon: Icons.headset_mic_rounded,
+      children: [
+        for (final item in options)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: PremiumCard(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  CircleAvatar(radius: 20, backgroundColor: c.card2, child: Icon(item.$3, color: c.cyan, size: 20)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.$1, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        Text(item.$2, style: TextStyle(color: c.muted, fontSize: 13)),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: c.muted),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class PrivacyPolicyScreen extends StatelessWidget {
+  const PrivacyPolicyScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SimpleInfoScreen(
+      title: 'Privacy Policy',
+      header: 'Last updated: 20 Nov 2024',
+      body: 'At CricPro, we value your privacy and are committed to protecting your personal data.',
+      children: [
+        for (final item in [
+          '1. Information We Collect',
+          '2. How We Use Information',
+          '3. Data Sharing',
+          '4. Data Security',
+          '5. Your Rights',
+          '6. Cookies & Tracking',
+          '7. Changes To This Policy',
+        ])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: PremiumCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                children: [Expanded(child: Text(item, style: const TextStyle(fontWeight: FontWeight.w700))), const Icon(Icons.chevron_right_rounded)],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class TermsScreen extends StatelessWidget {
+  const TermsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SimpleInfoScreen(
+      title: 'Terms & Conditions',
+      header: 'Last updated: 20 Nov 2024',
+      body: 'Please read these terms and conditions carefully before using CricPro.',
+      children: [
+        for (final item in [
+          '1. Acceptance of Terms',
+          '2. Use of the App',
+          '3. User Accounts',
+          '4. Intellectual Property',
+          '5. Limitation of Liability',
+          '6. Termination',
+          '7. Governing Law',
+        ])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: PremiumCard(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                children: [Expanded(child: Text(item, style: const TextStyle(fontWeight: FontWeight.w700))), const Icon(Icons.chevron_right_rounded)],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class PlayerDetailScreen extends StatelessWidget {
+  const PlayerDetailScreen({super.key, this.player});
+
+  final PlayerInfo? player;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final p = player ?? AppData.indiaSquadTop.first;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: p.name,
+              ),
+              const SizedBox(height: 18),
+              PremiumCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    PlayerAvatar(player: p, size: 110, borderColor: c.cyan),
+                    const SizedBox(height: 16),
+                    Text(p.name, style: TextStyle(color: c.text, fontSize: 28, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 6),
+                    Text('${p.team.name} • ${p.role}', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                    if (p.subtitle != null) ...[
+                      const SizedBox(height: 6),
+                      Text(p.subtitle!, style: TextStyle(color: c.muted)),
+                    ],
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(child: _StatValue(title: 'Matches', value: '92')),
+                        Expanded(child: _StatValue(title: 'Runs', value: '4,128')),
+                        Expanded(child: _StatValue(title: 'SR', value: '134.2')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HighlightsPlayerScreen extends StatelessWidget {
+  const HighlightsPlayerScreen({super.key, this.video});
+
+  final VideoHighlight? video;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final v = video ?? AppData.topMoments.first;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: 'Highlights',
+                trailing: [GlowIconButton(icon: Icons.more_horiz_rounded)],
+              ),
+              const SizedBox(height: 16),
+              FeaturedVideoCard(video: v, onTap: () {}, largeOnly: true),
+              const SizedBox(height: 18),
+              Text(v.title, style: TextStyle(color: c.text, fontSize: 28, fontWeight: FontWeight.w900, height: 1.15)),
+              const SizedBox(height: 10),
+              Text('${v.match} • ${v.views}', style: TextStyle(color: c.muted, fontSize: 15)),
+              const SizedBox(height: 18),
+              Text('This premium player opens from Highlights, Scorecards and Top Moments. Wire in the final video backend later; the UI shell and transitions are ready in this redesign branch.', style: TextStyle(color: c.muted, height: 1.6)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SimpleInfoScreen extends StatelessWidget {
+  const _SimpleInfoScreen({
+    required this.title,
+    required this.header,
+    required this.body,
+    this.icon,
+    this.children = const [],
+  });
+
+  final String title;
+  final String header;
+  final String body;
+  final IconData? icon;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18, context.horizontalPadding, context.detailBottomPadding),
+            children: [
+              AppHeader(
+                leading: IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                title: title,
+              ),
+              const SizedBox(height: 18),
+              PremiumCard(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(header, style: TextStyle(color: c.text, fontSize: 28, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 10),
+                          Text(body, style: TextStyle(color: c.muted, fontSize: 15, height: 1.6)),
+                        ],
+                      ),
+                    ),
+                    if (icon != null)
+                      Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(shape: BoxShape.circle, gradient: c.primaryGradient),
+                        child: Icon(icon, color: Colors.white, size: 34),
+                      )
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              ...children,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationGroup extends StatelessWidget {
+  const _NotificationGroup({required this.title, required this.items});
+
+  final String title;
+  final List<(String, String, IconData)> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: TextStyle(color: c.text, fontSize: 22, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 12),
+        for (final item in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: PremiumCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  CircleAvatar(radius: 22, backgroundColor: c.card2, child: Icon(item.$3, color: c.cyan)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.$1, style: TextStyle(color: c.text, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 4),
+                        Text(item.$2, style: TextStyle(color: c.muted, height: 1.45)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+      ],
+    );
+  }
+}
+
+class HomeHeroCard extends StatelessWidget {
+  const HomeHeroCard({
+    super.key,
+    required this.fixture,
+    this.onButtonTap,
+    this.finished = false,
+  });
+
+  final HeroFixture fixture;
+  final VoidCallback? onButtonTap;
+  final bool finished;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: c.border),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .32), blurRadius: 26, offset: const Offset(0, 12))],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/stadium_live.png',
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Stadium'),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black.withValues(alpha: .22), Colors.black.withValues(alpha: .68)],
+                ),
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  StatusBadge(label: fixture.badge, color: finished ? c.success : c.cyan, filled: true),
+                  const Spacer(),
+                  if (!finished)
+                    const SizedBox.shrink()
+                  else
+                    Text(fixture.date, style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Center(
+                child: Text(fixture.series, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: context.sp(15))),
+              ),
+              const SizedBox(height: 10),
+              Center(
+                child: Text(
+                  finished ? 'India vs Australia' : fixture.date,
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(24)),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Center(
+                child: Text(
+                  finished ? fixture.time : fixture.time,
+                  style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(18)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _heroTeamBlock(context, fixture.left, fixture.leftMeta ?? fixture.left.code),
+                  Column(
+                    children: [
+                      Container(
+                        width: 68,
+                        height: 68,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black.withValues(alpha: .22),
+                          border: Border.all(color: c.border),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(fixture.centerTitle, style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                      ),
+                      if (fixture.result != null) ...[
+                        const SizedBox(height: 10),
+                        Text(fixture.result!, style: TextStyle(color: c.success, fontWeight: FontWeight.w800, fontSize: context.sp(17))),
+                      ]
+                    ],
+                  ),
+                  _heroTeamBlock(context, fixture.right, fixture.rightMeta ?? fixture.right.code),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (finished)
+                Center(
+                  child: Text(fixture.venue, style: TextStyle(color: Colors.white.withValues(alpha: .82), fontWeight: FontWeight.w600)),
+                )
+              else
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.location_on_outlined, color: Colors.white.withValues(alpha: .72), size: 18),
+                    const SizedBox(width: 6),
+                    Text(fixture.venue.split('\n').first, style: TextStyle(color: Colors.white.withValues(alpha: .78), fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              const SizedBox(height: 20),
+              Center(
+                child: SizedBox(
+                  width: 270,
+                  child: GradientButton(
+                    label: fixture.button,
+                    icon: finished ? Icons.list_alt_rounded : Icons.notifications_none_rounded,
+                    outlined: finished,
+                    onTap: onButtonTap,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(
+                    4,
+                    (i) => Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: i == 0 ? 26 : 10,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: i == 0 ? c.cyan : Colors.white.withValues(alpha: .26),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _heroTeamBlock(BuildContext context, TeamInfo team, String stat) {
+    return SizedBox(
+      width: 130,
+      child: Column(
+        children: [
+          TeamBadge(team, size: 110),
+          const SizedBox(height: 10),
+          Text(team.shortName, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: context.sp(18))),
+          const SizedBox(height: 4),
+          Text(stat, style: TextStyle(color: Colors.white.withValues(alpha: .95), fontSize: context.sp(16), fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class UpcomingSeriesMiniCard extends StatelessWidget {
+  const UpcomingSeriesMiniCard({super.key, required this.series, this.onTap});
+
+  final CompactFixture series;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
     return PremiumCard(
-        height: 108,
-        padding: const EdgeInsets.all(14),
-        radius: 20,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Text('Recent Overs',
-                style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+      onTap: onTap,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [TeamBadge(series.left, size: 46), const SizedBox(width: 8), TeamBadge(series.right, size: 46)]),
+          const SizedBox(height: 14),
+          Text(series.series, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 18)),
+          const SizedBox(height: 6),
+          Text(series.subtitle, style: TextStyle(color: c.muted)),
+          const SizedBox(height: 14),
+          Text(series.date, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class FeaturedFixtureCard extends StatelessWidget {
+  const FeaturedFixtureCard({super.key, required this.fixture, this.onTap});
+
+  final CompactFixture fixture;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 250,
+      child: PremiumCard(
+        onTap: onTap,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(fixture.series, style: TextStyle(color: context.cric.cyan, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                TeamBadge(fixture.left, size: 54),
+                const SizedBox(width: 12),
+                Text('VS', style: TextStyle(color: context.cric.text, fontWeight: FontWeight.w900)),
+                const SizedBox(width: 12),
+                TeamBadge(fixture.right, size: 54),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(fixture.subtitle, style: TextStyle(color: context.cric.text, fontWeight: FontWeight.w800, fontSize: 18)),
             const Spacer(),
-            Text('38.4 OV',
-                style: TextStyle(color: c.text, fontWeight: FontWeight.w900))
-          ]),
+            Text(fixture.date, style: TextStyle(color: context.cric.muted)),
+            const SizedBox(height: 12),
+            const GradientButton(label: 'Notify Me', icon: Icons.notifications_none_rounded, height: 46),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class RecentResultMiniCard extends StatelessWidget {
+  const RecentResultMiniCard({super.key, required this.result, this.onTap});
+
+  final CompactFixture result;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(result.series, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(children: [TeamBadge(result.left, size: 50), const SizedBox(height: 8), Text(result.left.code, style: TextStyle(color: c.text, fontWeight: FontWeight.w800))]),
+              Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+              Column(children: [TeamBadge(result.right, size: 50), const SizedBox(height: 8), Text(result.right.code, style: TextStyle(color: c.text, fontWeight: FontWeight.w800))]),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(result.date, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          StatusBadge(label: result.status, color: c.cyan),
+          const SizedBox(height: 10),
+          Text(result.venue, style: TextStyle(color: c.text, fontWeight: FontWeight.w700, height: 1.5)),
+        ],
+      ),
+    );
+  }
+}
+
+class PlayerOfMatchCard extends StatelessWidget {
+  const PlayerOfMatchCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        children: [
+          Column(
+            children: [
+              PlayerAvatar(player: AppData.indiaSquadTop.first, size: 122, borderColor: Colors.white.withValues(alpha: .42)),
+              const SizedBox(height: 8),
+              Text('Rohit Sharma', style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 17)),
+              Text('India', style: TextStyle(color: c.muted)),
+            ],
+          ),
+          const SizedBox(width: 18),
           Expanded(
-              child: ListView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                StatusBadge(label: 'PLAYER OF THE MATCH', color: c.cyan, filled: true),
+                const SizedBox(height: 16),
+                Text('121*', style: TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.w900, height: .9)),
+                const SizedBox(height: 6),
+                Text('(107)', style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                const Divider(color: Color(0xff1b4266)),
+                const SizedBox(height: 12),
+                Row(
+                  children: const [
+                    Expanded(child: _StatValue(title: 'Runs', value: '121')),
+                    Expanded(child: _StatValue(title: 'Balls', value: '107')),
+                    Expanded(child: _StatValue(title: 'Strike Rate', value: '113.08')),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: const [
+                    Expanded(child: _StatValue(title: 'Fours', value: '11')),
+                    Expanded(child: _StatValue(title: 'Sixes', value: '6')),
+                    Expanded(child: _StatValue(title: 'Wickets', value: '1')),
+                  ],
+                ),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class QuickAccessCard extends StatelessWidget {
+  const QuickAccessCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    required this.accent,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 14),
+      child: Column(
+        children: [
+          Container(
+            width: 74,
+            height: 74,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              gradient: LinearGradient(colors: [accent.withValues(alpha: .88), accent]),
+              boxShadow: [BoxShadow(color: accent.withValues(alpha: .35), blurRadius: 18, offset: const Offset(0, 8))],
+            ),
+            child: Icon(icon, color: Colors.white, size: 34),
+          ),
+          const SizedBox(height: 16),
+          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16), textAlign: TextAlign.center),
+          const SizedBox(height: 4),
+          Text(subtitle, style: TextStyle(color: c.muted), textAlign: TextAlign.center),
+        ],
+      ),
+    );
+  }
+}
+
+class UpcomingMatchCard extends StatelessWidget {
+  const UpcomingMatchCard({super.key, required this.match, this.onTap, this.onReminder});
+
+  final CompactFixture match;
+  final VoidCallback? onTap;
+  final VoidCallback? onReminder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(match.series, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 15))),
+              Text(match.subtitle, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 6),
+              Icon(Icons.chevron_right_rounded, color: c.muted),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(child: _matchTeamBlock(context, match.left)),
+              Column(
+                children: [
+                  Text(match.date.split('•').first.trim(), style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 16), textAlign: TextAlign.center),
+                  const SizedBox(height: 6),
+                  Text(match.date.split('•').last.trim(), style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: 17)),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
+                    alignment: Alignment.center,
+                    child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
+                  ),
+                ],
+              ),
+              Expanded(child: _matchTeamBlock(context, match.right)),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Icon(Icons.location_on_outlined, color: c.muted),
+              const SizedBox(width: 8),
+              Expanded(child: Text(match.venue, style: TextStyle(color: c.muted, height: 1.45))),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              StatusBadge(label: match.status, color: c.muted),
+              const Spacer(),
+              InkWell(
+                onTap: onReminder,
+                child: Row(
+                  children: [
+                    Icon(Icons.notifications_none_rounded, color: c.cyan),
+                    const SizedBox(width: 8),
+                    Text(match.action, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: 16)),
+                  ],
+                ),
+              )
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _matchTeamBlock(BuildContext context, TeamInfo team) {
+    final c = context.cric;
+    return Column(
+      children: [
+        TeamBadge(team, size: 104),
+        const SizedBox(height: 12),
+        Text(team.name.toUpperCase(), style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 18), textAlign: TextAlign.center),
+      ],
+    );
+  }
+}
+
+class FinishedMatchCard extends StatelessWidget {
+  const FinishedMatchCard({super.key, required this.match, this.onTap});
+
+  final CompactFixture match;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(match.series, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 15))),
+              StatusBadge(label: match.status, color: c.cyan),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(child: _finishedTeamBlock(context, match.left, match.date.split('•').first.trim())),
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.border)),
+                alignment: Alignment.center,
+                child: Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
+              ),
+              Expanded(child: _finishedTeamBlock(context, match.right, match.date.split('•').last.trim())),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Center(child: Text(match.venue, style: TextStyle(color: c.success, fontWeight: FontWeight.w800, fontSize: 18))),
+          const SizedBox(height: 18),
+          PremiumCard(
+            padding: const EdgeInsets.all(14),
+            gradient: LinearGradient(colors: [c.card2, c.card]),
+            child: Row(
+              children: [
+                const CircleAvatar(radius: 28, backgroundColor: Color(0xff0a2748), child: Icon(Icons.person, color: Colors.white)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Player of the Match', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text(match.playerOfMatch ?? '', style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16)),
+                      Text(match.playerStat ?? '', style: TextStyle(color: c.muted)),
+                    ],
+                  ),
+                ),
+                GradientButton(label: match.action, icon: match.action == 'Highlights' ? Icons.play_circle_outline_rounded : Icons.receipt_long_rounded, outlined: true, height: 48),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _finishedTeamBlock(BuildContext context, TeamInfo team, String score) {
+    final c = context.cric;
+    return Column(
+      children: [
+        TeamBadge(team, size: 102),
+        const SizedBox(height: 10),
+        Text(team.name.toUpperCase(), style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16), textAlign: TextAlign.center),
+        const SizedBox(height: 6),
+        Text(score, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18), textAlign: TextAlign.center),
+      ],
+    );
+  }
+}
+
+class FeaturedNewsCard extends StatelessWidget {
+  const FeaturedNewsCard({super.key, required this.article, this.onTap});
+
+  final NewsArticle article;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: c.border)),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                article.asset ?? 'assets/images/stadium_live.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Featured'),
+              ),
+            ),
+            Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withValues(alpha: .12), Colors.black.withValues(alpha: .74)])))),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    StatusBadge(label: article.breaking ? 'BREAKING' : 'FEATURED', color: article.breaking ? c.live : c.cyan, filled: true, icon: article.breaking ? Icons.bolt_rounded : Icons.star_rounded),
+                    const Spacer(),
+                    if (article.timeAgo != null)
+                      Text(article.timeAgo!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                  ],
+                ),
+                const SizedBox(height: 160),
+                Text(article.title, style: TextStyle(color: Colors.white, fontSize: context.sp(26), fontWeight: FontWeight.w900, height: 1.15)),
+                const SizedBox(height: 12),
+                Text(article.subtitle, style: TextStyle(color: Colors.white.withValues(alpha: .84), fontSize: 16, height: 1.45)),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Text(article.source, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: 16)),
+                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: Colors.white.withValues(alpha: .75))),
+                    const SizedBox(width: 12),
+                    Text(article.date, style: TextStyle(color: Colors.white.withValues(alpha: .75), fontSize: 16)),
+                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: Colors.white.withValues(alpha: .75))),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: .22), borderRadius: BorderRadius.circular(14), border: Border.all(color: c.border)),
+                      child: Text(article.tag, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                    ),
+                    const Spacer(),
+                    GradientButton(label: 'Read More', outlined: true, onTap: onTap, height: 48),
+                  ],
+                )
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class NewsListCard extends StatelessWidget {
+  const NewsListCard({super.key, required this.article, this.onTap, this.compact = false});
+
+  final NewsArticle article;
+  final VoidCallback? onTap;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      radius: compact ? 18 : 22,
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: SizedBox(
+              width: compact ? 94 : 132,
+              height: compact ? 76 : 108,
+              child: Image.asset(
+                article.asset ?? 'assets/images/stadium_live.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'News'),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(article.title, maxLines: compact ? 2 : 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: compact ? 16 : 17.5, height: 1.25)),
+                const SizedBox(height: 8),
+                Text(article.subtitle, maxLines: compact ? 2 : 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.muted, height: 1.45)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Text(article.source, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: c.muted)),
+                    const SizedBox(width: 12),
+                    Text(article.date, style: TextStyle(color: c.muted)),
+                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: c.muted)),
+                    const SizedBox(width: 12),
+                    Text(article.tag, style: TextStyle(color: c.cyan)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Icon(Icons.chevron_right_rounded, color: c.muted),
+        ],
+      ),
+    );
+  }
+}
+
+class FeaturedVideoCard extends StatelessWidget {
+  const FeaturedVideoCard({super.key, required this.video, this.onTap, this.largeOnly = false});
+
+  final VideoHighlight video;
+  final VoidCallback? onTap;
+  final bool largeOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        height: largeOnly ? 320 : 360,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: c.border)),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                video.asset ?? 'assets/images/stadium_live.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Video'),
+              ),
+            ),
+            Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withValues(alpha: .10), Colors.black.withValues(alpha: .74)])))),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    StatusBadge(label: video.featured ? 'FEATURED' : video.tag, color: c.cyan, filled: true),
+                    const Spacer(),
+                    StatusBadge(label: video.duration, color: Colors.white, filled: true, icon: Icons.play_arrow_rounded),
+                  ],
+                ),
+                const Spacer(),
+                Row(
+                  children: [
+                    Container(
+                      width: 66,
+                      height: 66,
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: c.cyan.withValues(alpha: .18), border: Border.all(color: c.cyan.withValues(alpha: .7))),
+                      child: Icon(Icons.play_arrow_rounded, color: c.cyan, size: 36),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(video.title, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(24), height: 1.15)),
+                          const SizedBox(height: 8),
+                          Text('${video.match} • ${video.views}', style: TextStyle(color: Colors.white.withValues(alpha: .82))),
+                        ],
+                      ),
+                    ),
+                    GlowIconButton(icon: Icons.more_horiz_rounded),
+                  ],
+                ),
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class VideoListCard extends StatelessWidget {
+  const VideoListCard({super.key, required this.video, this.onTap});
+
+  final VideoHighlight video;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  width: 144,
+                  height: 96,
+                  child: Image.asset(
+                    video.asset ?? 'assets/images/stadium_live.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Clip'),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: StatusBadge(label: video.duration, color: Colors.white, filled: true),
+              )
+            ],
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 17, height: 1.25)),
+                const SizedBox(height: 8),
+                Text(video.match, style: TextStyle(color: c.muted)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Text(video.views, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 12),
+                    StatusBadge(label: video.tag, color: c.cyan),
+                  ],
+                )
+              ],
+            ),
+          ),
+          GlowIconButton(icon: Icons.more_horiz_rounded),
+        ],
+      ),
+    );
+  }
+}
+
+class ShortCard extends StatelessWidget {
+  const ShortCard({super.key, required this.video, this.onTap});
+
+  final VideoHighlight video;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: SizedBox.expand(
+                    child: Image.asset(
+                      video.asset ?? 'assets/images/stadium_live.png',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Short'),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  top: 10,
+                  child: StatusBadge(label: video.duration, color: Colors.white, filled: true),
+                ),
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: GlowIconButton(icon: Icons.more_horiz_rounded),
+                ),
+                Positioned(
+                  left: 10,
+                  bottom: 10,
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: c.cyan.withValues(alpha: .18), border: Border.all(color: c.cyan.withValues(alpha: .8))),
+                    child: Icon(Icons.play_arrow_rounded, color: c.cyan, size: 30),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(video.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 16, height: 1.25)),
+          const SizedBox(height: 6),
+          Text('${video.match} • ${video.views}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.muted, height: 1.35)),
+        ],
+      ),
+    );
+  }
+}
+
+class SeriesHeroCard extends StatelessWidget {
+  const SeriesHeroCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(26), border: Border.all(color: c.border)),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/stadium_live.png',
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Series hero'),
+            ),
+          ),
+          Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withValues(alpha: .20), Colors.black.withValues(alpha: .74)])))),
+          Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TeamBadge(AppData.india, size: 116),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Text('INTERNATIONAL TOUR', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: context.sp(15))),
+                        const SizedBox(height: 10),
+                        Text('India Tour of Australia\n2024-25', textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(28), height: 1.15)),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.calendar_month_rounded, color: Colors.white.withValues(alpha: .82)),
+                            const SizedBox(width: 10),
+                            Text('22 Nov 2024 – 7 Jan 2025', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, fontSize: context.sp(17))),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text('3 Test  •  3 ODI  •  5 T20I', style: TextStyle(color: Colors.white.withValues(alpha: .86), fontSize: context.sp(18), fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  TeamBadge(AppData.australia, size: 116),
+                ],
+              )
+            ],
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class SeriesOverviewTab extends StatelessWidget {
+  const SeriesOverviewTab({super.key, required this.onOpenReminder});
+
+  final VoidCallback onOpenReminder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Column(
+      children: [
+        PremiumCard(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('SERIES INFO', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 16),
+              Wrap(
+                runSpacing: 18,
+                spacing: 18,
+                children: AppData.seriesOverviewStats
+                    .map(
+                      (e) => SizedBox(
+                        width: context.w > 600 ? 240 : (context.w - context.horizontalPadding * 2 - 18) / 2,
+                        child: Row(
+                          children: [
+                            CircleAvatar(radius: 24, backgroundColor: c.card2, child: Icon(e.icon, color: c.muted)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(e.label, style: TextStyle(color: c.muted, fontSize: 14)),
+                                  const SizedBox(height: 4),
+                                  Text(e.value, style: TextStyle(color: e.label == 'Series Status' ? c.success : c.text, fontWeight: FontWeight.w700, fontSize: 16.5)),
+                                ],
+                              ),
+                            )
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        PremiumCard(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    TeamBadge(AppData.india, size: 64),
+                    const SizedBox(width: 10),
+                    Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+                    const SizedBox(width: 10),
+                    TeamBadge(AppData.australia, size: 64),
+                  ],
+                ),
+              ),
+              Container(width: 1, height: 120, color: c.border),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('NEXT MATCH', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+                    const SizedBox(height: 12),
+                    Text('22 – 26 Nov 2024', style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Text('Optus Stadium\nPerth', style: TextStyle(color: c.muted, fontSize: 15, height: 1.5)),
+                    const SizedBox(height: 8),
+                    Text('Starts 9:30 AM (Local)', style: TextStyle(color: c.text, fontSize: 15)),
+                    const SizedBox(height: 14),
+                    SizedBox(width: 220, child: GradientButton(label: 'Set Reminder', icon: Icons.notifications_none_rounded, onTap: onOpenReminder, height: 50)),
+                  ],
+                ),
+              )
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        PremiumCard(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('VENUES', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 150,
+                child: ListView.separated(
                   scrollDirection: Axis.horizontal,
-                  children: balls
-                      .map((b) => Padding(
-                          padding: const EdgeInsets.only(right: 10),
-                          child: Container(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(
-                                  color: c.card2,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(color: c.border)),
-                              child: Row(children: [
-                                Text(b.$1,
-                                    style: TextStyle(
-                                        color: c.muted, fontSize: 12)),
-                                const SizedBox(width: 8),
-                                CircleAvatar(
-                                    radius: 15,
-                                    backgroundColor: b.$2 == '4'
-                                        ? c.primary
-                                        : Colors.transparent,
-                                    child: Text(b.$2,
-                                        style: TextStyle(
-                                            color: b.$2 == '4'
-                                                ? Colors.white
-                                                : c.text,
-                                            fontWeight: FontWeight.w900)))
-                              ]))))
-                      .toList()))
-        ]));
+                  itemBuilder: (_, i) {
+                    final venues = [
+                      ('Perth Stadium', 'Perth'),
+                      ('Adelaide Oval', 'Adelaide'),
+                      ('The Gabba', 'Brisbane'),
+                      ('MCG', 'Melbourne'),
+                      ('SCG', 'Sydney'),
+                    ];
+                    final venue = venues[i];
+                    return PremiumCard(
+                      padding: const EdgeInsets.all(8),
+                      radius: 18,
+                      child: SizedBox(
+                        width: 150,
+                        child: Column(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: SizedBox(
+                                height: 84,
+                                width: double.infinity,
+                                child: Image.asset('assets/images/stadium_live.png', fit: BoxFit.cover, errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Venue')),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(venue.$1, textAlign: TextAlign.center, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+                            Text(venue.$2, textAlign: TextAlign.center, style: TextStyle(color: c.muted)),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemCount: 5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 3,
+              child: PremiumCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('SERIES FORM / MOMENTUM', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+                    const SizedBox(height: 16),
+                    _formRow(context, AppData.india, ['W', 'W', 'W', '-', '-'], 'Won Last 3'),
+                    const SizedBox(height: 14),
+                    _formRow(context, AppData.australia, ['L', 'W', 'L', '-', '-'], 'Mixed Form'),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(child: _radialStatCard(context, 'Completed', '2', 'Matches')),
+                        const SizedBox(width: 12),
+                        Expanded(child: _radialStatCard(context, 'Upcoming', '9', 'Matches', accent: const Color(0xff5b8cff))),
+                      ],
+                    )
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 2,
+              child: PremiumCard(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('SERIES INSIGHT', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+                    const SizedBox(height: 12),
+                    const Center(child: Icon(Icons.emoji_events_rounded, color: Color(0xffffc83d), size: 96)),
+                    const SizedBox(height: 12),
+                    Text('Trophy at Stake', style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 19)),
+                    const SizedBox(height: 8),
+                    Text('Custom Border-Gavaskar Trophy', style: TextStyle(color: c.muted, height: 1.5)),
+                  ],
+                ),
+              ),
+            )
+          ],
+        )
+      ],
+    );
+  }
+
+  Widget _formRow(BuildContext context, TeamInfo team, List<String> form, String label) {
+    final c = context.cric;
+    return Row(
+      children: [
+        TeamBadge(team, size: 28),
+        const SizedBox(width: 10),
+        SizedBox(width: 90, child: Text(team.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+        const SizedBox(width: 8),
+        for (final item in form)
+          Container(
+            margin: const EdgeInsets.only(right: 8),
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: item == 'W'
+                  ? c.success.withValues(alpha: .22)
+                  : item == 'L'
+                      ? c.live.withValues(alpha: .22)
+                      : c.card2,
+            ),
+            alignment: Alignment.center,
+            child: Text(item, style: TextStyle(color: item == 'W' ? c.success : item == 'L' ? c.live : c.muted, fontWeight: FontWeight.w900)),
+          ),
+        const Spacer(),
+        Text(label, style: TextStyle(color: label == 'Won Last 3' ? c.success : c.warning, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
+  Widget _radialStatCard(BuildContext context, String title, String value, String subtitle, {Color? accent}) {
+    final c = context.cric;
+    final a = accent ?? c.cyan;
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      radius: 18,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            height: 72,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(value: .72, strokeWidth: 8, valueColor: AlwaysStoppedAnimation<Color>(a), backgroundColor: c.card2),
+                Text(value, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 22)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: TextStyle(color: c.muted)),
+              const SizedBox(height: 6),
+              Text(subtitle, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+            ],
+          )
+        ],
+      ),
+    );
   }
 }
 
-class CommentaryContent extends StatelessWidget {
-  const CommentaryContent({super.key});
+class SeriesMatchesTab extends StatelessWidget {
+  const SeriesMatchesTab({super.key, required this.onOpenCalendar});
+
+  final VoidCallback onOpenCalendar;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.only(bottom: 10), child: Text('UPCOMING MATCHES', style: TextStyle(color: Color(0xff00d9ff), fontWeight: FontWeight.w800, fontSize: 18)))),
+        for (final row in AppData.seriesUpcomingRows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SeriesMatchRowCard(row: row),
+          ),
+        const SizedBox(height: 8),
+        const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.only(bottom: 10), child: Text('COMPLETED MATCHES', style: TextStyle(color: Color(0xff00d9ff), fontWeight: FontWeight.w800, fontSize: 18)))),
+        for (final row in AppData.seriesCompletedRows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SeriesMatchRowCard(row: row, completed: true),
+          ),
+        const SizedBox(height: 14),
+        GradientButton(label: 'Add Series to Calendar', icon: Icons.event_available_rounded, outlined: true, onTap: onOpenCalendar),
+      ],
+    );
+  }
+}
+
+class SeriesSquadsTab extends StatelessWidget {
+  const SeriesSquadsTab({
+    super.key,
+    required this.squadTeam,
+    required this.onTeamChanged,
+    required this.onOpenPlayer,
+  });
+
+  final int squadTeam;
+  final ValueChanged<int> onTeamChanged;
+  final VoidCallback onOpenPlayer;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Column(children: [
-      const _CommentarySummary(),
-      const SizedBox(height: 16),
-      const SectionHeader('KEY MOMENTS', action: 'VIEW ALL'),
-      const SizedBox(height: 10),
-      SizedBox(
-          height: 82,
-          child: ListView(scrollDirection: Axis.horizontal, children: [
-            _Moment('38.4', 'Play stopped\ndue to rain', Icons.cloud_rounded,
-                c.primary),
-            const _Moment('38.2', 'FOUR\nthrough covers', Icons.looks_4_rounded,
-                Color(0xff9333ea)),
-            _Moment('33.1', 'WICKET!\nHolder to Conway',
-                Icons.sports_cricket_rounded, c.success),
-            _Moment(
-                '30.6', 'DRS saved\nNot Out', Icons.wb_sunny_rounded, c.warning)
-          ])),
-      const SizedBox(height: 16),
-      SizedBox(
-          height: 42,
-          child: ListView(scrollDirection: Axis.horizontal, children: const [
-            PillChip('All', selected: true),
-            SizedBox(width: 10),
-            PillChip('Wickets'),
-            SizedBox(width: 10),
-            PillChip('Boundaries'),
-            SizedBox(width: 10),
-            PillChip('Key Events')
-          ])),
-      const SizedBox(height: 16),
-      const _CommentaryItem('38.4', 'Play stopped due to rain',
-          'The players are off the field. Heavy rain at the stadium.', '158/3',
-          active: true, icon: Icons.cloud_rounded),
-      const _CommentaryItem(
-          '38.3', '1 run', 'Pushed to deep square leg for a single.', '158/3'),
-      const _CommentaryItem('38.2', 'FOUR!',
-          'Beautifully timed through covers for a boundary!', '157/3',
-          boundary: true),
-      const _CommentaryItem(
-          '38.1', 'Good length outside off, left alone.', 'No run.', '153/3'),
-      const _CommentaryItem('38.0', 'Dot ball',
-          'Full and straight, defended back to the bowler.', '153/3'),
-    ]);
+    final top = AppData.indiaSquadTop;
+    final middle = AppData.indiaSquadMiddle;
+    final allRounders = AppData.indiaAllRounders;
+    final bowlers = AppData.indiaBowlers;
+    final reserves = AppData.indiaReserves;
+    return Column(
+      children: [
+        SegmentedTabs(
+          items: const [('India', null), ('Australia', null)],
+          selected: squadTeam,
+          onChanged: onTeamChanged,
+          height: 56,
+        ),
+        const SizedBox(height: 18),
+        _squadSection(context, 'TOP ORDER', top, columns: 5, onTap: onOpenPlayer),
+        const SizedBox(height: 16),
+        _squadSection(context, 'MIDDLE ORDER', middle, columns: 4, onTap: onOpenPlayer),
+        const SizedBox(height: 16),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 3, child: _squadSection(context, 'ALL-ROUNDERS', allRounders, columns: 3, onTap: onOpenPlayer)),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 2,
+              child: PremiumCard(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('BOWLERS', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+                    const SizedBox(height: 12),
+                    for (final bowler in bowlers)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          children: [
+                            PlayerAvatar(player: bowler, size: 42),
+                            const SizedBox(width: 10),
+                            Expanded(child: Text(bowler.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+                            StatusBadge(label: 'BOWL', color: const Color(0xff8b5cff), filled: true),
+                          ],
+                        ),
+                      )
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        PremiumCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('RESERVE PLAYERS', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 12),
+              Row(
+                children: reserves
+                    .map((p) => Expanded(
+                          child: Padding(
+                            padding: EdgeInsets.only(right: p == reserves.last ? 0 : 10),
+                            child: ReservePlayerChip(player: p),
+                          ),
+                        ))
+                    .toList(),
+              )
+            ],
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          children: const [
+            Expanded(child: GradientButton(label: 'Compare Teams', icon: Icons.groups_rounded, outlined: true)),
+            SizedBox(width: 12),
+            Expanded(child: GradientButton(label: 'View Full Squad', icon: Icons.arrow_forward_rounded)),
+          ],
+        )
+      ],
+    );
+  }
+
+  Widget _squadSection(BuildContext context, String title, List<PlayerInfo> players, {required int columns, required VoidCallback onTap}) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: players
+                .map(
+                  (player) => SizedBox(
+                    width: columns == 5
+                        ? (context.w - context.horizontalPadding * 2 - 16 * 2 - 12 * 4) / 5
+                        : columns == 4
+                            ? (context.w - context.horizontalPadding * 2 - 16 * 2 - 12 * 3) / 4
+                            : 150,
+                    child: SquadPlayerCard(player: player, onTap: onTap),
+                  ),
+                )
+                .toList(),
+          )
+        ],
+      ),
+    );
   }
 }
 
-class _BallChip extends StatelessWidget {
-  const _BallChip(this.text, {this.highlight = false, this.wicket = false});
-  final String text;
-  final bool highlight, wicket;
+class SeriesStatsTab extends StatelessWidget {
+  const SeriesStatsTab({super.key});
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final color = wicket ? c.live : (highlight ? c.primary : c.card2);
-    return CircleAvatar(
-        radius: 18,
-        backgroundColor: color,
-        child: Text(text,
-            style: TextStyle(
-                color: (highlight || wicket) ? Colors.white : c.text,
-                fontWeight: FontWeight.w900)));
+    return Column(
+      children: [
+        PremiumCard(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('POINTS TABLE (TEST SERIES)', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(color: c.card2, borderRadius: BorderRadius.circular(14), border: Border.all(color: c.border)),
+                child: Row(
+                  children: const [
+                    Expanded(flex: 1, child: Text('#')),
+                    Expanded(flex: 3, child: Text('TEAM')),
+                    Expanded(child: Text('P')),
+                    Expanded(child: Text('W')),
+                    Expanded(child: Text('L')),
+                    Expanded(child: Text('D')),
+                    Expanded(child: Text('PTS')),
+                    Expanded(child: Text('PCT')),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _pointsRow(context, '1', AppData.india, ['3', '2', '1', '0', '16', '66.67']),
+              const Divider(color: Color(0xff1b4266)),
+              _pointsRow(context, '2', AppData.australia, ['3', '1', '2', '0', '8', '33.33']),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, color: c.muted),
+                  const SizedBox(width: 8),
+                  Text('India won the Test series 2-1', style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+                ],
+              )
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: _leaderCard(context, 'TOP RUN SCORERS', AppData.topRunScorers)),
+            const SizedBox(width: 16),
+            Expanded(child: _leaderCard(context, 'TOP WICKET TAKERS', AppData.topWickets)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        PremiumCard(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('SERIES STATS', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 18),
+              Wrap(
+                runSpacing: 20,
+                spacing: 20,
+                children: const [
+                  StatTile(icon: Icons.sports_cricket_rounded, title: 'Most Runs', value: '766', subtitle: 'Total Runs'),
+                  StatTile(icon: Icons.sports_baseball_rounded, title: 'Most Wickets', value: '58', subtitle: 'Total Wickets'),
+                  StatTile(icon: Icons.calendar_month_rounded, title: 'Matches Played', value: '11', subtitle: '3 Tests • 3 ODIs • 5 T20Is'),
+                  StatTile(icon: Icons.stadium_outlined, title: 'Venues', value: '5', subtitle: 'Perth, Adelaide, MCG +2'),
+                  StatTile(icon: Icons.emoji_events_outlined, title: 'Player of Series', value: 'Jasprit Bumrah', subtitle: '(IND)'),
+                  StatTile(icon: Icons.star_outline_rounded, title: 'Series Result', value: 'India won', subtitle: '2-1 (Test) | 2-1 (ODI)'),
+                ],
+              )
+            ],
+          ),
+        )
+      ],
+    );
+  }
+
+  Widget _pointsRow(BuildContext context, String rank, TeamInfo team, List<String> stats) {
+    final c = context.cric;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(flex: 1, child: Text(rank, style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+          Expanded(
+            flex: 3,
+            child: Row(children: [TeamBadge(team, size: 34), const SizedBox(width: 10), Expanded(child: Text(team.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)))]),
+          ),
+          for (final item in stats) Expanded(child: Text(item, style: TextStyle(color: c.text, fontWeight: FontWeight.w600))),
+        ],
+      ),
+    );
+  }
+
+  Widget _leaderCard(BuildContext context, String title, List<PlayerInfo> players) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+          const SizedBox(height: 14),
+          for (final player in players) ...[
+            Row(
+              children: [
+                PlayerAvatar(player: player, size: 46),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(player.name, style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+                      Text(player.team.code, style: TextStyle(color: c.muted)),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(player.stat ?? '', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 28)),
+                    Text(player.secondaryStat ?? '', style: TextStyle(color: c.muted)),
+                  ],
+                )
+              ],
+            ),
+            if (player != players.last) const Divider(color: Color(0xff1b4266)),
+          ],
+          const SizedBox(height: 14),
+          const GradientButton(label: 'View Full List', icon: Icons.arrow_forward_rounded, outlined: true, height: 48),
+        ],
+      ),
+    );
   }
 }
 
-class _CommentarySummary extends StatelessWidget {
-  const _CommentarySummary();
+class SeriesMatchRowCard extends StatelessWidget {
+  const SeriesMatchRowCard({super.key, required this.row, this.completed = false});
+
+  final SeriesMatchRow row;
+  final bool completed;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return PremiumCard(
       padding: const EdgeInsets.all(16),
-      child: Column(children: [
-        Row(children: [
-          CircleAvatar(
-              radius: 34,
-              backgroundColor: c.primary.withValues(alpha: .12),
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('38',
-                        style: TextStyle(
-                            color: c.primary,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 25)),
-                    Text('OVER',
-                        style: TextStyle(
-                            color: c.primary,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 10))
-                  ])),
-          const SizedBox(width: 14),
+      child: Row(
+        children: [
           Expanded(
-              child: Text('38th Over - Alzarri Joseph',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: context.sp(18)))),
-          const SizedBox(width: 8),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('5 RUNS',
-                style:
-                    TextStyle(color: c.primary, fontWeight: FontWeight.w900)),
-            Text('NZ: 158/3',
-                style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-            Text('RR: 4.09', style: TextStyle(color: c.muted))
-          ]),
-        ]),
-        const SizedBox(height: 12),
-        const Wrap(spacing: 9, runSpacing: 8, children: [
-          _BallChip('.'),
-          _BallChip('1'),
-          _BallChip('4', highlight: true),
-          _BallChip('.'),
-          _BallChip('.')
-        ]),
-      ]),
+            flex: 2,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(row.label, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 16)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    TeamBadge(row.left, size: 40),
+                    const SizedBox(width: 10),
+                    Text('VS', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+                    const SizedBox(width: 10),
+                    TeamBadge(row.right, size: 40),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text('${row.left.code} vs ${row.right.code}', style: TextStyle(color: c.text, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(row.date, style: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 16)),
+                const SizedBox(height: 10),
+                Text(row.venue, style: TextStyle(color: c.muted, height: 1.45)),
+              ],
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                StatusBadge(label: row.status, color: completed ? (row.status.contains('IND') ? c.success : const Color(0xff5ce1ff)) : c.cyan, filled: true),
+                const SizedBox(height: 12),
+                Text(row.trailing, textAlign: TextAlign.right, style: TextStyle(color: completed ? c.success : c.text, fontWeight: FontWeight.w700, fontSize: 16, height: 1.45)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Icon(Icons.chevron_right_rounded, color: c.muted),
+        ],
+      ),
     );
   }
 }
 
-class _Moment extends StatelessWidget {
-  const _Moment(this.over, this.text, this.icon, this.color);
-  final String over, text;
-  final IconData icon;
-  final Color color;
+class SquadPlayerCard extends StatelessWidget {
+  const SquadPlayerCard({super.key, required this.player, this.onTap});
+
+  final PlayerInfo player;
+  final VoidCallback? onTap;
+
   @override
-  Widget build(BuildContext context) => Container(
-      width: 155,
-      margin: const EdgeInsets.only(right: 10),
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final badgeColor = switch (player.role) {
+      'BAT' => c.cyan,
+      'WK' => const Color(0xff3b82f6),
+      'AR' => const Color(0xff14b8a6),
+      _ => const Color(0xff8b5cff),
+    };
+    return PremiumCard(
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      radius: 18,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              if (player.order != null)
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: c.card2, border: Border.all(color: c.cyan.withValues(alpha: .6))),
+                  alignment: Alignment.center,
+                  child: Text('${player.order}', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                ),
+              const Spacer(),
+              StatusBadge(label: player.role, color: badgeColor, filled: true),
+            ],
+          ),
+          const SizedBox(height: 8),
+          PlayerAvatar(player: player, size: 86, borderColor: Colors.white.withValues(alpha: .26)),
+          const SizedBox(height: 12),
+          Text(player.name, textAlign: TextAlign.center, style: TextStyle(color: c.text, fontWeight: FontWeight.w800, fontSize: 18, height: 1.15)),
+          if (player.subtitle != null) ...[
+            const SizedBox(height: 6),
+            Text(player.subtitle!, textAlign: TextAlign.center, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700, height: 1.3)),
+          ]
+        ],
+      ),
+    );
+  }
+}
+
+class ReservePlayerChip extends StatelessWidget {
+  const ReservePlayerChip({super.key, required this.player});
+
+  final PlayerInfo player;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-          color: color.withValues(alpha: .08),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withValues(alpha: .35))),
-      child: Row(children: [
-        Icon(icon, color: color, size: 30),
-        const SizedBox(width: 8),
-        Expanded(
+      radius: 16,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              PlayerAvatar(player: player, size: 40),
+              const SizedBox(width: 10),
+              Expanded(child: Text(player.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontWeight: FontWeight.w700, height: 1.2))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(alignment: Alignment.centerLeft, child: StatusBadge(label: player.role, color: player.role == 'BOWL' ? const Color(0xff8b5cff) : player.role == 'AR' ? const Color(0xff14b8a6) : player.role == 'WK' ? const Color(0xff3b82f6) : c.cyan, filled: true)),
+        ],
+      ),
+    );
+  }
+}
+
+class StatTile extends StatelessWidget {
+  const StatTile({super.key, required this.icon, required this.title, required this.value, required this.subtitle});
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return SizedBox(
+      width: context.w > 700 ? 240 : (context.w - context.horizontalPadding * 2 - 20) / 2,
+      child: Row(
+        children: [
+          CircleAvatar(radius: 28, backgroundColor: c.card2, child: Icon(icon, color: c.muted)),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-              Text(over,
-                  style: TextStyle(color: color, fontWeight: FontWeight.w900)),
-              Text(text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: context.cric.text, fontSize: 11.5, height: 1.1))
-            ]))
-      ]));
-}
-
-class _CommentaryItem extends StatelessWidget {
-  const _CommentaryItem(this.ball, this.title, this.body, this.score,
-      {this.active = false, this.boundary = false, this.icon});
-  final String ball, title, body, score;
-  final bool active, boundary;
-  final IconData? icon;
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final color =
-        boundary ? const Color(0xff9333ea) : (active ? c.primary : c.muted);
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SizedBox(
-          width: 54,
-          child: Column(children: [
-            CircleAvatar(
-                radius: 22,
-                backgroundColor:
-                    color.withValues(alpha: active || boundary ? 1 : .12),
-                child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(ball,
-                          style: TextStyle(
-                              color: active || boundary ? Colors.white : color,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900)),
-                      if (icon != null)
-                        Icon(icon, size: 12, color: Colors.white)
-                    ])),
-            Container(width: 2, height: 66, color: c.border)
-          ])),
-      Expanded(
-          child: Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: PremiumCard(
-                  height: 92,
-                  padding: const EdgeInsets.all(12),
-                  radius: 18,
-                  child: Row(children: [
-                    Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                          Text(title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  color: boundary ? color : c.text,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 15)),
-                          const SizedBox(height: 5),
-                          Text(body,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: c.muted, fontSize: 13))
-                        ])),
-                    Text(score,
-                        style: TextStyle(
-                            color: c.primary, fontWeight: FontWeight.w900))
-                  ]))))
-    ]);
-  }
-}
-
-class OversContent extends StatelessWidget {
-  const OversContent({super.key});
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Column(children: [
-      PremiumCard(
-          padding: const EdgeInsets.all(16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(
-                  child: Text('Run Progression',
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18))),
-              _legend(context, c.cyan, 'New Zealand'),
-              const SizedBox(width: 10),
-              _legend(context, c.live, 'West Indies'),
-              const SizedBox(width: 10),
-              Container(
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                      color: c.card2,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: c.border)),
-                  child: Icon(Icons.open_in_full_rounded,
-                      color: c.muted, size: 16))
-            ]),
-            const SizedBox(height: 14),
-            SizedBox(
-                height: 160,
-                width: double.infinity,
-                child: CustomPaint(painter: _RunChartPainter(c))),
-            const SizedBox(height: 14),
-            Divider(color: c.border, height: 1),
-            const SizedBox(height: 12),
-            _RecentOversRow(c: c),
-          ])),
-      const SizedBox(height: 14),
-      const _OverRow(
-          '38',
-          '8',
-          'Alzarri Joseph',
-          'Fast',
-          ['1', '0', '4', '0', '1', '2'],
-          'Daryl Mitchell 64 (83)',
-          'Tom Latham 27 (38)'),
-      const _OverRow(
-          '37',
-          '9',
-          'Jason Holder',
-          'Medium Fast',
-          ['0', '4', '1', 'W', '2', '2'],
-          'Daryl Mitchell 60 (79)',
-          'Tom Latham 26 (36)'),
-      const _OverRow(
-          '36',
-          '8',
-          'Alzarri Joseph',
-          'Fast',
-          ['1', '1', '0', '4', '1', '1'],
-          'Daryl Mitchell 55 (74)',
-          'Tom Latham 25 (34)'),
-      const _OverRow(
-          '35',
-          '11',
-          'Jason Holder',
-          'Medium Fast',
-          ['4', '0', '4', '1', '1', '1'],
-          'Daryl Mitchell 54 (71)',
-          'Tom Latham 24 (33)'),
-    ]);
-  }
-
-  Widget _legend(BuildContext context, Color color, String t) => Row(children: [
-        CircleAvatar(radius: 5, backgroundColor: color),
-        const SizedBox(width: 5),
-        Text(t, style: TextStyle(color: context.cric.muted, fontSize: 12))
-      ]);
-}
-
-class _RecentOversRow extends StatelessWidget {
-  const _RecentOversRow({required this.c});
-  final CricColors c;
-  @override
-  Widget build(BuildContext context) {
-    final overs = [('34', '6'), ('35', '11'), ('36', '8'), ('37', '9'), ('38', '8*')];
-    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-      Expanded(
-          child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            Text('Recent Overs',
-                style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15)),
-            const SizedBox(height: 6),
-            DefaultTextStyle(
-                style: TextStyle(color: c.muted, fontSize: 12),
-                child: Row(children: [
-                  const Text('Runs: '),
-                  Text('42',
-                      style: TextStyle(
-                          color: c.cyan, fontWeight: FontWeight.w900)),
+                Text(title, style: TextStyle(color: c.muted)),
+                const SizedBox(height: 4),
+                Text(value, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
+                Text(subtitle, style: TextStyle(color: c.muted, height: 1.35)),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+class MatchDetailHeroCard extends StatelessWidget {
+  const MatchDetailHeroCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(24), border: Border.all(color: c.border)),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset('assets/images/stadium_live.png', fit: BoxFit.cover, errorBuilder: (_, __, ___) => const EmptyOrErrorImage(label: 'Match')),
+          ),
+          Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.black.withValues(alpha: .18), Colors.black.withValues(alpha: .76)])))),
+          Column(
+            children: [
+              Row(
+                children: [
+                  StatusBadge(label: 'LIVE', color: c.live, filled: true),
                   const SizedBox(width: 10),
-                  const Text('Wickets: '),
-                  Text('1',
-                      style: TextStyle(
-                          color: c.cyan, fontWeight: FontWeight.w900)),
+                  Text('1st Test • Day 1', style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  StatusBadge(label: '128K', color: Colors.white, filled: true),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(alignment: Alignment.centerLeft, child: Text('West Indies Tour of New Zealand, 2025', style: TextStyle(color: Colors.white.withValues(alpha: .92), fontWeight: FontWeight.w700, fontSize: 16))),
+              const SizedBox(height: 22),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _compactTeam(context, AppData.newZealand),
+                  Column(
+                    children: [
+                      Text('VS', style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 8),
+                      Text('158/3', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: context.sp(44), height: .95)),
+                      const SizedBox(height: 4),
+                      Text('(38.4 OV)', style: TextStyle(color: Colors.white.withValues(alpha: .88), fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                  _compactTeam(context, AppData.westIndies),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Text('NZ won the toss & chose to bat', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 16),
+              SizedBox(width: 220, child: const GradientButton(label: 'Watch Live', icon: Icons.play_circle_fill_rounded, height: 50)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _compactTeam(BuildContext context, TeamInfo team) {
+    return SizedBox(
+      width: 110,
+      child: Column(
+        children: [
+          TeamBadge(team, size: 78),
+          const SizedBox(height: 10),
+          Text(team.name.toUpperCase(), textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
+}
+
+class MatchScorecardTab extends StatelessWidget {
+  const MatchScorecardTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final batting = [
+      ('K Williamson', '64*', '78', '6', '1', '82.05'),
+      ('R Ravindra', '22*', '29', '3', '0', '75.86'),
+      ('D Conway', '28', '42', '4', '0', '66.67'),
+      ('T Latham (wk)', '16', '24', '1', '0', '66.67'),
+      ('G Phillips', '8', '10', '0', '1', '80.00'),
+    ];
+    return PremiumCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('NZ 158/3  (38.4 OV)', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+              const SizedBox(width: 10),
+              StatusBadge(label: '1st Innings', color: c.primary, filled: true),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: c.card2, borderRadius: BorderRadius.circular(14)),
+            child: Row(
+              children: const [
+                Expanded(flex: 4, child: Text('Batting')),
+                Expanded(child: Text('R')),
+                Expanded(child: Text('B')),
+                Expanded(child: Text('4s')),
+                Expanded(child: Text('6s')),
+                Expanded(child: Text('SR')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final row in batting) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                children: [
+                  Expanded(flex: 4, child: Text(row.$1, style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+                  Expanded(child: Text(row.$2, style: TextStyle(color: c.text))),
+                  Expanded(child: Text(row.$3, style: TextStyle(color: c.text))),
+                  Expanded(child: Text(row.$4, style: TextStyle(color: c.text))),
+                  Expanded(child: Text(row.$5, style: TextStyle(color: c.text))),
+                  Expanded(child: Text(row.$6, style: TextStyle(color: c.text))),
+                ],
+              ),
+            ),
+            if (row != batting.last) const Divider(color: Color(0xff1b4266)),
+          ],
+          const Divider(color: Color(0xff1b4266)),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Expanded(flex: 4, child: Text('Extras', style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+                Expanded(flex: 2, child: Text('(b 1, lb 2, w 3, nb 0)', style: TextStyle(color: c.muted))),
+                Expanded(child: Text('6', style: TextStyle(color: c.text, fontWeight: FontWeight.w800))),
+              ],
+            ),
+          ),
+          const Divider(color: Color(0xff1b4266)),
+          Row(
+            children: [
+              Expanded(child: Text('Total', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 17))),
+              Text('158/3 (38.4 OV)', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 17)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class MatchCommentaryTab extends StatelessWidget {
+  const MatchCommentaryTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      ('38.4', '2 runs', 'Mitchell clips Holder through midwicket to bring up another productive over.', false),
+      ('37.5', 'WICKET', 'Williamson falls attempting the late cut. Holder gets the breakthrough.', true),
+      ('36.2', 'FOUR', 'Conway drives gloriously on the up through cover.', false),
+      ('35.6', 'SIX', 'Phillips launches the final ball over long-on.', false),
+    ];
+    return Column(
+      children: [
+        const PremiumCard(
+          padding: EdgeInsets.all(18),
+          child: Row(
+            children: [
+              Expanded(child: _MiniCommentaryStat(title: 'Runs', value: '158')),
+              Expanded(child: _MiniCommentaryStat(title: 'Wickets', value: '3')),
+              Expanded(child: _MiniCommentaryStat(title: 'Run Rate', value: '4.12')),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        for (final item in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: PremiumCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Column(
+                    children: [
+                      CircleAvatar(radius: 20, backgroundColor: item.$4 ? const Color(0xffff2d45) : const Color(0xff0a2748), child: Text(item.$1, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12))),
+                      Container(width: 2, height: 50, color: const Color(0xff1b4266)),
+                    ],
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            StatusBadge(label: item.$2, color: item.$2 == 'WICKET' ? const Color(0xffff2d45) : item.$2 == 'FOUR' ? const Color(0xff00d9ff) : const Color(0xff38f28b), filled: true),
+                            const SizedBox(width: 10),
+                            const Text('NZ 158/3', style: TextStyle(fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(item.$3, style: TextStyle(color: context.cric.text, fontSize: 16, height: 1.55)),
+                      ],
+                    ),
+                  )
+                ],
+              ),
+            ),
+          )
+      ],
+    );
+  }
+}
+
+class _MiniCommentaryStat extends StatelessWidget {
+  const _MiniCommentaryStat({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(title, style: TextStyle(color: context.cric.muted)),
+        const SizedBox(height: 6),
+        Text(value, style: TextStyle(color: context.cric.text, fontWeight: FontWeight.w900, fontSize: 22)),
+      ],
+    );
+  }
+}
+
+class MatchOversTab extends StatelessWidget {
+  const MatchOversTab({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final overs = [
+      ('38', '8', 'Alzarri Joseph', 'Fast', ['1', '0', '4', '0', '1', '2'], 'Daryl Mitchell 64 (83)', 'Tom Latham 27 (38)'),
+      ('37', '9', 'Jason Holder', 'Medium Fast', ['0', '4', '1', 'W', '2', '2'], 'Daryl Mitchell 60 (79)', 'Tom Latham 26 (36)'),
+      ('36', '8', 'Alzarri Joseph', 'Fast', ['1', '1', '0', '4', '1', '1'], 'Daryl Mitchell 55 (74)', 'Tom Latham 25 (34)'),
+      ('35', '11', 'Jason Holder', 'Medium Fast', ['4', '0', '4', '1', '1', '1'], 'Daryl Mitchell 54 (71)', 'Tom Latham 24 (33)'),
+    ];
+    return Column(
+      children: [
+        PremiumCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: Text('Run Progression', style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18))),
+                  _legendDot(context, c.cyan, 'New Zealand'),
                   const SizedBox(width: 10),
-                  const Text('Avg: '),
-                  Text('7.00',
-                      style: TextStyle(
-                          color: c.cyan, fontWeight: FontWeight.w900)),
-                ]))
-          ])),
-      Container(width: 1, height: 56, color: c.border),
-      const SizedBox(width: 8),
-      for (final o in overs)
-        Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(o.$1,
-                  style: TextStyle(
-                      color: c.muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              _BallChip(o.$2,
-                  highlight: o.$2 == '11' || o.$2 == '8*',
-                  wicket: o.$2 == '9'),
-            ]))
-    ]);
+                  _legendDot(context, c.live, 'West Indies'),
+                  const SizedBox(width: 10),
+                  Container(width: 30, height: 30, decoration: BoxDecoration(color: c.card2, borderRadius: BorderRadius.circular(8), border: Border.all(color: c.border)), child: Icon(Icons.open_in_full_rounded, color: c.muted, size: 16)),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(height: 180, child: CustomPaint(painter: _RunChartPainter(c))),
+              const SizedBox(height: 12),
+              Divider(color: c.border, height: 1),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Recent Overs', style: TextStyle(color: c.text, fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 6),
+                        Text.rich(TextSpan(style: TextStyle(color: c.muted, fontSize: 12.5), children: [
+                          const TextSpan(text: 'Runs: '),
+                          TextSpan(text: '42', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                          const TextSpan(text: '   Wickets: '),
+                          TextSpan(text: '1', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                          const TextSpan(text: '   Avg: '),
+                          TextSpan(text: '7.00', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+                        ])),
+                      ],
+                    ),
+                  ),
+                  Container(width: 1, height: 52, color: c.border),
+                  const SizedBox(width: 8),
+                  for (final item in [('34', '6'), ('35', '11'), ('36', '8'), ('37', '9'), ('38', '8*')])
+                    Padding(
+                      padding: const EdgeInsets.only(left: 5),
+                      child: Column(
+                        children: [
+                          Text(item.$1, style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 4),
+                          _BallChip(label: item.$2, highlight: item.$2 == '11' || item.$2 == '8*', wicket: item.$2 == '9'),
+                        ],
+                      ),
+                    )
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        for (final over in overs)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: PremiumCard(
+              padding: const EdgeInsets.all(14),
+              radius: 18,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 54,
+                    child: Column(
+                      children: [
+                        Text('OVER', style: TextStyle(color: c.muted, fontSize: 10)),
+                        Text(over.$1, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 30)),
+                        Text('${over.$2} RUNS', style: TextStyle(color: c.cyan, fontSize: 10, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                  ),
+                  VerticalDivider(color: c.border, width: 22),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [Container(width: 8, height: 8, decoration: BoxDecoration(color: c.live, shape: BoxShape.circle)), const SizedBox(width: 6), Text(over.$3, style: TextStyle(color: c.text, fontWeight: FontWeight.w800))]),
+                        Padding(padding: const EdgeInsets.only(left: 14, top: 2), child: Text(over.$4, style: TextStyle(color: c.muted, fontSize: 12))),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            for (final ball in over.$5) _BallChip(label: ball, highlight: ball == '4' || ball == '6', wicket: ball == 'W'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  VerticalDivider(color: c.border, width: 22),
+                  SizedBox(
+                    width: 138,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [Icon(Icons.sports_cricket_rounded, color: c.cyan, size: 14), const SizedBox(width: 6), Expanded(child: Text(over.$6, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 11, fontWeight: FontWeight.w700)))]),
+                        const SizedBox(height: 8),
+                        Padding(padding: const EdgeInsets.only(left: 20), child: Text(over.$7, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.text, fontSize: 11))),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded, color: c.muted),
+                ],
+              ),
+            ),
+          )
+      ],
+    );
+  }
+
+  Widget _legendDot(BuildContext context, Color color, String label) {
+    return Row(
+      children: [
+        CircleAvatar(radius: 4, backgroundColor: color),
+        const SizedBox(width: 5),
+        Text(label, style: TextStyle(color: context.cric.muted, fontSize: 12)),
+      ],
+    );
   }
 }
 
 class _RunChartPainter extends CustomPainter {
   _RunChartPainter(this.c);
+
   final CricColors c;
 
   TextPainter _label(String t, {Color? color, double size = 10, FontWeight weight = FontWeight.w700}) {
     final tp = TextPainter(
-        text: TextSpan(
-            text: t,
-            style: TextStyle(
-                color: color ?? c.muted, fontSize: size, fontWeight: weight)),
-        textDirection: TextDirection.ltr)
-      ..layout();
+      text: TextSpan(text: t, style: TextStyle(color: color ?? c.muted, fontSize: size, fontWeight: weight)),
+      textDirection: TextDirection.ltr,
+    )..layout();
     return tp;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     const leftPad = 32.0;
-    const bottomPad = 18.0;
     const rightPad = 44.0;
+    const bottomPad = 20.0;
     final chartW = size.width - leftPad - rightPad;
     final chartH = size.height - bottomPad;
 
@@ -2190,433 +3419,186 @@ class _RunChartPainter extends CustomPainter {
       ..strokeWidth = 1;
     for (var i = 0; i <= 4; i++) {
       final y = chartH * i / 4;
-      canvas.drawLine(
-          Offset(leftPad, y), Offset(leftPad + chartW, y), grid);
+      canvas.drawLine(Offset(leftPad, y), Offset(leftPad + chartW, y), grid);
       final label = _label('${200 - i * 50}');
-      label.paint(canvas, Offset(leftPad - 8 - label.width, y - label.height / 2));
+      label.paint(canvas, Offset(leftPad - label.width - 8, y - label.height / 2));
     }
     for (var i = 0; i <= 5; i++) {
       final x = leftPad + chartW * i / 5;
-      final t = (i * 10).toString();
-      final label = _label(t);
+      final label = _label('${i * 10}');
       label.paint(canvas, Offset(x - label.width / 2, chartH + 4));
     }
-    final oversLabel = _label('OVERS', weight: FontWeight.w900);
-    oversLabel.paint(canvas,
-        Offset(leftPad + chartW + 4, chartH + 4));
+    final overs = _label('50OVERS', weight: FontWeight.w900);
+    overs.paint(canvas, Offset(leftPad + chartW + 4, chartH + 4));
 
-    final p1 = Paint()
-      ..color = c.cyan
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
-    final p2 = Paint()
-      ..color = c.live
-      ..strokeWidth = 2.4
-      ..style = PaintingStyle.stroke;
-    Path path1 = Path(), path2 = Path();
-    final pts = [
-      0, 12, 25, 38, 44, 56, 68, 80, 94, 105, 118, 127, 139, 145, 158
-    ];
-    final pts2 = [0, 6, 11, 20, 25, 31, 38, 45, 52, 60, 66, 72, 78];
-    Offset? lastP1;
-    for (int i = 0; i < pts.length; i++) {
-      final x = leftPad + chartW * (i / (pts.length - 1)) * (42 / 50);
-      final y = chartH - (pts[i] / 200) * chartH;
-      lastP1 = Offset(x, y);
+    final nz = [0, 12, 25, 38, 44, 56, 68, 80, 94, 105, 118, 127, 139, 145, 158];
+    final wi = [0, 6, 11, 20, 25, 31, 38, 45, 52, 60, 66, 72, 78];
+
+    final nzPaint = Paint()..color = c.cyan..strokeWidth = 3..style = PaintingStyle.stroke;
+    final wiPaint = Paint()..color = c.live..strokeWidth = 2.4..style = PaintingStyle.stroke;
+
+    final pathNz = Path();
+    final pathWi = Path();
+    Offset lastPoint = Offset.zero;
+    for (var i = 0; i < nz.length; i++) {
+      final x = leftPad + chartW * (i / (nz.length - 1)) * (42 / 50);
+      final y = chartH - (nz[i] / 200) * chartH;
+      lastPoint = Offset(x, y);
       if (i == 0) {
-        path1.moveTo(x, y);
+        pathNz.moveTo(x, y);
       } else {
-        path1.lineTo(x, y);
+        pathNz.lineTo(x, y);
       }
     }
-    for (int i = 0; i < pts2.length; i++) {
-      final x = leftPad + chartW * (i / (pts.length - 1)) * (42 / 50);
-      final y = chartH - (pts2[i] / 200) * chartH;
+    for (var i = 0; i < wi.length; i++) {
+      final x = leftPad + chartW * (i / (nz.length - 1)) * (42 / 50);
+      final y = chartH - (wi[i] / 200) * chartH;
       if (i == 0) {
-        path2.moveTo(x, y);
+        pathWi.moveTo(x, y);
       } else {
-        path2.lineTo(x, y);
+        pathWi.lineTo(x, y);
       }
     }
-    canvas.drawPath(path1, p1);
-    canvas.drawPath(path2, p2);
+    canvas.drawPath(pathNz, nzPaint);
+    canvas.drawPath(pathWi, wiPaint);
 
-    if (lastP1 != null) {
-      final glow = Paint()
-        ..color = c.cyan.withValues(alpha: .35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-      canvas.drawCircle(lastP1, 8, glow);
-      canvas.drawCircle(lastP1, 5, Paint()..color = c.cyan);
-      final scoreLabel = _label('158/3',
-          color: c.cyan, size: 14, weight: FontWeight.w900);
-      scoreLabel.paint(
-          canvas, Offset(lastP1.dx + 8, lastP1.dy - scoreLabel.height / 2));
-    }
+    final glow = Paint()
+      ..color = c.cyan.withValues(alpha: .35)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
+    canvas.drawCircle(lastPoint, 8, glow);
+    canvas.drawCircle(lastPoint, 5, Paint()..color = c.cyan);
+    final label = _label('158/3', color: c.cyan, size: 14, weight: FontWeight.w900);
+    label.paint(canvas, Offset(lastPoint.dx + 8, lastPoint.dy - label.height / 2));
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-class _OverRow extends StatelessWidget {
-  const _OverRow(this.over, this.runs, this.bowler, this.type, this.balls,
-      this.bat1, this.bat2);
-  final String over, runs, bowler, type, bat1, bat2;
-  final List<String> balls;
+class _BallChip extends StatelessWidget {
+  const _BallChip({required this.label, this.highlight = false, this.wicket = false});
+
+  final String label;
+  final bool highlight;
+  final bool wicket;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: PremiumCard(
-            padding: const EdgeInsets.all(14),
-            radius: 20,
-            child: IntrinsicHeight(
-                child: Row(children: [
-              SizedBox(
-                  width: 54,
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('OVER',
-                            style: TextStyle(color: c.muted, fontSize: 10)),
-                        const SizedBox(height: 2),
-                        Text(over,
-                            style: TextStyle(
-                                color: c.cyan,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 26)),
-                        const SizedBox(height: 2),
-                        Text('$runs RUNS',
-                            style: TextStyle(
-                                color: c.cyan,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800))
-                      ])),
-              VerticalDivider(color: c.border, width: 20),
-              Expanded(
-                  child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                        Row(children: [
-                          Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                  color: c.live, shape: BoxShape.circle)),
-                          const SizedBox(width: 6),
-                          Flexible(
-                              child: Text(bowler,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: c.text,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 14))),
-                        ]),
-                        Padding(
-                            padding: const EdgeInsets.only(left: 14),
-                            child: Text(type,
-                                style:
-                                    TextStyle(color: c.muted, fontSize: 11))),
-                        const SizedBox(height: 8),
-                        Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: balls
-                                .map((b) => _BallChip(b,
-                                    highlight: b == '4' || b == '6',
-                                    wicket: b == 'W'))
-                                .toList())
-                      ]))),
-              VerticalDivider(color: c.border, width: 20),
-              SizedBox(
-                  width: context.w <= 430 ? 95 : 130,
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(children: [
-                          Icon(Icons.sports_cricket_rounded,
-                              color: c.cyan, size: 14),
-                          const SizedBox(width: 6),
-                          Expanded(
-                              child: Text(bat1,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: c.text,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700))),
-                        ]),
-                        const SizedBox(height: 6),
-                        Padding(
-                            padding: const EdgeInsets.only(left: 20),
-                            child: Text(bat2,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style:
-                                    TextStyle(color: c.text, fontSize: 11)))
-                      ])),
-              Icon(Icons.chevron_right_rounded, color: c.muted, size: 22),
-            ]))));
+    final bg = wicket ? c.live : highlight ? c.primary : c.card2;
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+      alignment: Alignment.center,
+      child: Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+    );
   }
 }
 
-class InfoContent extends StatelessWidget {
-  const InfoContent({super.key});
+class MatchInfoTab extends StatelessWidget {
+  const MatchInfoTab({super.key});
+
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
     final cards = [
-      (
-        'Match',
-        '1st Test • Day 1\nWest Indies Tour of New Zealand, 2025\nStatus: Live',
-        Icons.sports_cricket_rounded
-      ),
-      (
-        'Venue',
-        'Hagley Oval, Christchurch\nCapacity: 18,000\nPitch: Balanced',
-        Icons.location_on_rounded
-      ),
-      (
-        'Toss',
-        'New Zealand won the toss\nand chose to bat',
-        Icons.toll_rounded
-      ),
-      (
-        'Officials',
-        'Richard Kettleborough\nMichael Gough\nThird Umpire: Joel Wilson',
-        Icons.groups_rounded
-      ),
-      (
-        'Weather',
-        'Rain interruption\nCloudy • 18°C\nHumidity 72%',
-        Icons.cloud_rounded
-      ),
-      (
-        'Streaming',
-        'Available Streams\nSD • HD • Full HD',
-        Icons.live_tv_rounded
-      )
+      StatTile(icon: Icons.stadium_outlined, title: 'Venue', value: 'Hagley Oval', subtitle: 'Christchurch'),
+      StatTile(icon: Icons.sports_cricket_rounded, title: 'Toss', value: 'New Zealand', subtitle: 'elected to bat'),
+      StatTile(icon: Icons.person_outline_rounded, title: 'Umpires', value: 'Kettleborough', subtitle: 'Gough'),
+      StatTile(icon: Icons.wb_cloudy_outlined, title: 'Weather', value: 'Cloudy', subtitle: '18°C • Humid'),
+      StatTile(icon: Icons.live_tv_rounded, title: 'Streaming', value: 'CricPro Live', subtitle: 'English & Hindi feed'),
+      StatTile(icon: Icons.shield_outlined, title: 'Series', value: '3rd ODI', subtitle: 'Of 3 matches'),
     ];
-    return Column(
-        children: cards
-            .map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: PremiumCard(
-                    height: 122,
-                    padding: const EdgeInsets.all(16),
-                    radius: 22,
-                    child: Row(children: [
-                      CircleAvatar(
-                          radius: 25,
-                          backgroundColor: c.primary.withValues(alpha: .13),
-                          child:
-                              Icon(e.$3, color: c.isDark ? c.cyan : c.primary)),
-                      const SizedBox(width: 16),
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                            Text(e.$1,
-                                style: TextStyle(
-                                    color: c.text,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 18)),
-                            const SizedBox(height: 6),
-                            Text(e.$2,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: c.muted, height: 1.25))
-                          ]))
-                    ]))))
-            .toList());
+    return PremiumCard(
+      padding: const EdgeInsets.all(18),
+      child: Wrap(spacing: 20, runSpacing: 20, children: cards),
+    );
   }
 }
 
-class SquadsContent extends StatelessWidget {
-  const SquadsContent({super.key});
+class MatchSquadsTab extends StatelessWidget {
+  const MatchSquadsTab({super.key});
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final players = [
-      ('1', 'Devon Conway', 'BAT', 'Playing XI'),
-      ('2', 'Rachin Ravindra', 'BAT', 'Playing XI'),
-      ('3', 'Kane Williamson', 'BAT', 'Playing XI'),
-      ('4', 'Daryl Mitchell', 'AR', 'Playing XI'),
-      ('5', 'Tom Latham', 'WK', 'Playing XI'),
-      ('6', 'Glenn Phillips', 'AR', 'Playing XI'),
-      ('7', 'Mitchell Santner', 'C AR', 'Playing XI'),
-      ('8', 'Michael Bracewell', 'AR', 'Playing XI'),
-      ('9', 'Matt Henry', 'BOWL', 'Playing XI'),
-      ('10', 'Kyle Jamieson', 'BOWL', 'Playing XI'),
-      ('11', 'Lockie Ferguson', 'BOWL', 'Playing XI')
+      'Devon Conway',
+      'Rachin Ravindra',
+      'Kane Williamson',
+      'Daryl Mitchell',
+      'Tom Latham',
+      'Glenn Phillips',
     ];
-    final bench = [
-      ('12', 'Adam Milne', 'BOWL', 'Bench'),
-      ('13', 'Ish Sodhi', 'BOWL', 'Bench'),
-      ('14', 'Mark Chapman', 'BAT', 'Bench'),
-      ('15', 'Ben Sears', 'BOWL', 'Bench'),
-      ('16', 'Tim Seifert', 'WK', 'Bench')
-    ];
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      PremiumCard(
-          height: 108,
-          padding: const EdgeInsets.all(12),
-          child:
-              Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _infoMini(context, 'TOSS', 'NZ elected\nto bat', Icons.toll),
-            _infoMini(context, 'VENUE', 'Hagley Oval\nChristchurch',
-                Icons.location_on),
-            _infoMini(context, 'UMPIRES', 'Kettleborough\nGough', Icons.person),
-            _infoMini(context, 'SERIES', '3rd ODI\nof 3', Icons.emoji_events)
-          ])),
-      const SizedBox(height: 14),
-      Row(children: [
-        Expanded(
-            child: Container(
-                height: 58,
-                decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: c.cyan),
-                    color: c.cyan.withValues(alpha: .08)),
-                child:
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const TeamBadge(AppData.nz, size: 34),
-                  const SizedBox(width: 8),
-                  Text('NEW ZEALAND',
-                      style:
-                          TextStyle(color: c.cyan, fontWeight: FontWeight.w900))
-                ]))),
-        const SizedBox(width: 12),
-        Expanded(
-            child: Container(
-                height: 58,
-                decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: c.border),
-                    color: c.card),
-                child:
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const TeamBadge(AppData.wi, size: 34),
-                  const SizedBox(width: 8),
-                  Flexible(
-                      child: Text('WEST INDIES',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: c.muted, fontWeight: FontWeight.w900)))
-                ])))
-      ]),
-      const SizedBox(height: 16),
-      Row(children: [
-        Text('PLAYING XI',
-            style: TextStyle(
-                color: c.cyan, fontWeight: FontWeight.w900, fontSize: 18)),
-        const Spacer(),
-        Text('CAPTAIN: Mitchell Santner',
-            style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))
-      ]),
-      const SizedBox(height: 10),
-      ...players.map((p) => _SquadRow(p)),
-      const SizedBox(height: 16),
-      Text('BENCH',
-          style: TextStyle(
-              color: c.cyan, fontWeight: FontWeight.w900, fontSize: 18)),
-      const SizedBox(height: 10),
-      ...bench.map((p) => _SquadRow(p, bench: true))
-    ]);
+    return Column(
+      children: [
+        PremiumCard(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: const [
+              Expanded(child: _MiniCommentaryStat(title: 'Toss', value: 'NZ')),
+              Expanded(child: _MiniCommentaryStat(title: 'Venue', value: 'Hagley')),
+              Expanded(child: _MiniCommentaryStat(title: 'Umpires', value: '2')),
+              Expanded(child: _MiniCommentaryStat(title: 'Series', value: '3rd ODI')),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        SegmentedTabs(items: const [('New Zealand', null), ('West Indies', null)], selected: 0, onChanged: (_) {}, height: 56),
+        const SizedBox(height: 16),
+        PremiumCard(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [Text('PLAYING XI', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)), const Spacer(), Text('CAPTAIN: Mitchell Santner', style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))]),
+              const SizedBox(height: 12),
+              for (var i = 0; i < players.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: PremiumCard(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    radius: 16,
+                    child: Row(
+                      children: [
+                        Container(width: 28, height: 28, alignment: Alignment.center, decoration: BoxDecoration(color: c.card2, shape: BoxShape.circle), child: Text('${i + 1}', style: TextStyle(color: c.text, fontWeight: FontWeight.w800))),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(players[i], style: TextStyle(color: c.text, fontWeight: FontWeight.w700))),
+                        StatusBadge(label: i == 4 ? 'WK' : 'BAT', color: i == 4 ? const Color(0xff3b82f6) : c.cyan, filled: true),
+                        const SizedBox(width: 8),
+                        StatusBadge(label: 'Playing XI', color: c.success, filled: true),
+                      ],
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Text('BENCH', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w800, fontSize: 18)),
+              const SizedBox(height: 10),
+              Wrap(spacing: 10, runSpacing: 10, children: const [PillChip('Will Young'), PillChip('Lockie Ferguson'), PillChip('Michael Bracewell')]),
+            ],
+          ),
+        )
+      ],
+    );
   }
-
-  Widget _infoMini(BuildContext context, String t, String b, IconData i) =>
-      Expanded(
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(i, color: context.cric.cyan, size: 20),
-        const SizedBox(height: 5),
-        Text(t,
-            style: TextStyle(
-                color: context.cric.cyan,
-                fontWeight: FontWeight.w900,
-                fontSize: 11)),
-        Text(b,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: context.cric.text, fontSize: 11))
-      ]));
 }
 
-class _SquadRow extends StatelessWidget {
-  const _SquadRow(this.p, {this.bench = false});
-  final (String, String, String, String) p;
-  final bool bench;
+class _StatValue extends StatelessWidget {
+  const _StatValue({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: PremiumCard(
-            height: 62,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            radius: 16,
-            child: Row(children: [
-              Text(p.$1,
-                  style: TextStyle(
-                      color: c.muted,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13)),
-              const SizedBox(width: 10),
-              CircleAvatar(
-                  radius: 18,
-                  backgroundColor: c.card2,
-                  child: Text(p.$2.split(' ').map((e) => e[0]).take(2).join(),
-                      style: TextStyle(
-                          color: c.text,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900))),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Text(p.$2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14))),
-              _role(context, p.$3),
-              const SizedBox(width: 8),
-              Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                      color:
-                          (bench ? c.muted : c.success).withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Text(p.$4,
-                      style: TextStyle(
-                          color: bench ? c.muted : c.success,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 10)))
-            ])));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(value, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 28)),
+        const SizedBox(height: 4),
+        Text(title, style: TextStyle(color: c.muted)),
+      ],
+    );
   }
-
-  Widget _role(BuildContext context, String r) => Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-          color: context.cric.card2,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: context.cric.border)),
-      child: Text(r,
-          style: TextStyle(
-              color: context.cric.text,
-              fontWeight: FontWeight.w800,
-              fontSize: 10)));
 }
