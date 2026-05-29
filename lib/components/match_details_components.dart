@@ -3,11 +3,17 @@ import 'package:flutter/material.dart';
 import '../app_theme.dart';
 import '../components.dart';
 import '../models.dart';
+import '../models/cricket_match.dart';
 
 class MatchDetailHeroCard extends StatelessWidget {
-  const MatchDetailHeroCard({super.key, this.onWatchLive});
+  const MatchDetailHeroCard({super.key, this.onWatchLive, this.match});
 
   final VoidCallback? onWatchLive;
+
+  /// When provided, the hero renders real data from this match. When null
+  /// (e.g. demo mode), the hardcoded design preview is shown so the UI
+  /// remains complete in storyboards.
+  final CricketMatch? match;
 
   @override
   Widget build(BuildContext context) {
@@ -16,6 +22,63 @@ class MatchDetailHeroCard extends StatelessWidget {
     final narrow = w <= 400;
     final pad = narrow ? 14.0 : 16.0;
     final badge = narrow ? 56.0 : 78.0;
+
+    final m = match;
+    final isLive = m?.isLive ?? true;
+    final isFinished = m?.isFinished ?? false;
+    final statusLabel = isLive ? 'LIVE' : (isFinished ? 'RESULT' : 'UPCOMING');
+    final statusColor = isLive
+        ? c.live
+        : (isFinished ? c.success : c.cyan);
+    final headline = m == null
+        ? '1st Test • Day 1'
+        : (m.matchDesc.isNotEmpty
+            ? m.matchDesc
+            : (m.statusText.isNotEmpty ? m.statusText : statusLabel));
+    final seriesLine = m == null
+        ? 'West Indies Tour of New Zealand, 2025'
+        : (m.series.isNotEmpty ? m.series : '');
+    final leftTeam = m == null
+        ? AppData.newZealand
+        : TeamInfo(
+            code: m.teamAShort.isNotEmpty ? m.teamAShort : 'A',
+            name: m.teamA.isNotEmpty ? m.teamA : 'Team A',
+            shortName: m.teamAShort.isNotEmpty ? m.teamAShort : 'A',
+            color: const Color(0xff22d3ee),
+            asset: m.teamALogo,
+          );
+    final rightTeam = m == null
+        ? AppData.westIndies
+        : TeamInfo(
+            code: m.teamBShort.isNotEmpty ? m.teamBShort : 'B',
+            name: m.teamB.isNotEmpty ? m.teamB : 'Team B',
+            shortName: m.teamBShort.isNotEmpty ? m.teamBShort : 'B',
+            color: const Color(0xfff59e0b),
+            asset: m.teamBLogo,
+          );
+    final showScore = m == null || isLive || isFinished;
+    final centerScore = m == null
+        ? '158/3'
+        : (m.teamAScoreText.isNotEmpty
+            ? m.teamAScoreText.split(' (').first
+            : (m.teamBScoreText.isNotEmpty
+                ? m.teamBScoreText.split(' (').first
+                : ''));
+    final centerOvers = m == null
+        ? '(38.4 OV)'
+        : _extractParens(m.teamAScoreText.isNotEmpty
+            ? m.teamAScoreText
+            : m.teamBScoreText);
+    final footLine = m == null
+        ? 'NZ won the toss & chose to bat'
+        : (isFinished
+            ? (m.resultText.isNotEmpty ? m.resultText : m.statusText)
+            : m.statusText);
+    final buttonLabel = isFinished ? 'View Scorecard' : 'Watch Live';
+    final buttonIcon = isFinished
+        ? Icons.receipt_long_rounded
+        : Icons.play_circle_fill_rounded;
+
     return Container(
       padding: EdgeInsets.all(pad),
       decoration: BoxDecoration(
@@ -44,39 +107,41 @@ class MatchDetailHeroCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  StatusBadge(label: 'LIVE', color: c.live, filled: true),
+                  StatusBadge(
+                      label: statusLabel,
+                      color: statusColor,
+                      filled: true),
                   const SizedBox(width: 10),
                   Expanded(
-                      child: Text('1st Test • Day 1',
+                      child: Text(headline,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: .92),
                               fontWeight: FontWeight.w700))),
-                  const SizedBox(width: 8),
-                  const StatusBadge(label: '128K', color: Colors.white, filled: true),
                 ],
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'West Indies Tour of New Zealand, 2025',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: Colors.white.withValues(alpha: .92),
-                      fontWeight: FontWeight.w700,
-                      fontSize: context.sp(15)),
+              if (seriesLine.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    seriesLine,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: .92),
+                        fontWeight: FontWeight.w700,
+                        fontSize: context.sp(15)),
+                  ),
                 ),
-              ),
+              ],
               SizedBox(height: narrow ? 16 : 22),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(
-                      child: _compactTeam(context, AppData.newZealand, badge)),
+                  Expanded(child: _compactTeam(context, leftTeam, badge)),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -84,43 +149,47 @@ class MatchDetailHeroCard extends StatelessWidget {
                           style: TextStyle(
                               color: Colors.white.withValues(alpha: .88),
                               fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 8),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text('158/3',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: context.sp(narrow ? 34 : 44),
-                                height: .95)),
-                      ),
-                      const SizedBox(height: 4),
-                      Text('(38.4 OV)',
-                          style: TextStyle(
-                              color: Colors.white.withValues(alpha: .88),
-                              fontWeight: FontWeight.w700,
-                              fontSize: context.sp(13))),
+                      if (showScore && centerScore.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(centerScore,
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: context.sp(narrow ? 34 : 44),
+                                  height: .95)),
+                        ),
+                        if (centerOvers.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(centerOvers,
+                              style: TextStyle(
+                                  color: Colors.white.withValues(alpha: .88),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: context.sp(13))),
+                        ],
+                      ],
                     ],
                   ),
-                  Expanded(
-                      child: _compactTeam(context, AppData.westIndies, badge)),
+                  Expanded(child: _compactTeam(context, rightTeam, badge)),
                 ],
               ),
               SizedBox(height: narrow ? 14 : 20),
-              Text('NZ won the toss & chose to bat',
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.cyan,
-                      fontWeight: FontWeight.w700,
-                      fontSize: context.sp(13))),
+              if (footLine.isNotEmpty)
+                Text(footLine,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: c.cyan,
+                        fontWeight: FontWeight.w700,
+                        fontSize: context.sp(13))),
               const SizedBox(height: 16),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 240),
                 child: GradientButton(
-                  label: 'Watch Live',
-                  icon: Icons.play_circle_fill_rounded,
+                  label: buttonLabel,
+                  icon: buttonIcon,
                   height: 50,
                   onTap: onWatchLive,
                 ),
@@ -130,6 +199,14 @@ class MatchDetailHeroCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _extractParens(String value) {
+    final start = value.indexOf('(');
+    if (start < 0) return '';
+    final end = value.indexOf(')', start);
+    if (end < 0) return value.substring(start);
+    return value.substring(start, end + 1);
   }
 
   Widget _compactTeam(BuildContext context, TeamInfo team, double badge) {

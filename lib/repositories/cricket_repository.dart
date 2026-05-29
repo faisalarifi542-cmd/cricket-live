@@ -54,6 +54,23 @@ class CricketRepository {
     return ApiEnvelope(data: response.data.map(CricketMatch.fromJson).toList(), meta: response.meta);
   }
 
+  /// Returns the schedule grouped by day so the Schedule screen can show
+  /// real, navigable date chips. Each [ScheduleDay] carries its label (as
+  /// returned by the API), a parsed [DateTime] when possible, and the list
+  /// of matches that start on that day.
+  Future<ApiEnvelope<List<ScheduleDay>>> scheduleByDay({String type = 'upcoming', bool forceRefresh = false}) async {
+    final response = await _cached<ApiEnvelope<List<Map<String, dynamic>>>>(
+      'schedule:days:$type',
+      const Duration(minutes: 5),
+      () => _service.scheduleDays(type: type),
+      forceRefresh: forceRefresh,
+    );
+    return ApiEnvelope(
+      data: response.data.map(ScheduleDay.fromJson).toList(),
+      meta: response.meta,
+    );
+  }
+
   Future<ApiEnvelope<List<dynamic>>> news({int limit = 20, bool forceRefresh = false}) =>
       _cached('news:$limit', const Duration(minutes: 5), () => _service.news(limit: limit), forceRefresh: forceRefresh);
 

@@ -108,7 +108,10 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   AppTab active = AppTab.home;
 
-  void _openMatch({String matchId = ''}) => _push(MatchDetailsScreen(
+  /// Opens the match details screen. Accepts a positional [matchId] so it
+  /// can be passed as a `ValueChanged<String>` callback directly. Empty
+  /// strings are tolerated and surface the demo hero.
+  void _openMatch([String matchId = '']) => _push(MatchDetailsScreen(
         matchId: matchId,
         onWatchLive: (id) => _openLivePlayer(matchId: id),
       ));
@@ -166,7 +169,10 @@ class _RootShellState extends State<RootShell> {
           onOpenReminders: _openReminders,
           onOpenSeries: _openSeries,
         ),
-      AppTab.schedule => ScheduleScreen(onOpenSeries: _openSeries),
+      AppTab.schedule => ScheduleScreen(
+          onOpenSeries: _openSeries,
+          onOpenMatch: _openMatch,
+        ),
       AppTab.news => NewsScreen(
           onOpenSearch: _openSearch,
           onOpenFilters: _openFilters,

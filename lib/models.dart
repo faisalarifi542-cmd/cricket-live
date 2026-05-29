@@ -95,6 +95,8 @@ class CompactFixture {
     required this.venue,
     required this.status,
     required this.action,
+    this.leftScore,
+    this.rightScore,
     this.result,
     this.playerOfMatch,
     this.playerStat,
@@ -108,6 +110,14 @@ class CompactFixture {
   final String venue;
   final String status;
   final String action;
+
+  /// Formatted score line for the left team, e.g. `158/3 (38.4 OV)`. Empty
+  /// for upcoming matches.
+  final String? leftScore;
+
+  /// Formatted score line for the right team.
+  final String? rightScore;
+
   final String? result;
   final String? playerOfMatch;
   final String? playerStat;

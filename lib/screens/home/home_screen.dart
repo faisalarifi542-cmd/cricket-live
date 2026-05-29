@@ -21,7 +21,9 @@ class HomeScreen extends StatefulWidget {
     required this.onWatchLive,
   });
 
-  final VoidCallback onOpenMatchDetails;
+  /// Invoked with the resolved match id. Pass empty string when the user
+  /// taps a section header that doesn't reference a specific match.
+  final ValueChanged<String> onOpenMatchDetails;
   final VoidCallback onOpenSeries;
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenNotifications;
@@ -101,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 0:
         return () => widget.onWatchLive(matchId);
       case 2:
-        return widget.onOpenMatchDetails;
+        return () => widget.onOpenMatchDetails(matchId);
       default:
         return widget.onOpenReminders;
     }
@@ -240,7 +242,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 stacked: narrow,
                 children: AppData.recentResults
                     .map((result) => RecentResultMiniCard(
-                        result: result, onTap: widget.onOpenMatchDetails))
+                        result: result,
+                        onTap: () => widget.onOpenMatchDetails('')))
                     .toList(),
               ),
               const SizedBox(height: 28),
@@ -254,16 +257,16 @@ class _HomeScreenState extends State<HomeScreen> {
               SectionHeader('Live Centre',
                   icon: Icons.live_tv_rounded,
                   action: 'Open Match',
-                  onAction: widget.onOpenMatchDetails),
+                  onAction: () => widget.onOpenMatchDetails('')),
               const SizedBox(height: 14),
               LiveMatchMiniCard(
                 onWatch: () => widget.onWatchLive(''),
-                onOpen: widget.onOpenMatchDetails,
+                onOpen: () => widget.onOpenMatchDetails(''),
               ),
               const SizedBox(height: 14),
               LiveMatchMiniCard(
                 onWatch: () => widget.onWatchLive(''),
-                onOpen: widget.onOpenMatchDetails,
+                onOpen: () => widget.onOpenMatchDetails(''),
                 series: 'ENGLAND TOUR OF WEST INDIES',
                 title: 'ENG vs WI',
                 meta: '2nd ODI • 142/2 (28.5 OV)',
@@ -333,7 +336,7 @@ class _HomeTabContent extends StatelessWidget {
   final bool allowDemoFallback;
   final VoidCallback onRetry;
   final VoidCallback onSwitchUpcoming;
-  final VoidCallback onOpenMatch;
+  final ValueChanged<String> onOpenMatch;
   final ValueChanged<String> onWatchLive;
   final VoidCallback onReminder;
 
@@ -400,16 +403,21 @@ class _HomeTabContent extends StatelessWidget {
                 padding: EdgeInsets.only(bottom: 12),
                 child: _HomeDemoLabel(),
               ),
-            SectionHeader(title, icon: icon, action: topTab == 0 ? 'Open Match' : 'See All', onAction: onOpenMatch),
+            SectionHeader(title,
+                icon: icon,
+                action: topTab == 0 ? 'Open Match' : 'See All',
+                onAction: () => onOpenMatch('')),
             const SizedBox(height: 14),
             for (final pair in pairs.take(4))
               Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: topTab == 2
-                    ? FinishedMatchCard(match: pair.$1, onTap: onOpenMatch)
+                    ? FinishedMatchCard(
+                        match: pair.$1,
+                        onTap: () => onOpenMatch(pair.$2))
                     : UpcomingMatchCard(
                         match: pair.$1,
-                        onTap: onOpenMatch,
+                        onTap: () => onOpenMatch(pair.$2),
                         onReminder: topTab == 0
                             ? () => onWatchLive(pair.$2)
                             : onReminder,
