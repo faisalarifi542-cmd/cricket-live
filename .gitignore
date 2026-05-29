@@ -1,0 +1,40 @@
+# Build artifacts
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+*.iml
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Flutter generated
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+*.iml
+admin-panel/node_modules/
+admin-panel/.next/
+admin-panel/out/
+admin-panel/dist/
+node_modules/
+.next/
+node_modules/
+admin-panel/node_modules/
+.next/
+admin-panel/.next/
+build/
+.dart_tool/
+.pub-cache/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+android/.gradle/
+ios/Pods/
+ios/.symlinks/

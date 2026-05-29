@@ -1,0 +1,230 @@
+import 'package:flutter/material.dart';
+import '../../app_theme.dart';
+import '../../components.dart';
+
+class MoreScreen extends StatelessWidget {
+  const MoreScreen({
+    super.key,
+    required this.isDark,
+    required this.onThemeChanged,
+    required this.onOpenRanking,
+    required this.onOpenTeams,
+    required this.onOpenContact,
+    required this.onOpenPolicy,
+    required this.onOpenTerms,
+    required this.onOpenHighlights,
+  });
+
+  final bool isDark;
+  final ValueChanged<bool> onThemeChanged;
+  final VoidCallback onOpenRanking;
+  final VoidCallback onOpenTeams;
+  final VoidCallback onOpenContact;
+  final VoidCallback onOpenPolicy;
+  final VoidCallback onOpenTerms;
+  final VoidCallback onOpenHighlights;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      decoration: BoxDecoration(gradient: c.bgGradient),
+      child: SafeArea(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
+              context.horizontalPadding, context.mainBottomPadding),
+          children: [
+            AppHeader(
+              showLogo: true,
+              trailing: [
+                GlowIconButton(icon: Icons.search_rounded),
+                const SizedBox(width: 8),
+                GlowIconButton(
+                    icon: Icons.notifications_none_rounded, badge: '3'),
+              ],
+            ),
+            const SizedBox(height: 22),
+            _MenuGroup(
+              title: 'EXPLORE',
+              items: [
+                (
+                  'ICC Men Ranking',
+                  Icons.bar_chart_rounded,
+                  const Color(0xff22d3ee),
+                  onOpenRanking
+                ),
+                (
+                  'ICC Women Ranking',
+                  Icons.show_chart_rounded,
+                  const Color(0xff8b5cf6),
+                  onOpenRanking
+                ),
+                (
+                  'Teams',
+                  Icons.groups_rounded,
+                  const Color(0xff36d399),
+                  onOpenTeams
+                ),
+                (
+                  'Highlights',
+                  Icons.play_circle_outline_rounded,
+                  const Color(0xff00d9ff),
+                  onOpenHighlights
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _MenuGroup(
+              title: 'SUPPORT & MORE',
+              items: [
+                (
+                  'Invite Friends',
+                  Icons.share_rounded,
+                  const Color(0xff22d3ee),
+                  () {}
+                ),
+                (
+                  'Contact Us',
+                  Icons.email_outlined,
+                  const Color(0xffffc83d),
+                  onOpenContact
+                ),
+                (
+                  'Terms & Conditions',
+                  Icons.description_outlined,
+                  const Color(0xff8b5cff),
+                  onOpenTerms
+                ),
+                (
+                  'Privacy Policy',
+                  Icons.shield_outlined,
+                  const Color(0xff38f28b),
+                  onOpenPolicy
+                ),
+              ],
+              footer: _AppearanceRow(isDark: isDark, onChanged: onThemeChanged),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuGroup extends StatelessWidget {
+  const _MenuGroup({required this.title, required this.items, this.footer});
+
+  final String title;
+  final List<(String, IconData, Color, VoidCallback)> items;
+  final Widget? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: c.muted,
+            letterSpacing: 2.2,
+            fontWeight: FontWeight.w800,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 12),
+        PremiumCard(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              for (final item in items)
+                InkWell(
+                  onTap: item.$4,
+                  child: SizedBox(
+                    height: 74,
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 18),
+                        Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: item.$3.withValues(alpha: .14),
+                          ),
+                          child: Icon(item.$2, color: item.$3),
+                        ),
+                        const SizedBox(width: 18),
+                        Expanded(
+                          child: Text(
+                            item.$1,
+                            style: TextStyle(
+                                color: c.text,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Icon(Icons.chevron_right_rounded, color: c.muted),
+                        const SizedBox(width: 18),
+                      ],
+                    ),
+                  ),
+                ),
+              if (footer != null) footer!,
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AppearanceRow extends StatelessWidget {
+  const _AppearanceRow({required this.isDark, required this.onChanged});
+
+  final bool isDark;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return SizedBox(
+      height: 78,
+      child: Row(
+        children: [
+          const SizedBox(width: 18),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.cyan.withValues(alpha: .14),
+            ),
+            child: Icon(
+                isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                color: c.cyan),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Appearance',
+                    style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 17)),
+                Text(isDark ? 'Dark Mode' : 'Light Mode',
+                    style: TextStyle(color: c.muted, fontSize: 13)),
+              ],
+            ),
+          ),
+          Switch(value: isDark, onChanged: onChanged),
+          const SizedBox(width: 18),
+        ],
+      ),
+    );
+  }
+}
