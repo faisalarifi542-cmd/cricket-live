@@ -118,7 +118,7 @@ class _SeriesCard extends StatelessWidget {
       onTap: onTap,
       padding: const EdgeInsets.all(16),
       gradient: LinearGradient(
-        colors: [c.card, c.cyan.withOpacity(0.08)],
+        colors: [c.card, c.cyan.withValues(alpha: 0.08)],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -132,8 +132,8 @@ class _SeriesCard extends StatelessWidget {
                 height: 44,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  color: c.cyan.withOpacity(0.13),
-                  border: Border.all(color: c.cyan.withOpacity(0.28)),
+                  color: c.cyan.withValues(alpha: 0.13),
+                  border: Border.all(color: c.cyan.withValues(alpha: 0.28)),
                 ),
                 child: Icon(Icons.emoji_events_outlined, color: c.cyan, size: 26),
               ),
@@ -187,9 +187,9 @@ class _SeriesChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: c.cyan.withOpacity(0.10),
+        color: c.cyan.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.cyan.withOpacity(0.24)),
+        border: Border.all(color: c.cyan.withValues(alpha: 0.24)),
       ),
       child: Text(text, style: TextStyle(color: c.cyan, fontSize: 11, fontWeight: FontWeight.w900)),
     );

@@ -76,7 +76,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
           children: [
             // Header
-            AppHeader(title: 'SCHEDULE'),
+            const AppHeader(title: 'SCHEDULE'),
             const SizedBox(height: 24),
 
             // Date Selector
@@ -122,7 +122,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
             // Today Section
             if (filterIndex == -100) ...[
-            _SectionTitle('Today — Wed, 26 Nov'),
+            const _SectionTitle('Today — Wed, 26 Nov'),
             const SizedBox(height: 14),
             _ScheduleFixtureCard(
               series: 'ICC MEN\'S ODI SERIES',
@@ -148,7 +148,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: 28),
 
             // Tomorrow Section
-            _SectionTitle('Tomorrow — Thu, 27 Nov'),
+            const _SectionTitle('Tomorrow — Thu, 27 Nov'),
             const SizedBox(height: 14),
             _ScheduleFixtureCard(
               series: 'PAKISTAN TOUR OF BANGLADESH',
@@ -174,7 +174,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             const SizedBox(height: 28),
 
             // Upcoming Section
-            _SectionTitle('Upcoming'),
+            const _SectionTitle('Upcoming'),
             const SizedBox(height: 14),
             _ScheduleFixtureCard(
               series: 'NEW ZEALAND VS SRI LANKA',
@@ -268,7 +268,7 @@ class _ApiScheduleList extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _SectionTitle('Upcoming'),
+            const _SectionTitle('Upcoming'),
             const SizedBox(height: 14),
             for (final match in matches)
               Padding(

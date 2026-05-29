@@ -27,7 +27,7 @@ class NewsDetailScreen extends StatelessWidget {
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'News Detail',
-                trailing: [GlowIconButton(icon: Icons.share_outlined)],
+                trailing: const [GlowIconButton(icon: Icons.share_outlined)],
               ),
               const SizedBox(height: 16),
               PremiumCard(
@@ -83,7 +83,7 @@ class NewsDetailScreen extends StatelessWidget {
                           TextStyle(color: c.muted, fontSize: 16, height: 1.7),
                     ),
                     const SizedBox(height: 18),
-                    SectionHeader('Related News'),
+                    const SectionHeader('Related News'),
                     const SizedBox(height: 12),
                     NewsListCard(
                         article: AppData.newsAll[1],

@@ -54,9 +54,9 @@ class HighlightDetailScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  GlowIconButton(icon: Icons.share_outlined),
+                  const GlowIconButton(icon: Icons.share_outlined),
                   const SizedBox(width: 8),
-                  GlowIconButton(icon: Icons.more_vert_rounded),
+                  const GlowIconButton(icon: Icons.more_vert_rounded),
                 ],
               ),
               const SizedBox(height: 20),
@@ -69,8 +69,8 @@ class HighlightDetailScreen extends StatelessWidget {
                     // Video Preview
                     Container(
                       height: 240,
-                      decoration: BoxDecoration(
-                        borderRadius: const BorderRadius.vertical(
+                      decoration: const BoxDecoration(
+                        borderRadius: BorderRadius.vertical(
                             top: Radius.circular(26)),
                         color: Colors.black,
                       ),
@@ -314,7 +314,7 @@ class HighlightDetailScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 14),
-              _RelatedVideoCard(
+              const _RelatedVideoCard(
                 title: 'Bumrah rips through Australia with dream spell',
                 match: 'India vs Australia • ODI',
                 duration: '02:14',
@@ -322,7 +322,7 @@ class HighlightDetailScreen extends StatelessWidget {
                 asset: 'assets/images/player_rohit_sharma.png',
               ),
               const SizedBox(height: 12),
-              _RelatedVideoCard(
+              const _RelatedVideoCard(
                 title: 'Virat Kohli ends the chase with trademark cover drive',
                 match: 'India vs England • ODI',
                 duration: '00:48',

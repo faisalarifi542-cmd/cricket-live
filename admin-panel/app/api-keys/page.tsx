@@ -52,7 +52,7 @@ function ApiKeysInner() {
   const [toDelete, setToDelete] = useState<ApiKey | null>(null);
   const [toRevoke, setToRevoke] = useState<ApiKey | null>(null);
 
-  const { data, loading, reload } = useResource(() => apiKeysApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => apiKeysApi.list(), []);
   const keys = (data?.data || []) as ApiKey[];
 
   const filtered = useMemo(() => {
@@ -191,6 +191,8 @@ function ApiKeysInner() {
 
       <DataTable
         loading={loading}
+        error={error}
+        onRetry={reload}
         rows={filtered}
         columns={columns}
         rowKey={(k) => k.id}

@@ -94,7 +94,7 @@ class FeaturedVideoCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    GlowIconButton(icon: Icons.more_horiz_rounded),
+                    const GlowIconButton(icon: Icons.more_horiz_rounded),
                   ],
                 ),
               ],
@@ -171,7 +171,7 @@ class VideoListCard extends StatelessWidget {
               ],
             ),
           ),
-          GlowIconButton(icon: Icons.more_horiz_rounded),
+          const GlowIconButton(icon: Icons.more_horiz_rounded),
         ],
       ),
     );
@@ -213,7 +213,7 @@ class ShortCard extends StatelessWidget {
                   child: StatusBadge(
                       label: video.duration, color: Colors.white, filled: true),
                 ),
-                Positioned(
+                const Positioned(
                   right: 10,
                   top: 10,
                   child: GlowIconButton(icon: Icons.more_horiz_rounded),

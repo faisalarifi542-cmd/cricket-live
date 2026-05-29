@@ -233,6 +233,8 @@ function DashboardInner() {
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Provider health</h2>
           <DataTable
             loading={dash.loading}
+            error={dash.error}
+            onRetry={dash.reload}
             rows={providersRows}
             columns={providerCols}
             rowKey={(r) => r.id}
@@ -244,6 +246,8 @@ function DashboardInner() {
           <h2 className="mb-3 text-sm font-semibold text-slate-100">Recent admin actions</h2>
           <DataTable
             loading={dash.loading}
+            error={dash.error}
+            onRetry={dash.reload}
             rows={(data?.recentActions || []) as Action[]}
             columns={actionCols}
             rowKey={(r) => `${r.action}-${r.created_at}`}

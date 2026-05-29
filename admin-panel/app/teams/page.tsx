@@ -34,7 +34,7 @@ function TeamsInner() {
   const perms = usePermissions(user);
   const [q, setQ] = useState('');
   const debouncedQ = useDebouncedValue(q, 250);
-  const { data, loading, reload } = useResource(() => teamsApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => teamsApi.list(), []);
   const all = (data?.data || []) as Team[];
 
   const rows = useMemo(() => {
@@ -105,7 +105,7 @@ function TeamsInner() {
         }
       />
       <SearchInput value={q} onChange={setQ} placeholder="Search teams…" className="mb-3 max-w-md" />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(t) => String(t.id ?? t.team_id ?? Math.random())} emptyTitle="No teams found" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(t) => String(t.id ?? t.team_id ?? Math.random())} emptyTitle="No teams found" />
     </>
   );
 }

@@ -32,7 +32,7 @@ function Inner() {
   const { user } = useAuth();
   const perms = usePermissions(user);
   const canWrite = perms.can('roles.write');
-  const { data, loading, reload } = useResource(() => rolesApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => rolesApi.list(), []);
   const rows = (data?.data || []) as Role[];
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Role | null>(null);
@@ -82,7 +82,7 @@ function Inner() {
           </>
         }
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(r) => r.slug} emptyTitle="No roles" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(r) => r.slug} emptyTitle="No roles" />
 
       <RoleForm
         open={showForm}

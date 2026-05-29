@@ -13,7 +13,9 @@ import '../../screens.dart';
 class MatchDetailsScreen extends StatefulWidget {
   const MatchDetailsScreen({super.key, this.onWatchLive, this.matchId = ''});
 
-  final VoidCallback? onWatchLive;
+  /// Invoked when the user taps Watch Live. Receives the resolved matchId
+  /// so the host can navigate to the Live Player for the specific match.
+  final ValueChanged<String>? onWatchLive;
   final String matchId;
 
   @override
@@ -93,14 +95,18 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'Match Details',
-                trailing: [
+                trailing: const [
                   GlowIconButton(icon: Icons.search_rounded),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   GlowIconButton(icon: Icons.filter_alt_outlined),
                 ],
               ),
               const SizedBox(height: 16),
-              MatchDetailHeroCard(onWatchLive: widget.onWatchLive),
+              MatchDetailHeroCard(
+                onWatchLive: widget.onWatchLive == null
+                    ? null
+                    : () => widget.onWatchLive!(_matchId),
+              ),
               const SizedBox(height: 16),
               // Match Details has 5 tabs which squeeze "Commentary" into
               // "Comment…" on narrow widths. Use the scrollable variant so
@@ -595,7 +601,7 @@ class _CommentaryCard extends StatelessWidget {
     final over = str(row['over']).isEmpty ? '--' : '${str(row['over'])}.${str(row['ball'], fallback: '0')}';
     return PremiumCard(
       padding: const EdgeInsets.all(14),
-      borderColor: tone.withOpacity(0.28),
+      borderColor: tone.withValues(alpha: 0.28),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -673,7 +679,7 @@ class _PerformanceChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: c.cyan.withOpacity(0.25)),
+        border: Border.all(color: c.cyan.withValues(alpha: 0.25)),
       ),
       child: Text('${str(row['label'])}: ${str(row['runs'])}/${str(row['wickets'])}', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
     );
@@ -697,8 +703,8 @@ class _BallBubble extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: color.withOpacity(0.14),
-        border: Border.all(color: color.withOpacity(0.55)),
+        color: color.withValues(alpha: 0.14),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
       ),
       child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 12)),
     );
@@ -756,8 +762,8 @@ class _PlayerLine extends StatelessWidget {
                 ],
               ),
             ),
-            if (truthy(row['isCaptain']) || truthy(row['is_captain'])) _SoftChip(text: 'C'),
-            if (truthy(row['isWicketKeeper']) || truthy(row['is_wicketkeeper'])) _SoftChip(text: 'WK'),
+            if (truthy(row['isCaptain']) || truthy(row['is_captain'])) const _SoftChip(text: 'C'),
+            if (truthy(row['isWicketKeeper']) || truthy(row['is_wicketkeeper'])) const _SoftChip(text: 'WK'),
           ],
         ),
       ),
@@ -774,7 +780,7 @@ class _EventBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withOpacity(0.35))),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withValues(alpha: 0.35))),
         child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 11)),
       );
 }

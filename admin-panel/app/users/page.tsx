@@ -106,7 +106,15 @@ function Inner() {
         }
       />
       <SearchInput value={q} onChange={setQ} placeholder="Search by name or email…" className="mb-3 max-w-md" />
-      <DataTable loading={users.loading} rows={rows} columns={columns} rowKey={(u) => u.id} emptyTitle="No admin users" />
+      <DataTable
+        loading={users.loading}
+        error={users.error}
+        onRetry={users.reload}
+        rows={rows}
+        columns={columns}
+        rowKey={(u) => u.id}
+        emptyTitle="No admin users"
+      />
 
       <UserForm
         open={showForm}

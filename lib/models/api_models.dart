@@ -153,18 +153,44 @@ class MatchSquads {
 }
 
 class StreamSource {
-  const StreamSource({required this.id, required this.name, required this.url, this.quality});
+  const StreamSource({
+    required this.id,
+    required this.name,
+    required this.url,
+    this.quality,
+    this.label,
+    this.language,
+    this.streamType,
+    this.isPremium = false,
+    this.priority,
+    this.status,
+  });
   final String id;
   final String name;
   final String url;
   final String? quality;
+  final String? label;
+  final String? language;
+  final String? streamType;
+  final bool isPremium;
+  final int? priority;
+  final String? status;
+
+  String get qualityLabel => apiString(label ?? quality, 'AUTO');
+
   factory StreamSource.fromJson(dynamic value) {
     final json = apiMap(value);
     return StreamSource(
       id: apiString(json['id'] ?? json['streamId']),
-      name: apiString(json['name'] ?? json['serverName'], 'Stream'),
+      name: apiString(json['serverName'] ?? json['name'], 'Server'),
       url: apiString(json['url'] ?? json['streamUrl']),
       quality: json['quality']?.toString(),
+      label: json['label']?.toString(),
+      language: json['language']?.toString(),
+      streamType: json['streamType']?.toString() ?? json['stream_type']?.toString(),
+      isPremium: json['isPremium'] == true || json['isPremium'] == 1 || json['is_premium'] == 1,
+      priority: apiInt(json['priority']),
+      status: json['status']?.toString(),
     );
   }
 }

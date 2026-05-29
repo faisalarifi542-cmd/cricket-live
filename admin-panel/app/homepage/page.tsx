@@ -80,7 +80,7 @@ function Inner() {
 }
 
 function SectionsTab({ canWrite }: { canWrite: boolean }) {
-  const { data, loading, reload } = useResource(() => homeApi.listSections(), []);
+  const { data, loading, error, reload } = useResource(() => homeApi.listSections(), []);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Section | null>(null);
   const [toDelete, setToDelete] = useState<Section | null>(null);
@@ -126,7 +126,7 @@ function SectionsTab({ canWrite }: { canWrite: boolean }) {
           <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>Add section</Button>
         )}
       </div>
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(s) => s.id} emptyTitle="No sections configured" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(s) => s.id} emptyTitle="No sections configured" />
       <HomeSectionForm
         open={showForm}
         onClose={() => setShowForm(false)}
@@ -161,7 +161,7 @@ function FeaturedTab({
   placeholder: string;
   canWrite: boolean;
 }) {
-  const { data, loading, reload } = useResource(() => homeApi.listFeatured(kind), [kind]);
+  const { data, loading, error, reload } = useResource(() => homeApi.listFeatured(kind), [kind]);
   const rows = (data?.data || []) as Featured[];
   const [externalId, setExternalId] = useState('');
   const [sortOrder, setSortOrder] = useState(100);
@@ -203,7 +203,7 @@ function FeaturedTab({
           <Button icon={<Plus className="h-4 w-4" />} onClick={add} disabled={!externalId}>Add</Button>
         </div>
       )}
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(f) => f.id} emptyTitle="Nothing featured yet" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(f) => f.id} emptyTitle="Nothing featured yet" />
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => setToDelete(null)}
@@ -222,7 +222,7 @@ function FeaturedTab({
 }
 
 function BannersTab({ canWrite }: { canWrite: boolean }) {
-  const { data, loading, reload } = useResource(() => homeApi.listBanners(), []);
+  const { data, loading, error, reload } = useResource(() => homeApi.listBanners(), []);
   const rows = (data?.data || []) as Banner[];
   const [form, setForm] = useState({ placement: 'home_top', title: '', image_url: '', cta_url: '', sort_order: 100 });
   const [toDelete, setToDelete] = useState<Banner | null>(null);
@@ -293,7 +293,7 @@ function BannersTab({ canWrite }: { canWrite: boolean }) {
           </div>
         </div>
       )}
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(b) => b.id} emptyTitle="No banners" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(b) => b.id} emptyTitle="No banners" />
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => setToDelete(null)}

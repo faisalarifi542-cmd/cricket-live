@@ -27,7 +27,7 @@ class HighlightsPlayerScreen extends StatelessWidget {
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'Highlights',
-                trailing: [GlowIconButton(icon: Icons.more_horiz_rounded)],
+                trailing: const [GlowIconButton(icon: Icons.more_horiz_rounded)],
               ),
               const SizedBox(height: 16),
               FeaturedVideoCard(video: v, onTap: () {}, largeOnly: true),

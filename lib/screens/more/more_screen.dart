@@ -34,11 +34,11 @@ class MoreScreen extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
               context.horizontalPadding, context.mainBottomPadding),
           children: [
-            AppHeader(
+            const AppHeader(
               showLogo: true,
               trailing: [
                 GlowIconButton(icon: Icons.search_rounded),
-                const SizedBox(width: 8),
+                SizedBox(width: 8),
                 GlowIconButton(
                     icon: Icons.notifications_none_rounded, badge: '3'),
               ],

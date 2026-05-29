@@ -43,7 +43,7 @@ function StreamsInner() {
   const [quality, setQuality] = useState<string>('all');
   const [type, setType] = useState<string>('all');
 
-  const { data, loading, reload } = useResource(
+  const { data, loading, error, reload } = useResource(
     () =>
       streamsApi.list({
         q: debouncedQ || undefined,
@@ -314,6 +314,8 @@ function StreamsInner() {
 
       <DataTable
         loading={loading}
+        error={error}
+        onRetry={reload}
         rows={rows}
         columns={columns}
         rowKey={(r) => r.id}

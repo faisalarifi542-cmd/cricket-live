@@ -46,7 +46,7 @@ class SearchScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 26),
-              SectionHeader('Recent Searches', icon: Icons.history_rounded),
+              const SectionHeader('Recent Searches', icon: Icons.history_rounded),
               const SizedBox(height: 12),
               Wrap(
                   spacing: 10,
@@ -54,7 +54,7 @@ class SearchScreen extends StatelessWidget {
                   children:
                       AppData.searchTopics.map((e) => PillChip(e)).toList()),
               const SizedBox(height: 26),
-              SectionHeader('Trending Topics', icon: Icons.trending_up_rounded),
+              const SectionHeader('Trending Topics', icon: Icons.trending_up_rounded),
               const SizedBox(height: 12),
               for (final topic in AppData.searchTopics)
                 ListTile(
@@ -65,7 +65,7 @@ class SearchScreen extends StatelessWidget {
                   trailing: const Icon(Icons.north_west_rounded),
                 ),
               const SizedBox(height: 18),
-              SectionHeader('Popular Players',
+              const SectionHeader('Popular Players',
                   icon: Icons.person_outline_rounded),
               const SizedBox(height: 12),
               for (final player in AppData.trendingPlayers)

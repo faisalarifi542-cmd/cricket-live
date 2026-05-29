@@ -89,10 +89,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                     onPressed: () => Navigator.pop(context),
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 showLogo: true,
-                trailing: [
+                trailing: const [
                   GlowIconButton(
                       icon: Icons.notifications_none_rounded, badge: '3'),
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8),
                   GlowIconButton(icon: Icons.more_vert_rounded),
                 ],
               ),
@@ -158,7 +158,7 @@ class _SeriesApiPanel extends StatelessWidget {
           return const LinearProgressIndicator();
         }
         if (snapshot.hasError) {
-          return _SeriesInfoCard(
+          return const _SeriesInfoCard(
             icon: Icons.cloud_off_rounded,
             text: 'This series section is temporarily unavailable. Pull back and try again.',
           );
@@ -214,7 +214,7 @@ class _SeriesOverviewApiPanel extends StatelessWidget {
       children: [
         PremiumCard(
           padding: const EdgeInsets.all(20),
-          gradient: LinearGradient(colors: [context.cric.cyan.withOpacity(0.20), context.cric.card]),
+          gradient: LinearGradient(colors: [context.cric.cyan.withValues(alpha: 0.20), context.cric.card]),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -440,7 +440,7 @@ class _ChipText extends StatelessWidget {
     final c = context.cric;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(color: c.cyan.withOpacity(0.12), borderRadius: BorderRadius.circular(999), border: Border.all(color: c.cyan.withOpacity(0.28))),
+      decoration: BoxDecoration(color: c.cyan.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999), border: Border.all(color: c.cyan.withValues(alpha: 0.28))),
       child: Text(text.isEmpty ? 'Unknown' : text, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 11)),
     );
   }

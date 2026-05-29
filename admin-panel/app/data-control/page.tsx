@@ -47,7 +47,7 @@ export default function DataControlPage() {
 }
 
 function DataControlInner() {
-  const { data, loading, reload } = useResource(() => dataControlApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => dataControlApi.list(), []);
   const rows = (data?.data || []) as Source[];
   const cache = data?.cache || {};
   const [q, setQ] = useState('');
@@ -217,7 +217,7 @@ function DataControlInner() {
         </div>
       </Field>
 
-      <DataTable rows={filtered} columns={columns} loading={loading} rowKey={(r) => r.dataType} emptyTitle="No data sources" />
+      <DataTable rows={filtered} columns={columns} loading={loading} error={error} onRetry={reload} rowKey={(r) => r.dataType} emptyTitle="No data sources" />
     </>
   );
 }

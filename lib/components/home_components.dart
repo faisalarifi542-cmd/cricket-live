@@ -459,7 +459,7 @@ class PlayerOfMatchCard extends StatelessWidget {
                 const SizedBox(height: 12),
                 Divider(color: c.border),
                 const SizedBox(height: 12),
-                Row(
+                const Row(
                   children: [
                     Expanded(child: _StatValue(title: 'Runs', value: '121')),
                     Expanded(child: _StatValue(title: 'Balls', value: '107')),
@@ -467,7 +467,7 @@ class PlayerOfMatchCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 14),
-                Row(
+                const Row(
                   children: [
                     Expanded(child: _StatValue(title: 'Fours', value: '11')),
                     Expanded(child: _StatValue(title: 'Sixes', value: '6')),

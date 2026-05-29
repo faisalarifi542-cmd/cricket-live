@@ -38,7 +38,7 @@ function PlayersInner() {
   const [role, setRole] = useState('all');
   const [country, setCountry] = useState('all');
 
-  const { data, loading, reload } = useResource(() => playersApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => playersApi.list(), []);
   const all = (data?.data || []) as Player[];
 
   const countries = useMemo(() => {
@@ -139,7 +139,7 @@ function PlayersInner() {
           },
         ]}
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(p) => String(p.id ?? p.player_id ?? Math.random())} emptyTitle="No players found" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(p) => String(p.id ?? p.player_id ?? Math.random())} emptyTitle="No players found" />
     </>
   );
 }

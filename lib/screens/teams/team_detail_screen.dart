@@ -256,9 +256,9 @@ class _TeamChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.cyan.withOpacity(0.10),
+        color: c.cyan.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.cyan.withOpacity(0.25)),
+        border: Border.all(color: c.cyan.withValues(alpha: 0.25)),
       ),
       child: Text(text, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 12)),
     );

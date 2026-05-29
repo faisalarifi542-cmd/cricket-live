@@ -47,7 +47,7 @@ function Inner() {
   const [toDelete, setToDelete] = useState<Notification | null>(null);
   const [toSend, setToSend] = useState<Notification | null>(null);
 
-  const { data, loading, reload } = useResource(() => notificationsApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => notificationsApi.list(), []);
   const all = (data?.data || []) as Notification[];
 
   const rows = useMemo(() => {
@@ -125,7 +125,7 @@ function Inner() {
           },
         ]}
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No notifications" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No notifications" />
 
       <NotificationForm
         open={showForm}

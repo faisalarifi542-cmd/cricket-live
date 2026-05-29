@@ -45,7 +45,7 @@ function ScheduleInner() {
   const debouncedQ = useDebouncedValue(q, 250);
   const [scope, setScope] = useState('all');
   const [date, setDate] = useState('');
-  const { data, loading, reload } = useResource(() => scheduleApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => scheduleApi.list(), []);
   const all = (data?.data || []) as ScheduleRow[];
 
   const rows = useMemo(() => {
@@ -187,7 +187,7 @@ function ScheduleInner() {
         ]}
         right={<div className="text-xs text-slate-500">{formatDate(date) || 'All dates'}</div>}
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(r) => String(r.external_id ?? r.match_external_id ?? r.id ?? Math.random())} emptyTitle="No matches found" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(r) => String(r.external_id ?? r.match_external_id ?? r.id ?? Math.random())} emptyTitle="No matches found" />
     </>
   );
 }

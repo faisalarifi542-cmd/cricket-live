@@ -231,7 +231,7 @@ class _SeriesInfoCard extends StatelessWidget {
                   ],
                 );
               }
-              final spacing = 14.0;
+              const spacing = 14.0;
               final tileW = computeGridChildWidth(
                 maxWidth: constraints.maxWidth,
                 columns: cols,
@@ -563,7 +563,7 @@ class _FormCard extends StatelessWidget {
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (ctx, cs) {
-              final spacing = 10.0;
+              const spacing = 10.0;
               final tileW = computeGridChildWidth(
                 maxWidth: cs.maxWidth,
                 columns: 2,
@@ -783,7 +783,7 @@ class SeriesMatchesTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionLabel('UPCOMING MATCHES'),
+        const _SectionLabel('UPCOMING MATCHES'),
         const SizedBox(height: 10),
         StaggeredColumn(
           spacing: 12,
@@ -793,7 +793,7 @@ class SeriesMatchesTab extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        _SectionLabel('COMPLETED MATCHES'),
+        const _SectionLabel('COMPLETED MATCHES'),
         const SizedBox(height: 10),
         StaggeredColumn(
           spacing: 12,
@@ -1024,11 +1024,11 @@ class SeriesSquadsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final top = AppData.indiaSquadTop;
-    final middle = AppData.indiaSquadMiddle;
-    final allRounders = AppData.indiaAllRounders;
-    final bowlers = AppData.indiaBowlers;
-    final reserves = AppData.indiaReserves;
+    const top = AppData.indiaSquadTop;
+    const middle = AppData.indiaSquadMiddle;
+    const allRounders = AppData.indiaAllRounders;
+    const bowlers = AppData.indiaBowlers;
+    const reserves = AppData.indiaReserves;
     return Column(
       children: [
         SegmentedTabs(
@@ -1068,31 +1068,31 @@ class SeriesSquadsTab extends StatelessWidget {
               const SizedBox(height: 16),
               _BowlersCard(bowlers: bowlers, onTap: onOpenPlayer),
               const SizedBox(height: 16),
-              _ReservePlayersCard(reserves: reserves),
+              const _ReservePlayersCard(reserves: reserves),
               const SizedBox(height: 18),
               LayoutBuilder(
                 builder: (ctx, cs) {
                   final stacked = cs.maxWidth < 380;
-                  final compare = GradientButton(
+                  const compare = GradientButton(
                       label: 'Compare Teams',
                       icon: Icons.groups_rounded,
                       outlined: true);
-                  final view = GradientButton(
+                  const view = GradientButton(
                       label: 'View Full Squad',
                       icon: Icons.arrow_forward_rounded);
                   if (stacked) {
-                    return Column(
+                    return const Column(
                       children: [
                         compare,
-                        const SizedBox(height: 10),
+                        SizedBox(height: 10),
                         view,
                       ],
                     );
                   }
-                  return Row(
+                  return const Row(
                     children: [
                       Expanded(child: compare),
-                      const SizedBox(width: 12),
+                      SizedBox(width: 12),
                       Expanded(child: view),
                     ],
                   );
@@ -1211,9 +1211,9 @@ class _BowlersCard extends StatelessWidget {
                             fontSize: context.sp(14)),
                       ),
                     ),
-                    StatusBadge(
+                    const StatusBadge(
                         label: 'BOWL',
-                        color: const Color(0xff8b5cff),
+                        color: Color(0xff8b5cff),
                         filled: true),
                   ],
                 ),
@@ -1284,9 +1284,9 @@ class SeriesStatsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StaggeredColumn(
+    return const StaggeredColumn(
       spacing: 16,
-      children: const [
+      children: [
         _PointsTableCard(),
         _LeadersSection(),
         _SeriesStatsCard(),
@@ -1457,24 +1457,24 @@ class _LeadersSection extends StatelessWidget {
     return LayoutBuilder(
       builder: (ctx, cs) {
         final wide = cs.maxWidth >= 760;
-        final runs = _LeaderCard(
+        const runs = _LeaderCard(
             title: 'TOP RUN SCORERS', players: AppData.topRunScorers);
-        final wickets = _LeaderCard(
+        const wickets = _LeaderCard(
             title: 'TOP WICKET TAKERS', players: AppData.topWickets);
         if (wide) {
-          return Row(
+          return const Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(child: runs),
-              const SizedBox(width: 16),
+              SizedBox(width: 16),
               Expanded(child: wickets),
             ],
           );
         }
-        return Column(
+        return const Column(
           children: [
             runs,
-            const SizedBox(height: 16),
+            SizedBox(height: 16),
             wickets,
           ],
         );
@@ -1511,7 +1511,7 @@ class _LeaderCard extends StatelessWidget {
             if (i != players.length - 1) Divider(color: c.border, height: 16),
           ],
           const SizedBox(height: 12),
-          GradientButton(
+          const GradientButton(
             label: 'View Full List',
             icon: Icons.arrow_forward_rounded,
             outlined: true,

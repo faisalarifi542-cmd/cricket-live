@@ -125,7 +125,15 @@ function HealthInner() {
         ]}
       />
 
-      <DataTable loading={logs.loading} rows={rows} columns={columns} rowKey={(r) => r.id} emptyTitle="No log entries" />
+      <DataTable
+        loading={logs.loading}
+        error={logs.error}
+        onRetry={logs.reload}
+        rows={rows}
+        columns={columns}
+        rowKey={(r) => r.id}
+        emptyTitle="No log entries"
+      />
     </>
   );
 }

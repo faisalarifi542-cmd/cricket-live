@@ -1,6 +1,8 @@
 'use client';
 
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from './Button';
 import { EmptyState } from './EmptyState';
 import { LoadingSkeleton } from './LoadingSkeleton';
 
@@ -16,6 +18,8 @@ type Props<T> = {
   rows: T[];
   columns: Column<T>[];
   loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   emptyTitle?: string;
   emptyDescription?: string;
   rowKey: (row: T) => string | number;
@@ -26,12 +30,32 @@ export function DataTable<T>({
   rows,
   columns,
   loading,
+  error,
+  onRetry,
   emptyTitle = 'Nothing here yet',
   emptyDescription,
   rowKey,
   onRowClick,
 }: Props<T>) {
-  if (loading) return <LoadingSkeleton lines={6} />;
+  if (loading && !rows.length) return <LoadingSkeleton lines={6} />;
+  if (error && !rows.length) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-red-500/30 bg-red-500/[0.06] px-6 py-12 text-center">
+        <div className="grid h-10 w-10 place-items-center rounded-xl bg-red-500/15 text-red-300">
+          <AlertTriangle className="h-5 w-5" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-red-100">Couldn&apos;t load data</h3>
+          <p className="mt-1 max-w-md text-xs text-red-200/80">{error}</p>
+        </div>
+        {onRetry && (
+          <Button variant="secondary" size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={onRetry}>
+            Try again
+          </Button>
+        )}
+      </div>
+    );
+  }
   if (!rows.length)
     return <EmptyState title={emptyTitle} description={emptyDescription} />;
 

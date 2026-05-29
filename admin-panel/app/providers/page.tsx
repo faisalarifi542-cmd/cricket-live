@@ -46,7 +46,7 @@ export default function ProvidersPage() {
 function ProvidersInner() {
   const { user } = useAuth();
   const perms = usePermissions(user);
-  const { data, loading, reload } = useResource(() => providersApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => providersApi.list(), []);
   const providers = (data?.data || []) as Provider[];
 
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -173,6 +173,8 @@ function ProvidersInner() {
 
       <DataTable
         loading={loading}
+        error={error}
+        onRetry={reload}
         rows={providers}
         columns={columns}
         rowKey={(p) => p.id}
@@ -217,7 +219,7 @@ function ProviderKeysDialog({
   onClose: () => void;
   canWrite: boolean;
 }) {
-  const { data, loading, reload } = useResource(
+  const { data, loading, error, reload } = useResource(
     () =>
       provider
         ? providersApi.listKeys(provider.id)

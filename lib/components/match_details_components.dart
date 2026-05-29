@@ -54,7 +54,7 @@ class MatchDetailHeroCard extends StatelessWidget {
                               color: Colors.white.withValues(alpha: .92),
                               fontWeight: FontWeight.w700))),
                   const SizedBox(width: 8),
-                  StatusBadge(label: '128K', color: Colors.white, filled: true),
+                  const StatusBadge(label: '128K', color: Colors.white, filled: true),
                 ],
               ),
               const SizedBox(height: 12),
@@ -159,7 +159,7 @@ class MatchScorecardTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final batting = const [
+    const batting = [
       ('K Williamson', '64*', '78', '6', '1', '82.05', true),
       ('R Ravindra', '22*', '29', '3', '0', '75.86', true),
       ('D Conway', '28', '42', '4', '0', '66.67', false),
@@ -441,8 +441,8 @@ class _MatchCommentaryTabState extends State<MatchCommentaryTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PremiumCard(
-          padding: const EdgeInsets.all(16),
+        const PremiumCard(
+          padding: EdgeInsets.all(16),
           child: Row(
             children: [
               Expanded(child: _MiniCommentaryStat(title: 'Runs', value: 158)),
@@ -1284,10 +1284,10 @@ class MatchSquadsTab extends StatelessWidget {
     ];
     return Column(
       children: [
-        PremiumCard(
-          padding: const EdgeInsets.all(16),
+        const PremiumCard(
+          padding: EdgeInsets.all(16),
           child: Row(
-            children: const [
+            children: [
               Expanded(child: _MiniCommentaryStat(title: 'Toss', value: 'NZ')),
               Expanded(
                   child: _MiniCommentaryStat(title: 'Venue', value: 'Hagley')),
@@ -1368,7 +1368,7 @@ class MatchSquadsTab extends StatelessWidget {
                       fontWeight: FontWeight.w800,
                       fontSize: 18)),
               const SizedBox(height: 10),
-              Wrap(spacing: 10, runSpacing: 10, children: const [
+              const Wrap(spacing: 10, runSpacing: 10, children: [
                 PillChip('Will Young'),
                 PillChip('Lockie Ferguson'),
                 PillChip('Michael Bracewell')

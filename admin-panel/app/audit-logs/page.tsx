@@ -44,7 +44,7 @@ function Inner() {
   const [to, setTo] = useState('');
   const [detail, setDetail] = useState<AuditRow | null>(null);
 
-  const { data, loading, reload } = useResource(
+  const { data, loading, error, reload } = useResource(
     () =>
       auditApi.list({
         q: debouncedQ || undefined,
@@ -143,7 +143,7 @@ function Inner() {
           </div>
         }
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(r) => r.id} emptyTitle="No audit entries" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(r) => r.id} emptyTitle="No audit entries" />
 
       <Modal
         open={!!detail}

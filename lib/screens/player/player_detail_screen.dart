@@ -247,7 +247,7 @@ class _ApiStatPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: c.cyan.withOpacity(0.20)),
+        border: Border.all(color: c.cyan.withValues(alpha: 0.20)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -48,7 +48,7 @@ function Inner() {
   const [editing, setEditing] = useState<NewsRow | null>(null);
   const [toDelete, setToDelete] = useState<NewsRow | null>(null);
 
-  const { data, loading, reload } = useResource(() => newsApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => newsApi.list(), []);
   const all = (data?.data || []) as NewsRow[];
 
   const types = useMemo(() => Array.from(new Set(all.map((n) => n.story_type).filter(Boolean))) as string[], [all]);
@@ -155,7 +155,7 @@ function Inner() {
           },
         ]}
       />
-      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No news stories" />
+      <DataTable loading={loading} error={error} onRetry={reload} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No news stories" />
 
       <NewsForm
         open={showForm}

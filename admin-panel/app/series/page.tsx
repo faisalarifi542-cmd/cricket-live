@@ -39,7 +39,7 @@ function SeriesInner() {
   const perms = usePermissions(user);
   const [q, setQ] = useState('');
   const debouncedQ = useDebouncedValue(q, 250);
-  const { data, loading, reload } = useResource(() => seriesApi.list(), []);
+  const { data, loading, error, reload } = useResource(() => seriesApi.list(), []);
   const all = (data?.data || []) as Series[];
 
   const rows = useMemo(() => {
@@ -133,6 +133,8 @@ function SeriesInner() {
       <SearchInput value={q} onChange={setQ} placeholder="Search series…" className="mb-3 max-w-md" />
       <DataTable
         loading={loading}
+        error={error}
+        onRetry={reload}
         rows={rows}
         columns={columns}
         rowKey={(s) => String(s.id ?? s.series_id ?? s.external_id ?? Math.random())}

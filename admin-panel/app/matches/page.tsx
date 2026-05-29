@@ -50,7 +50,7 @@ function MatchesInner() {
   const [q, setQ] = useState('');
   const debouncedQ = useDebouncedValue(q, 250);
 
-  const { data, loading, reload } = useResource(
+  const { data, loading, error, reload } = useResource(
     () => matchesApi.list({ tab, q: debouncedQ || undefined }),
     [tab, debouncedQ],
   );
@@ -196,6 +196,8 @@ function MatchesInner() {
 
       <DataTable
         loading={loading}
+        error={error}
+        onRetry={reload}
         rows={rows}
         columns={columns}
         rowKey={(r) => r.external_id || r.match_external_id || ''}

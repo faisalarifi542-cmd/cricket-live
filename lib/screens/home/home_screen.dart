@@ -28,7 +28,7 @@ class HomeScreen extends StatefulWidget {
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
   final VoidCallback onOpenRanking;
-  final VoidCallback onWatchLive;
+  final ValueChanged<String> onWatchLive;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -96,10 +96,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return AppData.matchesUpcoming;
   }
 
-  VoidCallback _heroAction() {
+  VoidCallback _heroAction({String matchId = ''}) {
     switch (topTab) {
       case 0:
-        return widget.onWatchLive;
+        return () => widget.onWatchLive(matchId);
       case 2:
         return widget.onOpenMatchDetails;
       default:
@@ -165,6 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
               future: _tabMatches,
               builder: (context, snapshot) {
                 final matches = snapshot.data?.data ?? const <CricketMatch>[];
+                final heroMatchId = matches.isEmpty ? '' : matches.first.id;
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -172,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       fixture: _heroFromMatches(matches),
                       finished: topTab == 2,
                       live: topTab == 0,
-                      onButtonTap: _heroAction(),
+                      onButtonTap: _heroAction(matchId: heroMatchId),
                     ),
                     if (snapshot.data?.meta.lastUpdated != null) ...[
                       const SizedBox(height: 10),
@@ -195,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onSwitchUpcoming: () => _setTopTab(1),
               onOpenMatch: widget.onOpenMatchDetails,
               onWatchLive: widget.onWatchLive,
-              onReminder: widget.onOpenReminders,
+              onReminder: () => widget.onOpenReminders(),
             ),
             const SizedBox(height: 28),
             if (topTab == -100) ...[
@@ -256,12 +257,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   onAction: widget.onOpenMatchDetails),
               const SizedBox(height: 14),
               LiveMatchMiniCard(
-                onWatch: widget.onWatchLive,
+                onWatch: () => widget.onWatchLive(''),
                 onOpen: widget.onOpenMatchDetails,
               ),
               const SizedBox(height: 14),
               LiveMatchMiniCard(
-                onWatch: widget.onWatchLive,
+                onWatch: () => widget.onWatchLive(''),
                 onOpen: widget.onOpenMatchDetails,
                 series: 'ENGLAND TOUR OF WEST INDIES',
                 title: 'ENG vs WI',
@@ -333,7 +334,7 @@ class _HomeTabContent extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onSwitchUpcoming;
   final VoidCallback onOpenMatch;
-  final VoidCallback onWatchLive;
+  final ValueChanged<String> onWatchLive;
   final VoidCallback onReminder;
 
   @override
@@ -383,6 +384,14 @@ class _HomeTabContent extends StatelessWidget {
                 ? Icons.emoji_events_outlined
                 : Icons.calendar_month_rounded;
 
+        // When showing real matches we can pair each card with its matchId.
+        final pairs = useDemo
+            ? [for (final item in items) (item, '')]
+            : [
+                for (var i = 0; i < items.length && i < matches.length; i++)
+                  (items[i], matches[i].id),
+              ];
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -393,15 +402,17 @@ class _HomeTabContent extends StatelessWidget {
               ),
             SectionHeader(title, icon: icon, action: topTab == 0 ? 'Open Match' : 'See All', onAction: onOpenMatch),
             const SizedBox(height: 14),
-            for (final item in items.take(4))
+            for (final pair in pairs.take(4))
               Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: topTab == 2
-                    ? FinishedMatchCard(match: item, onTap: onOpenMatch)
+                    ? FinishedMatchCard(match: pair.$1, onTap: onOpenMatch)
                     : UpcomingMatchCard(
-                        match: item,
+                        match: pair.$1,
                         onTap: onOpenMatch,
-                        onReminder: topTab == 0 ? onWatchLive : onReminder,
+                        onReminder: topTab == 0
+                            ? () => onWatchLive(pair.$2)
+                            : onReminder,
                       ),
               ),
           ],
