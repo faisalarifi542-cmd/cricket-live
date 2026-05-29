@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
@@ -23,14 +24,23 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? query,
   }) async {
-    final response = await _httpClient
-        .get(
-          ApiConfig.uri(path, query),
-          headers: const {
-            'Accept': 'application/json',
-          },
-        )
-        .timeout(const Duration(seconds: 12));
+    late final http.Response response;
+    try {
+      response = await _httpClient
+          .get(
+            ApiConfig.uri(path, query),
+            headers: const {
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw const ApiClientException('The cricket data service is taking too long to respond.');
+    } on http.ClientException catch (error) {
+      throw ApiClientException(error.message);
+    } catch (_) {
+      throw const ApiClientException('Unable to connect to the cricket data service.');
+    }
 
     final contentType = response.headers['content-type'] ?? '';
     if (!contentType.contains('application/json')) {
@@ -40,7 +50,15 @@ class ApiClient {
       );
     }
 
-    final decoded = jsonDecode(response.body);
+    final dynamic decoded;
+    try {
+      decoded = jsonDecode(response.body);
+    } on FormatException {
+      throw ApiClientException(
+        'The cricket data service returned invalid JSON.',
+        statusCode: response.statusCode,
+      );
+    }
     if (decoded is! Map<String, dynamic>) {
       throw ApiClientException(
         'The cricket data service returned unexpected data.',

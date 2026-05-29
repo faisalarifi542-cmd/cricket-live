@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models.dart';
+import 'team_detail_screen.dart';
 
 class TeamsScreen extends StatelessWidget {
   const TeamsScreen({super.key});
@@ -45,6 +46,11 @@ class TeamsScreen extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: PremiumCard(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => TeamDetailScreen(teamId: team.code),
+                      ),
+                    ),
                     padding: const EdgeInsets.all(14),
                     child: Row(
                       children: [

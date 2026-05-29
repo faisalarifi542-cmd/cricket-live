@@ -162,15 +162,19 @@ export function requirePermissions(...required) {
 // -----------------------------------------------------------------------
 const IP_ATTEMPT_TTL = 60 * 15; // 15 min
 const USER_ATTEMPT_TTL = 60 * 15;
+
+function loginIdentifier(request) {
+  return String(request.body?.username || request.body?.email || '').trim().toLowerCase();
+}
  
 export async function loginRateLimit(request, reply) {
   const redis = getRedis();
-  const email = (request.body?.email || '').toLowerCase();
-  if (!email) {
-    return reply.code(400).send({ success: false, error: 'Email is required' });
+  const identifier = loginIdentifier(request);
+  if (!identifier) {
+    return reply.code(400).send({ success: false, error: 'Username or email is required' });
   }
   const ipKey = `admin:login:ip:${request.ip}`;
-  const userKey = `admin:login:user:${email}`;
+  const userKey = `admin:login:user:${identifier}`;
   const [ipAttempts, userAttempts] = await Promise.all([
     redis.get(ipKey),
     redis.get(userKey),
@@ -191,12 +195,12 @@ export async function loginRateLimit(request, reply) {
  
 export async function recordFailedLogin(request) {
   const redis = getRedis();
-  const email = (request.body?.email || '').toLowerCase();
+  const identifier = loginIdentifier(request);
   const ipKey = `admin:login:ip:${request.ip}`;
-  const userKey = `admin:login:user:${email}`;
+  const userKey = `admin:login:user:${identifier}`;
   await Promise.all([
     redis.incr(ipKey).then(() => redis.expire(ipKey, IP_ATTEMPT_TTL)),
-    email
+    identifier
       ? redis.incr(userKey).then(() => redis.expire(userKey, USER_ATTEMPT_TTL))
       : null,
   ]);
@@ -204,17 +208,21 @@ export async function recordFailedLogin(request) {
  
 export async function clearLoginAttempts(request) {
   const redis = getRedis();
-  const email = (request.body?.email || '').toLowerCase();
+  const identifier = loginIdentifier(request);
   const ipKey = `admin:login:ip:${request.ip}`;
-  const userKey = `admin:login:user:${email}`;
-  await Promise.all([redis.del(ipKey), email ? redis.del(userKey) : null]);
+  const userKey = `admin:login:user:${identifier}`;
+  await Promise.all([redis.del(ipKey), identifier ? redis.del(userKey) : null]);
 }
  
-export async function checkPasswordAndLog(email, password) {
+export async function checkPasswordAndLog(identifier, password) {
+  const normalized = String(identifier || '').trim().toLowerCase();
   const rows = await query(
     `SELECT id, email, name, password_hash, is_active
-       FROM admin_users WHERE email = ? LIMIT 1`,
-    [email.toLowerCase()],
+       FROM admin_users
+      WHERE LOWER(email) = ?
+         OR LOWER(name) = ?
+      LIMIT 1`,
+    [normalized, normalized],
   );
   if (!rows.length) return null;
   const user = rows[0];

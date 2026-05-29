@@ -137,7 +137,7 @@ export const authApi = {
   login: (email: string, password: string) =>
     adminFetch<{ success: true; token: string; user: StoredAdminUser }>(
       '/admin/login',
-      { method: 'POST', body: j({ email, password }), noRefresh: true, silent: true },
+      { method: 'POST', body: j({ username: email, email, password }), noRefresh: true, silent: true },
     ),
   logout: () => adminFetch<{ success: true }>('/admin/logout', { method: 'POST' }),
   me: () => adminFetch<{ success: true; user: StoredAdminUser }>('/admin/me', { silent: true }),

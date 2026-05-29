@@ -291,6 +291,7 @@ const TABLES = [
     last_login_at DATETIME,
     last_login_ip VARCHAR(64),
     failed_login_attempts INT DEFAULT 0,
+    locked_until DATETIME,
     password_changed_at DATETIME,
     refresh_token_hash VARCHAR(128),
     refresh_token_expires_at DATETIME,
@@ -320,7 +321,6 @@ const TABLES = [
     user_id INT NOT NULL,
     role_id INT NOT NULL,
     PRIMARY KEY (user_id, role_id),
-    FOREIGN KEY (user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
     FOREIGN KEY (role_id) REFERENCES admin_roles(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
@@ -404,9 +404,7 @@ const TABLES = [
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_stream_match (match_external_id),
     INDEX idx_stream_active (is_active, priority),
-    FOREIGN KEY (server_id) REFERENCES stream_servers(id) ON DELETE SET NULL,
-    FOREIGN KEY (created_by) REFERENCES admin_users(id) ON DELETE SET NULL,
-    FOREIGN KEY (updated_by) REFERENCES admin_users(id) ON DELETE SET NULL
+    FOREIGN KEY (server_id) REFERENCES stream_servers(id) ON DELETE SET NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS stream_health_checks (
@@ -452,8 +450,7 @@ const TABLES = [
     created_by INT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (provider_id) REFERENCES api_providers(id) ON DELETE CASCADE,
-    FOREIGN KEY (created_by) REFERENCES admin_users(id) ON DELETE SET NULL
+    FOREIGN KEY (provider_id) REFERENCES api_providers(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS provider_settings (
@@ -472,12 +469,13 @@ const TABLES = [
     setting_key VARCHAR(140) UNIQUE NOT NULL,
     setting_value JSON,
     setting_group VARCHAR(80) DEFAULT 'general',
+    type VARCHAR(40) DEFAULT 'json',
+    \`group\` VARCHAR(80) DEFAULT 'general',
     description TEXT,
     is_public TINYINT(1) DEFAULT 1,
     updated_by INT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (updated_by) REFERENCES admin_users(id) ON DELETE SET NULL
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
   `CREATE TABLE IF NOT EXISTS homepage_sections (
@@ -655,6 +653,8 @@ async function migrate() {
       await pool.execute(sql);
     }
 
+    await applyCompatibilityMigrations(pool);
+
     logger.info(`Database migration completed successfully (${TABLES.length} tables)`);
   } catch (err) {
     logger.error(`Migration failed: ${err.message || err.toString()}`);
@@ -663,6 +663,49 @@ async function migrate() {
   } finally {
     await pool.end();
   }
+}
+
+async function columnExists(pool, tableName, columnName) {
+  const [rows] = await pool.execute(
+    `SELECT 1
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+      LIMIT 1`,
+    [tableName, columnName],
+  );
+  return rows.length > 0;
+}
+
+async function addColumnIfMissing(pool, tableName, columnName, definition) {
+  if (await columnExists(pool, tableName, columnName)) return;
+  await pool.execute(`ALTER TABLE \`${tableName}\` ADD COLUMN ${definition}`);
+  logger.info(`Added missing column ${tableName}.${columnName}`);
+}
+
+async function applyCompatibilityMigrations(pool) {
+  await addColumnIfMissing(pool, 'app_settings', 'is_public', 'is_public TINYINT(1) DEFAULT 1');
+  await addColumnIfMissing(pool, 'app_settings', 'type', "type VARCHAR(40) DEFAULT 'json'");
+  await addColumnIfMissing(pool, 'app_settings', 'group', "`group` VARCHAR(80) DEFAULT 'general'");
+  await addColumnIfMissing(pool, 'app_settings', 'description', 'description TEXT');
+  await addColumnIfMissing(pool, 'app_settings', 'updated_by', 'updated_by INT NULL');
+  await addColumnIfMissing(pool, 'app_settings', 'created_at', 'created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  await addColumnIfMissing(pool, 'app_settings', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+  await addColumnIfMissing(pool, 'admin_users', 'failed_login_attempts', 'failed_login_attempts INT DEFAULT 0');
+  await addColumnIfMissing(pool, 'admin_users', 'locked_until', 'locked_until DATETIME NULL');
+  await addColumnIfMissing(pool, 'admin_users', 'last_login_at', 'last_login_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'admin_users', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+
+  await addColumnIfMissing(pool, 'cache_events', 'cache_key', 'cache_key VARCHAR(300) NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'data_type', 'data_type VARCHAR(80) NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'action', 'action VARCHAR(80) NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'status', 'status VARCHAR(40) NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'provider_id', 'provider_id INT NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'duration_ms', 'duration_ms INT NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'error_message', 'error_message TEXT NULL');
+  await addColumnIfMissing(pool, 'cache_events', 'details', 'details JSON NULL');
 }
 
 migrate().catch((err) => {

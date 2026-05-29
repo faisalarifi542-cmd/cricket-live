@@ -5,7 +5,6 @@ import {
   clearLoginAttempts,
   checkPasswordAndLog,
   recordSuccessfulLogin,
-  incrementFailedLoginCounter,
   loadAdminUser,
   issueAccessToken,
   issueRefreshToken,
@@ -24,15 +23,16 @@ export default async function authRoutes(fastify) {
     '/login',
     { preHandler: [loginRateLimit] },
     async (request, reply) => {
-      const { email, password } = request.body || {};
-      if (!email || !password) {
-        return reply.code(400).send({ success: false, error: 'Email and password required' });
+      const { email, username, password } = request.body || {};
+      const identifier = String(username || email || '').trim();
+      if (!identifier || !password) {
+        return reply.code(400).send({ success: false, error: 'Username/email and password required' });
       }
-      const candidate = await checkPasswordAndLog(email, password);
+      const candidate = await checkPasswordAndLog(identifier, password);
       if (!candidate) {
         await recordFailedLogin(request);
         await recordAudit({
-          adminEmail: email,
+          adminEmail: identifier,
           action: 'login.failed',
           entityType: 'admin_user',
           ipAddress: request.ip,
@@ -40,7 +40,7 @@ export default async function authRoutes(fastify) {
           status: 'error',
           errorMessage: 'Invalid credentials',
         });
-        return reply.code(401).send({ success: false, error: 'Invalid email or password' });
+        return reply.code(401).send({ success: false, error: 'Invalid username/email or password' });
       }
       await clearLoginAttempts(request);
       await recordSuccessfulLogin(candidate.id, request.ip);

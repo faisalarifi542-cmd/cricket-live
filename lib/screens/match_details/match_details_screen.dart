@@ -1,13 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../models/api_models.dart';
+import '../../models/api_response.dart';
+import '../../repositories/cricket_repository.dart';
+import '../player/player_detail_screen.dart';
 import '../../screens.dart';
 
 class MatchDetailsScreen extends StatefulWidget {
-  const MatchDetailsScreen({super.key, this.onWatchLive});
+  const MatchDetailsScreen({super.key, this.onWatchLive, this.matchId = ''});
 
   final VoidCallback? onWatchLive;
+  final String matchId;
 
   @override
   State<MatchDetailsScreen> createState() => _MatchDetailsScreenState();
@@ -15,6 +22,58 @@ class MatchDetailsScreen extends StatefulWidget {
 
 class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
   int tab = 0;
+  final CricketRepository _repository = CricketRepository();
+  final Map<int, Future<ApiEnvelope<Map<String, dynamic>>>> _tabFutures = {};
+  Timer? _liveTimer;
+
+  String get _matchId {
+    final routeArg = ModalRoute.of(context)?.settings.arguments;
+    if (routeArg is String && routeArg.isNotEmpty) return routeArg;
+    return widget.matchId;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_matchId.isNotEmpty) {
+      _tabFutures.putIfAbsent(tab, () => _loadTab(tab));
+      _liveTimer ??= Timer.periodic(const Duration(seconds: 5), (_) {
+        if (mounted && _matchId.isNotEmpty) {
+          _repository.matchLiveLine(_matchId, forceRefresh: true);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<ApiEnvelope<Map<String, dynamic>>> _loadTab(int index, {bool forceRefresh = false}) {
+    final id = _matchId;
+    return switch (index) {
+      0 => _repository.matchScorecard(id, forceRefresh: forceRefresh),
+      1 => _repository.matchCommentary(id, forceRefresh: forceRefresh),
+      2 => _repository.matchOvers(id, forceRefresh: forceRefresh),
+      3 => _repository.matchDetail(id, forceRefresh: forceRefresh),
+      _ => _repository.matchSquads(id, forceRefresh: forceRefresh),
+    };
+  }
+
+  void _setTab(int value) {
+    setState(() {
+      tab = value;
+      if (_matchId.isNotEmpty) _tabFutures.putIfAbsent(value, () => _loadTab(value));
+    });
+  }
+
+  Future<void> _refreshCurrentTab() async {
+    if (_matchId.isEmpty) return;
+    setState(() => _tabFutures[tab] = _loadTab(tab, forceRefresh: true));
+    await _tabFutures[tab];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,10 +82,12 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),
         child: SafeArea(
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                context.horizontalPadding, context.detailBottomPadding),
-            children: [
+          child: RefreshIndicator(
+            onRefresh: _refreshCurrentTab,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
+                  context.horizontalPadding, context.detailBottomPadding),
+              children: [
               AppHeader(
                 leading: IconButton(
                     onPressed: () => Navigator.pop(context),
@@ -53,10 +114,14 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                   'Squads'
                 ],
                 selected: tab,
-                onChanged: (v) => setState(() => tab = v),
+                onChanged: _setTab,
                 height: 52,
               ),
               const SizedBox(height: 16),
+              if (_matchId.isNotEmpty && _tabFutures[tab] != null) ...[
+                _ApiTabStatus(future: _tabFutures[tab]!),
+                const SizedBox(height: 16),
+              ],
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 280),
                 switchInCurve: Curves.easeOutCubic,
@@ -67,19 +132,774 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                 ),
                 child: KeyedSubtree(
                   key: ValueKey(tab),
-                  child: switch (tab) {
-                    0 => const MatchScorecardTab(),
-                    1 => const MatchCommentaryTab(),
-                    2 => const MatchOversTab(),
-                    3 => const MatchInfoTab(),
-                    _ => const MatchSquadsTab(),
-                  },
+                  child: _matchId.isNotEmpty && _tabFutures[tab] != null
+                      ? _ApiMatchTabContent(tab: tab, future: _tabFutures[tab]!)
+                      : switch (tab) {
+                          0 => const MatchScorecardTab(),
+                          1 => const MatchCommentaryTab(),
+                          2 => const MatchOversTab(),
+                          3 => const MatchInfoTab(),
+                          _ => const MatchSquadsTab(),
+                        },
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ApiMatchTabContent extends StatelessWidget {
+  const _ApiMatchTabContent({required this.tab, required this.future});
+
+  final int tab;
+  final Future<ApiEnvelope<Map<String, dynamic>>> future;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return const _MatchDataStateCard(
+            icon: Icons.cloud_off_rounded,
+            text: 'This match data is temporarily unavailable. Pull to refresh.',
+          );
+        }
+        final data = snapshot.data?.data ?? const <String, dynamic>{};
+        if (data.isEmpty) {
+          return _MatchDataStateCard(
+            icon: tab == 4 ? Icons.groups_rounded : Icons.info_outline_rounded,
+            text: _emptyText(tab),
+          );
+        }
+        return switch (tab) {
+          0 => _ScorecardPanel(data: data),
+          1 => _CommentaryPanel(data: data),
+          2 => _OversPanel(data: data),
+          3 => _InfoPanel(data: data),
+          _ => _SquadsPanel(data: data),
+        };
+      },
+    );
+  }
+
+  static String _emptyText(int tab) => switch (tab) {
+        0 => 'Scorecard will be available once the match starts.',
+        1 => 'Commentary will appear here once available.',
+        2 => 'Over summaries are not available yet.',
+        3 => 'Match information is not available yet.',
+        _ => 'Squad has not been announced yet.',
+      };
+
+}
+
+class _ScorecardPanel extends StatefulWidget {
+  const _ScorecardPanel({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  State<_ScorecardPanel> createState() => _ScorecardPanelState();
+}
+
+class _ScorecardPanelState extends State<_ScorecardPanel> {
+  int selected = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final innings = apiList(widget.data['innings']);
+    if (widget.data['scorecard_available'] == false || innings.isEmpty) {
+      return const _MatchDataStateCard(
+        icon: Icons.scoreboard_rounded,
+        text: 'Scorecard will be available once the match starts.',
+      );
+    }
+    final safeSelected = selected.clamp(0, innings.length - 1);
+    final current = apiMap(innings[safeSelected]);
+    final batting = apiList(current['batting'] ?? current['batters'] ?? current['batsmen']);
+    final bowling = apiList(current['bowling'] ?? current['bowlers']);
+    final c = context.cric;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (innings.length > 1)
+          ScrollableSegmentedTabs(
+            items: [
+              for (var i = 0; i < innings.length; i++)
+                str(apiMap(innings[i])['teamName'] ?? apiMap(innings[i])['batting_team'] ?? 'Inn ${i + 1}'),
+            ],
+            selected: safeSelected,
+            onChanged: (value) => setState(() => selected = value),
+            height: 44,
+          ),
+        if (innings.length > 1) const SizedBox(height: 12),
+        _SectionCard(
+          title: str(current['teamName'] ?? current['batting_team'] ?? 'Batting'),
+          child: _StatTable(
+            headers: const ['Batter', 'R', 'B', '4s', '6s', 'SR'],
+            rows: [
+              for (final row in batting)
+                [
+                  _playerCell(context, apiMap(row), str(apiMap(row)['name'] ?? apiMap(row)['player_name'] ?? apiMap(row)['batsman'])),
+                  Text(str(apiMap(row)['runs'])),
+                  Text(str(apiMap(row)['balls'])),
+                  Text(str(apiMap(row)['fours'])),
+                  Text(str(apiMap(row)['sixes'])),
+                  Text(str(apiMap(row)['strike_rate'])),
+                ],
+            ],
+            empty: 'Batting card is not available yet.',
+          ),
+        ),
+        const SizedBox(height: 12),
+        _MiniRows(rows: {
+          'Extras': current['extras'],
+          'Total': current['total'] ?? _scoreText(current),
+          'Fall of wickets': current['fall_of_wickets'] ?? current['fow'],
+        }),
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: 'Bowling',
+          child: _StatTable(
+            headers: const ['Bowler', 'O', 'M', 'R', 'W', 'Econ'],
+            rows: [
+              for (final row in bowling)
+                [
+                  _playerCell(context, apiMap(row), str(apiMap(row)['name'] ?? apiMap(row)['player_name'] ?? apiMap(row)['bowler'])),
+                  Text(str(apiMap(row)['overs'])),
+                  Text(str(apiMap(row)['maidens'])),
+                  Text(str(apiMap(row)['runs'] ?? apiMap(row)['runs_conceded'])),
+                  Text(str(apiMap(row)['wickets'])),
+                  Text(str(apiMap(row)['economy'])),
+                ],
+            ],
+            empty: 'Bowling figures are not available yet.',
+          ),
+        ),
+        if (batting.isEmpty && bowling.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text('Raw scorecard loaded, but no innings table was provided by the API.', style: TextStyle(color: c.muted)),
+          ),
+      ],
+    );
+  }
+}
+
+class _CommentaryPanel extends StatefulWidget {
+  const _CommentaryPanel({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  State<_CommentaryPanel> createState() => _CommentaryPanelState();
+}
+
+class _CommentaryPanelState extends State<_CommentaryPanel> {
+  int filter = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = apiList(widget.data['items'] ?? widget.data['commentary'] ?? widget.data['data']);
+    final filtered = source.where((item) {
+      final row = apiMap(item);
+      if (filter == 1) return truthy(row['is_wicket']) || str(row['event']).toLowerCase().contains('wicket');
+      if (filter == 2) return truthy(row['is_boundary']) || truthy(row['is_four']) || truthy(row['is_six']);
+      if (filter == 3) return truthy(row['is_wicket']) || truthy(row['is_boundary']) || str(row['runs']) == '6';
+      return true;
+    }).toList();
+    if (source.isEmpty) {
+      return const _MatchDataStateCard(
+        icon: Icons.chat_bubble_outline_rounded,
+        text: 'Commentary will appear here once available.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ScrollableSegmentedTabs(
+          items: const ['All', 'Wickets', 'Boundaries', 'Key Events'],
+          selected: filter,
+          onChanged: (value) => setState(() => filter = value),
+          height: 44,
+        ),
+        const SizedBox(height: 12),
+        if (filtered.isEmpty)
+          const _MatchDataStateCard(icon: Icons.filter_alt_off_rounded, text: 'No commentary items match this filter.'),
+        for (final item in filtered.take(50))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _CommentaryCard(row: apiMap(item)),
+          ),
+        if (apiMap(widget.data['pagination']).isNotEmpty)
+          _PaginationHint(data: apiMap(widget.data['pagination'])),
+      ],
+    );
+  }
+}
+
+class _OversPanel extends StatelessWidget {
+  const _OversPanel({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final overs = apiList(data['overs'] ?? data['over_summary_list']);
+    final performance = apiList(data['latest_performance']);
+    final recent = apiList(data['recent_overs']);
+    if (overs.isEmpty && recent.isEmpty && performance.isEmpty) {
+      return const _MatchDataStateCard(icon: Icons.sports_cricket_rounded, text: 'Over summaries are not available yet.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (performance.isNotEmpty)
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final item in performance)
+                _PerformanceChip(row: apiMap(item)),
+            ],
+          ),
+        if (performance.isNotEmpty) const SizedBox(height: 12),
+        if (recent.isNotEmpty)
+          _SectionCard(
+            title: 'Recent balls',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [for (final ball in recent) _BallBubble(label: str(ball))],
+            ),
+          ),
+        if (recent.isNotEmpty) const SizedBox(height: 12),
+        for (final item in overs)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _OverCard(row: apiMap(item)),
+          ),
+      ],
+    );
+  }
+}
+
+class _InfoPanel extends StatelessWidget {
+  const _InfoPanel({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final team1 = apiMap(data['team1']);
+    final team2 = apiMap(data['team2']);
+    final venue = apiMap(data['venue']);
+    final toss = apiMap(data['toss']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionCard(
+          title: '${str(team1['name'], fallback: 'Team 1')} vs ${str(team2['name'], fallback: 'Team 2')}',
+          child: _MiniRows(rows: {
+            'Status': data['status_text'] ?? data['status'],
+            'Series': data['series_name'],
+            'Format': data['match_format'],
+            'Type': data['match_type'],
+            'Start time': data['start_time'],
+            'Venue': [venue['name'], venue['city'], venue['country']].where((v) => str(v).isNotEmpty).join(', '),
+            'Toss': toss.isEmpty ? null : '${str(toss['winner'])} chose ${str(toss['decision']).toLowerCase()}',
+            'Result': data['result'],
+            'Last wicket': data['last_wicket'],
+            'Recent overs': data['recent_overs'],
+            'Run rate': data['current_run_rate'],
+            'Required rate': data['required_run_rate'],
+          }),
+        ),
+        const SizedBox(height: 12),
+        if (apiList(data['current_batsmen']).isNotEmpty)
+          _SectionCard(
+            title: 'At the crease',
+            child: Column(
+              children: [
+                for (final item in apiList(data['current_batsmen']))
+                  _PlayerLine(row: apiMap(item), subtitle: '${str(apiMap(item)['runs'])} (${str(apiMap(item)['balls'])})'),
+              ],
+            ),
+          ),
+        if (apiMap(data['current_bowler']).isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: 'Current bowler',
+            child: _PlayerLine(
+              row: apiMap(data['current_bowler']),
+              subtitle:
+                  '${str(apiMap(data['current_bowler'])['overs'])}-${str(apiMap(data['current_bowler'])['maidens'])}-${str(apiMap(data['current_bowler'])['runs'])}-${str(apiMap(data['current_bowler'])['wickets'])}',
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SquadsPanel extends StatefulWidget {
+  const _SquadsPanel({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  State<_SquadsPanel> createState() => _SquadsPanelState();
+}
+
+class _SquadsPanelState extends State<_SquadsPanel> {
+  int team = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final teams = apiList(widget.data['teams']);
+    if (teams.isEmpty) {
+      return const _MatchDataStateCard(icon: Icons.groups_rounded, text: 'Squad has not been announced yet.');
+    }
+    final safeTeam = team.clamp(0, teams.length - 1);
+    final current = apiMap(teams[safeTeam]);
+    final xi = apiList(current['playingXI'] ?? current['playing_xi']);
+    final bench = apiList(current['bench'] ?? current['substitutes']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ScrollableSegmentedTabs(
+          items: [for (final item in teams) str(apiMap(item)['teamShort'] ?? apiMap(item)['team_short'] ?? apiMap(item)['teamName'])],
+          selected: safeTeam,
+          onChanged: (value) => setState(() => team = value),
+          height: 44,
+        ),
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: 'Playing XI',
+          child: _PlayerGrid(players: xi),
+        ),
+        const SizedBox(height: 12),
+        _SectionCard(
+          title: 'Bench',
+          child: bench.isEmpty
+              ? const _InlineEmpty(text: 'Bench players are not available.')
+              : _PlayerGrid(players: bench),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 17)),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _StatTable extends StatelessWidget {
+  const _StatTable({required this.headers, required this.rows, required this.empty});
+
+  final List<String> headers;
+  final List<List<Widget>> rows;
+  final String empty;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    if (rows.isEmpty) return _InlineEmpty(text: empty);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        headingTextStyle: TextStyle(color: c.muted, fontWeight: FontWeight.w900, fontSize: 12),
+        dataTextStyle: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 12),
+        columns: [for (final header in headers) DataColumn(label: Text(header))],
+        rows: [
+          for (final row in rows)
+            DataRow(cells: [for (final cell in row) DataCell(cell)]),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniRows extends StatelessWidget {
+  const _MiniRows({required this.rows});
+
+  final Map<String, dynamic> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final visible = rows.entries.where((entry) => str(entry.value).isNotEmpty).toList();
+    if (visible.isEmpty) return const _InlineEmpty(text: 'Details are not available yet.');
+    return Column(
+      children: [
+        for (final entry in visible)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(width: 108, child: Text(entry.key, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800))),
+                Expanded(child: Text(str(entry.value), style: TextStyle(color: c.text, fontWeight: FontWeight.w700, height: 1.3))),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _CommentaryCard extends StatelessWidget {
+  const _CommentaryCard({required this.row});
+
+  final Map<String, dynamic> row;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final isWicket = truthy(row['is_wicket']);
+    final isSix = truthy(row['is_six']) || str(row['event']).toLowerCase() == 'six';
+    final isFour = truthy(row['is_four']) || str(row['event']).toLowerCase() == 'four';
+    final tone = isWicket ? Colors.redAccent : (isSix ? Colors.purpleAccent : (isFour ? c.cyan : c.muted));
+    final label = isWicket ? 'Wicket' : (isSix ? 'Six' : (isFour ? 'Four' : (str(row['runs']) == '0' ? 'Dot' : '${str(row['runs'], fallback: '0')} runs')));
+    final over = str(row['over']).isEmpty ? '--' : '${str(row['over'])}.${str(row['ball'], fallback: '0')}';
+    return PremiumCard(
+      padding: const EdgeInsets.all(14),
+      borderColor: tone.withOpacity(0.28),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _EventBadge(label: over, color: tone),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _EventBadge(label: label, color: tone),
+                    if (str(row['batsman']).isNotEmpty) _SoftChip(text: str(row['batsman'])),
+                    if (str(row['bowler']).isNotEmpty) _SoftChip(text: str(row['bowler'])),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(str(row['text'] ?? row['commentary']), style: TextStyle(color: c.text, height: 1.4, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverCard extends StatelessWidget {
+  const _OverCard({required this.row});
+
+  final Map<String, dynamic> row;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final balls = apiList(row['balls']);
+    return PremiumCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('Over ${str(row['overNumber'] ?? row['over'])}', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+              const Spacer(),
+              Text('${str(row['runs'], fallback: '0')} runs', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('${str(row['bowlerName'] ?? row['bowler'])} | ${str(row['scoreAfter'])}', style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final ball in balls) _BallBubble(label: str(apiMap(ball)['result']), wicket: truthy(apiMap(ball)['isWicket']), boundary: truthy(apiMap(ball)['isBoundary']))],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PerformanceChip extends StatelessWidget {
+  const _PerformanceChip({required this.row});
+
+  final Map<String, dynamic> row;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.cyan.withOpacity(0.25)),
+      ),
+      child: Text('${str(row['label'])}: ${str(row['runs'])}/${str(row['wickets'])}', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+    );
+  }
+}
+
+class _BallBubble extends StatelessWidget {
+  const _BallBubble({required this.label, this.wicket = false, this.boundary = false});
+
+  final String label;
+  final bool wicket;
+  final bool boundary;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final color = wicket ? Colors.redAccent : (boundary || label == '4' || label == '6' ? c.cyan : c.muted);
+    return Container(
+      width: 34,
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withOpacity(0.14),
+        border: Border.all(color: color.withOpacity(0.55)),
+      ),
+      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 12)),
+    );
+  }
+}
+
+class _PlayerGrid extends StatelessWidget {
+  const _PlayerGrid({required this.players});
+
+  final List<dynamic> players;
+
+  @override
+  Widget build(BuildContext context) {
+    if (players.isEmpty) return const _InlineEmpty(text: 'Players are not available yet.');
+    return Column(
+      children: [
+        for (final player in players)
+          _PlayerLine(row: apiMap(player), subtitle: str(apiMap(player)['role'])),
+      ],
+    );
+  }
+}
+
+class _PlayerLine extends StatelessWidget {
+  const _PlayerLine({required this.row, required this.subtitle});
+
+  final Map<String, dynamic> row;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final id = str(row['playerId'] ?? row['player_id']);
+    final image = str(row['imageUrl'] ?? row['image_url']);
+    return InkWell(
+      onTap: id.isEmpty ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: c.card,
+              backgroundImage: image.isEmpty ? null : NetworkImage(image),
+              child: image.isEmpty ? Icon(Icons.person_rounded, color: c.muted) : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(str(row['name'] ?? row['player_name'], fallback: 'Player'), style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+                  if (subtitle.isNotEmpty) Text(subtitle, style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            if (truthy(row['isCaptain']) || truthy(row['is_captain'])) _SoftChip(text: 'C'),
+            if (truthy(row['isWicketKeeper']) || truthy(row['is_wicketkeeper'])) _SoftChip(text: 'WK'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EventBadge extends StatelessWidget {
+  const _EventBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withOpacity(0.35))),
+        child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 11)),
+      );
+}
+
+class _SoftChip extends StatelessWidget {
+  const _SoftChip({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(999)),
+      child: Text(text, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800, fontSize: 11)),
+    );
+  }
+}
+
+class _PaginationHint extends StatelessWidget {
+  const _PaginationHint({required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Text('Page ${str(data['page'])} of ${str(data['pages'])}', textAlign: TextAlign.center, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800));
+  }
+}
+
+class _InlineEmpty extends StatelessWidget {
+  const _InlineEmpty({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(text, style: TextStyle(color: context.cric.muted, fontWeight: FontWeight.w700));
+}
+
+Widget _playerCell(BuildContext context, Map<String, dynamic> row, String label) {
+  final id = str(row['playerId'] ?? row['player_id']);
+  if (id.isEmpty) return Text(label);
+  return InkWell(
+    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
+    child: Text(label, style: TextStyle(color: context.cric.cyan, fontWeight: FontWeight.w900)),
+  );
+}
+
+String _scoreText(Map<String, dynamic> row) {
+  final runs = str(row['runs'] ?? row['total_runs']);
+  final wickets = str(row['wickets'] ?? row['total_wickets']);
+  final overs = str(row['overs'] ?? row['total_overs']);
+  if (runs.isEmpty) return '';
+  return '$runs/$wickets${overs.isEmpty ? '' : ' ($overs ov)'}';
+}
+
+Map<String, dynamic> apiMap(dynamic value) => value is Map<String, dynamic> ? value : <String, dynamic>{};
+
+String str(dynamic value, {String fallback = ''}) {
+  if (value == null) return fallback;
+  if (value is List) return value.map((item) => str(item)).where((item) => item.isNotEmpty).join(', ');
+  final text = value.toString().trim();
+  return text.isEmpty || text == 'null' ? fallback : text;
+}
+
+bool truthy(dynamic value) => value == true || value == 1 || value == '1' || value.toString().toLowerCase() == 'true';
+
+class _MatchDataStateCard extends StatelessWidget {
+  const _MatchDataStateCard({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        children: [
+          Icon(icon, color: c.cyan),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApiTabStatus extends StatelessWidget {
+  const _ApiTabStatus({required this.future});
+
+  final Future<ApiEnvelope<Map<String, dynamic>>> future;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const LinearProgressIndicator();
+        }
+        if (snapshot.hasError) {
+          return PremiumCard(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'This match section is temporarily unavailable. Pull to refresh.',
+              style: TextStyle(color: c.muted, fontWeight: FontWeight.w700),
+            ),
+          );
+        }
+        final meta = snapshot.data?.meta;
+        return PremiumCard(
+          padding: const EdgeInsets.all(14),
+          child: Text(
+            meta?.lastUpdated == null
+                ? 'Loaded from ${meta?.provider ?? 'WebCricHD'}'
+                : 'Loaded from ${meta?.provider ?? 'WebCricHD'} - Last updated ${meta!.lastUpdated!.toLocal()}',
+            style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w800),
+          ),
+        );
+      },
     );
   }
 }

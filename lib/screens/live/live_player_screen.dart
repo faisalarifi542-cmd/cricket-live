@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../models/api_models.dart';
+import '../../models/api_response.dart';
+import '../../repositories/cricket_repository.dart';
 
 class LivePlayerScreen extends StatefulWidget {
-  const LivePlayerScreen({super.key});
+  const LivePlayerScreen({super.key, this.matchId = ''});
+
+  final String matchId;
 
   @override
   State<LivePlayerScreen> createState() => _LivePlayerScreenState();
@@ -11,6 +16,16 @@ class LivePlayerScreen extends StatefulWidget {
 
 class _LivePlayerScreenState extends State<LivePlayerScreen> {
   String selectedQuality = 'Full HD';
+  final CricketRepository _repository = CricketRepository();
+  Future<ApiEnvelope<Map<String, dynamic>>>? _streams;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.matchId.isNotEmpty) {
+      _streams = _repository.matchStreams(widget.matchId);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -358,6 +373,62 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
                 ),
               ),
               const SizedBox(height: 24),
+
+              if (_streams != null) ...[
+                FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+                  future: _streams,
+                  builder: (context, snapshot) {
+                    final streams = apiList(snapshot.data?.data['streams'] ?? snapshot.data?.data['data'])
+                        .map(StreamSource.fromJson)
+                        .where((stream) => stream.url.isNotEmpty)
+                        .toList();
+                    if (snapshot.connectionState == ConnectionState.waiting && streams.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 18),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    if (streams.isEmpty) {
+                      return PremiumCard(
+                        padding: const EdgeInsets.all(18),
+                        child: Row(
+                          children: [
+                            Icon(Icons.live_tv_rounded, color: c.cyan, size: 30),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Text(
+                                'Stream will be available before match starts.',
+                                style: TextStyle(color: c.text, fontWeight: FontWeight.w800, height: 1.35),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Available Servers',
+                          style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 20),
+                        ),
+                        const SizedBox(height: 14),
+                        for (final stream in streams)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _QualityOption(
+                              label: stream.name,
+                              subtitle: stream.quality ?? 'Public stream',
+                              selected: selectedQuality == stream.id,
+                              onTap: () => setState(() => selectedQuality = stream.id),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 24),
+              ],
 
               // Quality Selection
               Text(

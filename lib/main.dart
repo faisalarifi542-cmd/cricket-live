@@ -19,9 +19,11 @@ import 'screens/schedule/schedule_screen.dart';
 import 'screens/teams/teams_screen.dart';
 import 'screens/match_details/match_details_screen.dart';
 import 'screens/series/series_detail_screen.dart';
+import 'screens/series/series_list_screen.dart';
 import 'screens/common/search_screen.dart';
 import 'screens/common/notifications_screen.dart';
 import 'screens/player/player_detail_screen.dart';
+import 'repositories/cricket_repository.dart';
 
 void main() => runApp(const CricProApp());
 
@@ -34,6 +36,23 @@ class CricProApp extends StatefulWidget {
 
 class _CricProAppState extends State<CricProApp> {
   bool dark = true;
+  final CricketRepository _repository = CricketRepository();
+  Map<String, dynamic> _appConfig = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppConfig();
+  }
+
+  Future<void> _loadAppConfig() async {
+    try {
+      final response = await _repository.appConfig();
+      if (mounted) setState(() => _appConfig = response.data);
+    } catch (_) {
+      // The app can still render with built-in defaults when config is unavailable.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,9 +60,35 @@ class _CricProAppState extends State<CricProApp> {
       debugShowCheckedModeBanner: false,
       title: 'CRICPRO',
       theme: cricTheme(dark),
-      home: RootShell(
-        isDark: dark,
-        onThemeChanged: (v) => setState(() => dark = v),
+      home: _appConfig['maintenanceMode'] == true
+          ? const _MaintenanceScreen()
+          : RootShell(
+              isDark: dark,
+              onThemeChanged: (v) => setState(() => dark = v),
+            ),
+    );
+  }
+}
+
+class _MaintenanceScreen extends StatelessWidget {
+  const _MaintenanceScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(gradient: c.bgGradient),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(28),
+        child: PremiumCard(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'CRICPRO is under maintenance. Please check back shortly.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 20),
+          ),
+        ),
       ),
     );
   }
@@ -69,11 +114,14 @@ class _RootShellState extends State<RootShell> {
 
   void _openHighlightDetail() => _push(const HighlightDetailScreen());
 
-  void _openSeries({int initialTab = 0}) => _push(SeriesDetailScreen(
-        initialTab: initialTab,
-        onOpenReminders: () => showReminderSheet(context),
-        onOpenCalendar: () => showCalendarSheet(context),
-        onOpenPlayer: () => _push(const PlayerDetailScreen()),
+  void _openSeries({int initialTab = 0}) => _push(SeriesListScreen(
+        onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
+          seriesId: seriesId,
+          initialTab: initialTab,
+          onOpenReminders: () => showReminderSheet(context),
+          onOpenCalendar: () => showCalendarSheet(context),
+          onOpenPlayer: () => _push(const PlayerDetailScreen()),
+        )),
       ));
 
   void _openSearch() => _push(const SearchScreen());

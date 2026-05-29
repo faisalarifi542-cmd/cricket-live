@@ -15,7 +15,7 @@ export function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get('next') || '/dashboard';
 
-  const [email, setEmail] = useState('admin@cricpro.local');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,7 +29,7 @@ export function LoginForm() {
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const parsed = loginSchema.safeParse({ email, password });
+    const parsed = loginSchema.safeParse({ email: username, password });
     if (!parsed.success) {
       const flat = parsed.error.flatten().fieldErrors;
       setErrors({
@@ -76,13 +76,13 @@ export function LoginForm() {
       </div>
 
       <div className="space-y-4">
-        <Field label="Email" required error={errors.email}>
+        <Field label="Username" required error={errors.email}>
           <Input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            type="email"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            type="text"
             autoComplete="username"
-            placeholder="admin@cricpro.local"
+            placeholder="Enter admin username"
             invalid={!!errors.email}
           />
         </Field>

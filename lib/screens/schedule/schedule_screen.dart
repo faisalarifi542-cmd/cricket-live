@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../core/api/api_config.dart';
+import '../../models/api_response.dart';
+import '../../models/cricket_match.dart';
+import '../../repositories/cricket_repository.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key, required this.onOpenSeries});
@@ -14,6 +18,8 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> {
   int selectedDay = 3; // Wed 26 is selected by default
   int filterIndex = 0;
+  final CricketRepository _repository = CricketRepository();
+  late Future<ApiEnvelope<List<CricketMatch>>> _schedule;
 
   final days = [
     ('Mon', '24'),
@@ -25,7 +31,33 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     ('Sun', '30'),
   ];
 
-  final filters = ['All', 'International', 'League', 'Domestic'];
+  final filters = ['All', 'International', 'League', 'Domestic', 'Women'];
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule = _repository.scheduleMatches(type: _filterType);
+  }
+
+  String get _filterType => switch (filterIndex) {
+        1 => 'international',
+        2 => 'league',
+        3 => 'domestic',
+        4 => 'women',
+        _ => 'all',
+      };
+
+  void _setFilter(int index) {
+    setState(() {
+      filterIndex = index;
+      _schedule = _repository.scheduleMatches(type: _filterType);
+    });
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _schedule = _repository.scheduleMatches(type: _filterType, forceRefresh: true));
+    await _schedule;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +65,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return Container(
       decoration: BoxDecoration(gradient: c.bgGradient),
       child: SafeArea(
-        child: ListView(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
           padding: EdgeInsets.fromLTRB(
             context.horizontalPadding,
             18,
@@ -72,13 +106,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 itemBuilder: (_, i) => PillChip(
                   filters[i],
                   selected: filterIndex == i,
-                  onTap: () => setState(() => filterIndex = i),
+                  onTap: () => _setFilter(i),
                 ),
               ),
             ),
             const SizedBox(height: 28),
 
+            _ApiScheduleList(
+              future: _schedule,
+              allowDemoFallback: ApiConfig.allowDemoFallback,
+              onRetry: () => setState(() => _schedule = _repository.scheduleMatches(type: _filterType, forceRefresh: true)),
+              onOpenSeries: widget.onOpenSeries,
+            ),
+            const SizedBox(height: 28),
+
             // Today Section
+            if (filterIndex == -100) ...[
             _SectionTitle('Today — Wed, 26 Nov'),
             const SizedBox(height: 14),
             _ScheduleFixtureCard(
@@ -156,6 +199,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
             const SizedBox(height: 28),
 
+            ],
+
             // Action Buttons
             Row(
               children: [
@@ -179,6 +224,107 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
           ],
         ),
+      ),
+    ),
+    );
+  }
+}
+
+class _ApiScheduleList extends StatelessWidget {
+  const _ApiScheduleList({
+    required this.future,
+    required this.allowDemoFallback,
+    required this.onRetry,
+    required this.onOpenSeries,
+  });
+
+  final Future<ApiEnvelope<List<CricketMatch>>> future;
+  final bool allowDemoFallback;
+  final VoidCallback onRetry;
+  final VoidCallback onOpenSeries;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
+      future: future,
+      builder: (context, snapshot) {
+        final matches = snapshot.data?.data ?? const <CricketMatch>[];
+        if (snapshot.connectionState == ConnectionState.waiting && matches.isEmpty) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError && !allowDemoFallback) {
+          return _ScheduleStateCard(onRetry: onRetry);
+        }
+        if (matches.isEmpty) {
+          return _ScheduleStateCard(
+            title: 'No fixtures found',
+            message: 'Try another schedule filter or refresh shortly.',
+            onRetry: onRetry,
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SectionTitle('Upcoming'),
+            const SizedBox(height: 14),
+            for (final match in matches)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _ScheduleFixtureCard(
+                  series: match.series,
+                  matchNumber: match.title,
+                  team1: _TeamData(_code(match.teamA), match.teamA, ''),
+                  team2: _TeamData(_code(match.teamB), match.teamB, ''),
+                  time: match.startTime.isEmpty ? match.status : match.startTime,
+                  venue: match.venue,
+                  status: match.status,
+                  onTap: onOpenSeries,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _code(String name) {
+    final cleaned = name.trim();
+    if (cleaned.isEmpty) return 'TBD';
+    final parts = cleaned.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    if (parts.length == 1) return parts.first.substring(0, parts.first.length.clamp(1, 3).toInt()).toUpperCase();
+    return parts.take(2).map((part) => part[0]).join().toUpperCase();
+  }
+}
+
+class _ScheduleStateCard extends StatelessWidget {
+  const _ScheduleStateCard({
+    this.title = 'Unable to load schedule',
+    this.message = 'Please check your connection and try again.',
+    required this.onRetry,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        children: [
+          Icon(Icons.calendar_month_rounded, color: c.cyan, size: 38),
+          const SizedBox(height: 12),
+          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 8),
+          Text(message, textAlign: TextAlign.center, style: TextStyle(color: c.muted, height: 1.4)),
+          const SizedBox(height: 16),
+          GradientButton(label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),
+        ],
       ),
     );
   }

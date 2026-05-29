@@ -76,6 +76,7 @@ export async function ensureDataControlSchema() {
 
   await query(`CREATE TABLE IF NOT EXISTS cache_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_type VARCHAR(80) NULL,
     cache_key VARCHAR(300),
     data_type VARCHAR(80),
     action VARCHAR(80) NOT NULL,
@@ -91,6 +92,13 @@ export async function ensureDataControlSchema() {
 
   const provider = await ensureDefaultProvider();
   await query(`ALTER TABLE api_data_sources ADD COLUMN app_screen VARCHAR(120) NULL AFTER label`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN event_type VARCHAR(80) NULL AFTER id`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN data_type VARCHAR(80) NULL AFTER cache_key`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN action VARCHAR(80) NULL AFTER data_type`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN status VARCHAR(40) DEFAULT 'ok' AFTER action`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN provider_id INT NULL AFTER status`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN duration_ms INT NULL AFTER provider_id`).catch(() => null);
+  await query(`ALTER TABLE cache_events ADD COLUMN error_message TEXT NULL AFTER duration_ms`).catch(() => null);
 
   for (const item of DATA_SOURCES) {
     await query(
@@ -171,9 +179,9 @@ function isValidPayload(data, { allowEmpty = false, requiredId } = {}) {
 async function recordEvent(event) {
   try {
     await query(
-      `INSERT INTO cache_events (cache_key, data_type, action, status, provider_id, duration_ms, error_message, details)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [event.cacheKey || null, event.dataType || null, event.action, event.status || 'ok', event.providerId || null, event.durationMs || null, event.errorMessage || null, event.details ? JSON.stringify(event.details) : null],
+      `INSERT INTO cache_events (event_type, cache_key, data_type, action, status, provider_id, duration_ms, error_message, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [event.action || 'cache.event', event.cacheKey || null, event.dataType || null, event.action, event.status || 'ok', event.providerId || null, event.durationMs || null, event.errorMessage || null, event.details ? JSON.stringify(event.details) : null],
     );
   } catch {
     // Cache telemetry must never break public API traffic.

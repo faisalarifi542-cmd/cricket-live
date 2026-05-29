@@ -25,7 +25,8 @@ class CricketApiService {
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchScorecard(String matchId) => _map('/match/$matchId/scorecard');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId) => _map('/match/$matchId/commentary');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId, {int page = 1, int limit = 50}) =>
+      _map('/match/$matchId/commentary', query: {'page': page, 'limit': limit});
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId) => _map('/match/$matchId/overs');
 
@@ -37,11 +38,16 @@ class CricketApiService {
 
   Future<ApiEnvelope<Map<String, dynamic>>> seriesDetail(String seriesId) => _map('/series/$seriesId');
 
-  Future<ApiEnvelope<List<dynamic>>> seriesMatches(String seriesId) => _list('/series/$seriesId/matches');
+  Future<ApiEnvelope<List<dynamic>>> seriesMatches(String seriesId, {String? status}) =>
+      _list('/series/$seriesId/matches', query: {'status': status});
 
   Future<ApiEnvelope<Map<String, dynamic>>> pointsTable(String seriesId) => _map('/points-table/$seriesId');
 
   Future<ApiEnvelope<Map<String, dynamic>>> seriesStats(String seriesId) => _map('/series/$seriesId/stats');
+
+  Future<ApiEnvelope<List<dynamic>>> seriesSchedule(String seriesId) => _list('/series/$seriesId/schedule');
+
+  Future<ApiEnvelope<List<dynamic>>> seriesTeams(String seriesId) => _list('/series/$seriesId/teams');
 
   Future<ApiEnvelope<List<dynamic>>> schedule({String type = 'upcoming'}) => _list('/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}');
 
@@ -63,8 +69,8 @@ class CricketApiService {
     return ApiEnvelope.fromJson(json, _asList);
   }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> _map(String path) async {
-    final json = await _client.get(path);
+  Future<ApiEnvelope<Map<String, dynamic>>> _map(String path, {Map<String, dynamic>? query}) async {
+    final json = await _client.get(path, query: query);
     return ApiEnvelope.fromJson(json, (value) => value is Map<String, dynamic> ? value : <String, dynamic>{});
   }
 

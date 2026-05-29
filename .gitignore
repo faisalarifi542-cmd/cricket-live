@@ -1,40 +1,74 @@
-# Build artifacts
-build/
+# Dependencies
+node_modules/
+admin-panel/node_modules/
+cricket-api/node_modules/
+
+# Next.js
+.next/
+admin-panel/.next/
+out/
+admin-panel/out/
+
+# Flutter / Dart
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
-.pub-cache/
-.pub/
-*.iml
-.idea/
-.vscode/
+build/
+.flutter/
+coverage/
 
-# OS
+# Android
+android/.gradle/
+android/local.properties
+android/app/build/
+*.apk
+*.aab
+
+# iOS / macOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+macos/Pods/
+macos/.symlinks/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+cricket-api/.env
+cricket-api/.env.*
+admin-panel/.env
+admin-panel/.env.*
+admin-panel/.env.local
+admin-panel/.env.production
+admin-panel/.env.development
+
+# Cache
+.cache/
+.parcel-cache/
+.turbo/
+.vercel/
+
+# IDE / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
 
-# Flutter generated
-.flutter-plugins
-.flutter-plugins-dependencies
-build/
-*.iml
-admin-panel/node_modules/
-admin-panel/.next/
-admin-panel/out/
-admin-panel/dist/
-node_modules/
-.next/
-node_modules/
-admin-panel/node_modules/
-.next/
-admin-panel/.next/
-build/
-.dart_tool/
-.pub-cache/
-.packages
-.flutter-plugins
-.flutter-plugins-dependencies
-android/.gradle/
-ios/Pods/
-ios/.symlinks/
+# Archives / temporary files
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+tmp/
+temp/

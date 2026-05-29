@@ -55,11 +55,27 @@ class CricketMatch {
     );
   }
 
+  HeroFixture toHeroFixture({required bool live, required bool finished}) {
+    return HeroFixture(
+      badge: live ? 'LIVE' : finished ? 'RESULT' : 'UPCOMING',
+      series: series,
+      date: startTime.isEmpty ? status : startTime,
+      time: score?.isNotEmpty == true ? score! : status,
+      left: _team(teamA, const Color(0xff22d3ee)),
+      right: _team(teamB, const Color(0xfff59e0b)),
+      centerTitle: 'VS',
+      venue: venue,
+      button: live ? 'Watch Live' : finished ? 'Scorecard' : 'Remind Me',
+      result: finished ? status : null,
+    );
+  }
+
   static TeamInfo _team(String name, Color color) {
     final clean = name.trim().isEmpty ? 'TBD' : name.trim();
     final words = clean.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    final shortLength = words.first.length.clamp(1, 3).toInt();
     final short = words.length == 1
-        ? words.first.substring(0, words.first.length.clamp(1, 3)).toUpperCase()
+        ? words.first.substring(0, shortLength).toUpperCase()
         : words.take(2).map((word) => word[0]).join().toUpperCase();
     return TeamInfo(
       code: short,
