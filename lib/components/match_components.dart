@@ -25,12 +25,21 @@ class UpcomingMatchCard extends StatelessWidget {
             children: [
               Expanded(
                   child: Text(match.series,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: c.cyan,
                           fontWeight: FontWeight.w800,
-                          fontSize: 15))),
-              Text(match.subtitle,
-                  style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
+                          fontSize: 14))),
+              const SizedBox(width: 8),
+              if (match.subtitle.isNotEmpty)
+                Flexible(
+                  child: Text(match.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: c.cyan, fontWeight: FontWeight.w700)),
+                ),
               const SizedBox(width: 6),
               Icon(Icons.chevron_right_rounded, color: c.muted),
             ],
@@ -40,6 +49,9 @@ class UpcomingMatchCard extends StatelessWidget {
             final w = ctx.w;
             final narrow = w <= 400;
             final vsSize = narrow ? 46.0 : 64.0;
+            final parts = match.date.split('•');
+            final topLine = parts.first.trim();
+            final bottomLine = parts.length > 1 ? parts.last.trim() : '';
             return Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -47,22 +59,25 @@ class UpcomingMatchCard extends StatelessWidget {
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(match.date.split('•').first.trim(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w700,
-                            fontSize: context.sp(14)),
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 6),
-                    Text(match.date.split('•').last.trim(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w700,
-                            fontSize: context.sp(15))),
+                    if (topLine.isNotEmpty)
+                      Text(topLine,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: c.text,
+                              fontWeight: FontWeight.w700,
+                              fontSize: context.sp(14)),
+                          textAlign: TextAlign.center),
+                    if (bottomLine.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(bottomLine,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: c.cyan,
+                              fontWeight: FontWeight.w700,
+                              fontSize: context.sp(15))),
+                    ],
                     const SizedBox(height: 10),
                     Container(
                       width: vsSize,
@@ -161,10 +176,13 @@ class FinishedMatchCard extends StatelessWidget {
             children: [
               Expanded(
                   child: Text(match.series,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: c.cyan,
                           fontWeight: FontWeight.w800,
-                          fontSize: 15))),
+                          fontSize: 14))),
+              const SizedBox(width: 8),
               StatusBadge(label: match.status, color: c.cyan),
             ],
           ),
@@ -176,8 +194,8 @@ class FinishedMatchCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                    child: _finishedTeamBlock(context, match.left,
-                        match.date.split('•').first.trim())),
+                    child: _finishedTeamBlock(
+                        context, match.left, match.leftScore ?? '—')),
                 Container(
                   width: vsSize,
                   height: vsSize,
@@ -193,14 +211,17 @@ class FinishedMatchCard extends StatelessWidget {
                           fontSize: narrow ? 18 : 24)),
                 ),
                 Expanded(
-                    child: _finishedTeamBlock(context, match.right,
-                        match.date.split('•').last.trim())),
+                    child: _finishedTeamBlock(
+                        context, match.right, match.rightScore ?? '—')),
               ],
             );
           }),
           const SizedBox(height: 16),
           Center(
-              child: Text(match.venue,
+              child: Text(
+                  (match.result?.isNotEmpty ?? false)
+                      ? match.result!
+                      : match.venue,
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -222,6 +243,13 @@ class FinishedMatchCard extends StatelessWidget {
                 outlined: true,
                 height: 44,
               );
+              final hasPlayer =
+                  (match.playerOfMatch ?? '').isNotEmpty;
+              if (!hasPlayer) {
+                // No POTM data — just show the action button so the card
+                // stays compact instead of advertising an empty section.
+                return SizedBox(width: double.infinity, child: action);
+              }
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -242,17 +270,19 @@ class FinishedMatchCard extends StatelessWidget {
                                     fontWeight: FontWeight.w700,
                                     fontSize: 12)),
                             const SizedBox(height: 4),
-                            Text(match.playerOfMatch ?? '',
+                            Text(match.playerOfMatch!,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                     color: c.text,
                                     fontWeight: FontWeight.w800,
                                     fontSize: context.sp(15))),
-                            Text(match.playerStat ?? '',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: c.muted, fontSize: 12)),
+                            if ((match.playerStat ?? '').isNotEmpty)
+                              Text(match.playerStat!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style:
+                                      TextStyle(color: c.muted, fontSize: 12)),
                           ],
                         ),
                       ),

@@ -1,42 +1,38 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
-import '../../core/api/api_config.dart';
 import '../../models/api_response.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key, required this.onOpenSeries});
+  const ScheduleScreen({
+    super.key,
+    required this.onOpenSeries,
+    this.onOpenMatch,
+  });
 
   final VoidCallback onOpenSeries;
+
+  /// Invoked with the resolved match id when the user taps a fixture card.
+  final ValueChanged<String>? onOpenMatch;
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
-  int selectedDay = 3; // Wed 26 is selected by default
+  int selectedDay = 0;
   int filterIndex = 0;
   final CricketRepository _repository = CricketRepository();
-  late Future<ApiEnvelope<List<CricketMatch>>> _schedule;
+  late Future<ApiEnvelope<List<ScheduleDay>>> _schedule;
 
-  final days = [
-    ('Mon', '24'),
-    ('Tue', '25'),
-    ('Wed', '26'),
-    ('Thu', '27'),
-    ('Fri', '28'),
-    ('Sat', '29'),
-    ('Sun', '30'),
-  ];
-
-  final filters = ['All', 'International', 'League', 'Domestic', 'Women'];
+  final filters = const ['All', 'International', 'League', 'Domestic', 'Women'];
 
   @override
   void initState() {
     super.initState();
-    _schedule = _repository.scheduleMatches(type: _filterType);
+    _schedule = _repository.scheduleByDay(type: _filterType);
   }
 
   String get _filterType => switch (filterIndex) {
@@ -50,12 +46,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   void _setFilter(int index) {
     setState(() {
       filterIndex = index;
-      _schedule = _repository.scheduleMatches(type: _filterType);
+      selectedDay = 0;
+      _schedule = _repository.scheduleByDay(type: _filterType);
     });
   }
 
   Future<void> _refresh() async {
-    setState(() => _schedule = _repository.scheduleMatches(type: _filterType, forceRefresh: true));
+    setState(() {
+      _schedule =
+          _repository.scheduleByDay(type: _filterType, forceRefresh: true);
+    });
     await _schedule;
   }
 
@@ -67,236 +67,189 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       child: SafeArea(
         child: RefreshIndicator(
           onRefresh: _refresh,
-          child: ListView(
-          padding: EdgeInsets.fromLTRB(
-            context.horizontalPadding,
-            18,
-            context.horizontalPadding,
-            context.mainBottomPadding,
+          child: FutureBuilder<ApiEnvelope<List<ScheduleDay>>>(
+            future: _schedule,
+            builder: (context, snapshot) {
+              final days = snapshot.data?.data ?? const <ScheduleDay>[];
+              final waiting =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                      days.isEmpty;
+              final safeSelected =
+                  days.isEmpty ? 0 : selectedDay.clamp(0, days.length - 1);
+              final selectedMatches =
+                  days.isEmpty ? <CricketMatch>[] : days[safeSelected].matches;
+              return ListView(
+                padding: EdgeInsets.fromLTRB(
+                  context.horizontalPadding,
+                  18,
+                  context.horizontalPadding,
+                  context.mainBottomPadding,
+                ),
+                children: [
+                  const AppHeader(title: 'SCHEDULE'),
+                  const SizedBox(height: 24),
+                  // Date selector — uses real API days. The chips are inside
+                  // a horizontally scrollable list and a flexible height so
+                  // they never trigger RenderFlex overflow at 360px.
+                  _DateChipRow(
+                    days: days,
+                    selected: safeSelected,
+                    onSelect: (i) => setState(() => selectedDay = i),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 46,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: filters.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      itemBuilder: (_, i) => PillChip(
+                        filters[i],
+                        selected: filterIndex == i,
+                        onTap: () => _setFilter(i),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  if (waiting)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 28),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (snapshot.hasError && days.isEmpty)
+                    _ScheduleStateCard(
+                      title: 'Unable to load schedule',
+                      message:
+                          'Please check your connection and try again.',
+                      onRetry: _refresh,
+                    )
+                  else if (days.isEmpty)
+                    _ScheduleStateCard(
+                      title: 'No fixtures found',
+                      message:
+                          'Try another schedule filter or refresh shortly.',
+                      onRetry: _refresh,
+                    )
+                  else ...[
+                    _SectionTitle(
+                        _selectedTitle(days, safeSelected)),
+                    const SizedBox(height: 14),
+                    if (selectedMatches.isEmpty)
+                      _ScheduleStateCard(
+                        title: 'No fixtures on this day',
+                        message:
+                            'Pick another date above or check back later.',
+                        onRetry: _refresh,
+                      )
+                    else
+                      for (final match in selectedMatches)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _ScheduleFixtureCard(
+                            match: match,
+                            onTap: () {
+                              if (match.id.isNotEmpty &&
+                                  widget.onOpenMatch != null) {
+                                widget.onOpenMatch!(match.id);
+                              } else {
+                                widget.onOpenSeries();
+                              }
+                            },
+                          ),
+                        ),
+                  ],
+                  const SizedBox(height: 28),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GradientButton(
+                          label: 'Sync Schedule',
+                          icon: Icons.sync_rounded,
+                          onTap: _refresh,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: GradientButton(
+                          label: 'Add to Calendar',
+                          icon: Icons.calendar_month_rounded,
+                          outlined: true,
+                          onTap: () {},
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
-          children: [
-            // Header
-            const AppHeader(title: 'SCHEDULE'),
-            const SizedBox(height: 24),
-
-            // Date Selector
-            SizedBox(
-              height: 72,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: days.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (_, i) => _DateChip(
-                  day: days[i].$1,
-                  date: days[i].$2,
-                  selected: selectedDay == i,
-                  onTap: () => setState(() => selectedDay = i),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Filter Chips
-            SizedBox(
-              height: 46,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: filters.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (_, i) => PillChip(
-                  filters[i],
-                  selected: filterIndex == i,
-                  onTap: () => _setFilter(i),
-                ),
-              ),
-            ),
-            const SizedBox(height: 28),
-
-            _ApiScheduleList(
-              future: _schedule,
-              allowDemoFallback: ApiConfig.allowDemoFallback,
-              onRetry: () => setState(() => _schedule = _repository.scheduleMatches(type: _filterType, forceRefresh: true)),
-              onOpenSeries: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 28),
-
-            // Today Section
-            if (filterIndex == -100) ...[
-            const _SectionTitle('Today — Wed, 26 Nov'),
-            const SizedBox(height: 14),
-            _ScheduleFixtureCard(
-              series: 'ICC MEN\'S ODI SERIES',
-              matchNumber: '3rd ODI',
-              team1: _TeamData('IND', 'India', '🇮🇳'),
-              team2: _TeamData('AUS', 'Australia', '🇦🇺'),
-              time: '3:30 PM IST',
-              venue: 'Narendra Modi Stadium, Ahmedabad',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 12),
-            _ScheduleFixtureCard(
-              series: 'ENGLAND TOUR OF WEST INDIES',
-              matchNumber: 'T20I • 2nd Match',
-              team1: _TeamData('ENG', 'England', '🏴'),
-              team2: _TeamData('WI', 'West Indies', '🇼🇸'),
-              time: '7:00 PM GMT',
-              venue: 'Kensington Oval, Bridgetown',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 28),
-
-            // Tomorrow Section
-            const _SectionTitle('Tomorrow — Thu, 27 Nov'),
-            const SizedBox(height: 14),
-            _ScheduleFixtureCard(
-              series: 'PAKISTAN TOUR OF BANGLADESH',
-              matchNumber: 'T20I • 1st Match',
-              team1: _TeamData('PAK', 'Pakistan', '🇵🇰'),
-              team2: _TeamData('BAN', 'Bangladesh', '🇧🇩'),
-              time: '6:00 PM BST',
-              venue: 'Sher-e-Bangla Stadium, Dhaka',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 12),
-            _ScheduleFixtureCard(
-              series: 'SOUTH AFRICA T20 LEAGUE',
-              matchNumber: 'Match 12',
-              team1: _TeamData('SUN', 'Sunrisers', '☀️'),
-              team2: _TeamData('DSG', 'Durban', '⚡'),
-              time: '8:30 PM SAST',
-              venue: 'Kingsmead, Durban',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 28),
-
-            // Upcoming Section
-            const _SectionTitle('Upcoming'),
-            const SizedBox(height: 14),
-            _ScheduleFixtureCard(
-              series: 'NEW ZEALAND VS SRI LANKA',
-              matchNumber: 'Test • 1st Test',
-              team1: _TeamData('NZ', 'New Zealand', '🇳🇿'),
-              team2: _TeamData('SL', 'Sri Lanka', '🇱🇰'),
-              time: 'Fri, 28 Nov • 10:00 AM NZDT',
-              venue: 'Basin Reserve, Wellington',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 12),
-            _ScheduleFixtureCard(
-              series: 'AUSTRALIA DOMESTIC ONE-DAY',
-              matchNumber: 'Match 8',
-              team1: _TeamData('VIC', 'Victoria', '🏏'),
-              team2: _TeamData('WA', 'Western Australia', '🦘'),
-              time: 'Sat, 29 Nov • 2:00 PM AEDT',
-              venue: 'MCG, Melbourne',
-              status: 'UPCOMING',
-              onTap: widget.onOpenSeries,
-            ),
-            const SizedBox(height: 28),
-
-            ],
-
-            // Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: GradientButton(
-                    label: 'Sync Schedule',
-                    icon: Icons.sync_rounded,
-                    onTap: () {},
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: GradientButton(
-                    label: 'Add to Calendar',
-                    icon: Icons.calendar_month_rounded,
-                    outlined: true,
-                    onTap: () {},
-                  ),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
-    ),
     );
+  }
+
+  String _selectedTitle(List<ScheduleDay> days, int index) {
+    if (days.isEmpty) return 'Upcoming';
+    final day = days[index];
+    final descriptive = day.dayDescriptive;
+    if (descriptive.isEmpty) return 'Upcoming';
+    return '$descriptive — ${day.matches.length} match${day.matches.length == 1 ? '' : 'es'}';
   }
 }
 
-class _ApiScheduleList extends StatelessWidget {
-  const _ApiScheduleList({
-    required this.future,
-    required this.allowDemoFallback,
-    required this.onRetry,
-    required this.onOpenSeries,
+class _DateChipRow extends StatelessWidget {
+  const _DateChipRow({
+    required this.days,
+    required this.selected,
+    required this.onSelect,
   });
 
-  final Future<ApiEnvelope<List<CricketMatch>>> future;
-  final bool allowDemoFallback;
-  final VoidCallback onRetry;
-  final VoidCallback onOpenSeries;
+  final List<ScheduleDay> days;
+  final int selected;
+  final ValueChanged<int> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
-      future: future,
-      builder: (context, snapshot) {
-        final matches = snapshot.data?.data ?? const <CricketMatch>[];
-        if (snapshot.connectionState == ConnectionState.waiting && matches.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 28),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (snapshot.hasError && !allowDemoFallback) {
-          return _ScheduleStateCard(onRetry: onRetry);
-        }
-        if (matches.isEmpty) {
-          return _ScheduleStateCard(
-            title: 'No fixtures found',
-            message: 'Try another schedule filter or refresh shortly.',
-            onRetry: onRetry,
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const _SectionTitle('Upcoming'),
-            const SizedBox(height: 14),
-            for (final match in matches)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _ScheduleFixtureCard(
-                  series: match.series,
-                  matchNumber: match.title,
-                  team1: _TeamData(_code(match.teamA), match.teamA, ''),
-                  team2: _TeamData(_code(match.teamB), match.teamB, ''),
-                  time: match.startTime.isEmpty ? match.status : match.startTime,
-                  venue: match.venue,
-                  status: match.status,
-                  onTap: onOpenSeries,
-                ),
-              ),
-          ],
-        );
-      },
+    final placeholders = days.isEmpty
+        ? List.generate(7, (i) {
+            final date = DateTime.now().add(Duration(days: i));
+            return _DateChipData(
+              short: _dayShort(date),
+              number: date.day.toString(),
+            );
+          })
+        : [
+            for (final d in days)
+              _DateChipData(short: d.dayShort, number: d.dayNumber),
+          ];
+    // Bounded width but unbounded height — SingleChildScrollView keeps
+    // overflow horizontal only, and the chip column sizes to its content.
+    return SizedBox(
+      height: 78,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: placeholders.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (_, i) => _DateChip(
+          day: placeholders[i].short,
+          date: placeholders[i].number,
+          selected: i == selected,
+          onTap: days.isEmpty ? null : () => onSelect(i),
+        ),
+      ),
     );
   }
 
-  String _code(String name) {
-    final cleaned = name.trim();
-    if (cleaned.isEmpty) return 'TBD';
-    final parts = cleaned.split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
-    if (parts.length == 1) return parts.first.substring(0, parts.first.length.clamp(1, 3).toInt()).toUpperCase();
-    return parts.take(2).map((part) => part[0]).join().toUpperCase();
+  static String _dayShort(DateTime date) {
+    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return names[date.weekday - 1];
   }
+}
+
+class _DateChipData {
+  const _DateChipData({required this.short, required this.number});
+  final String short;
+  final String number;
 }
 
 class _ScheduleStateCard extends StatelessWidget {
@@ -308,7 +261,7 @@ class _ScheduleStateCard extends StatelessWidget {
 
   final String title;
   final String message;
-  final VoidCallback onRetry;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -319,11 +272,20 @@ class _ScheduleStateCard extends StatelessWidget {
         children: [
           Icon(Icons.calendar_month_rounded, color: c.cyan, size: 38),
           const SizedBox(height: 12),
-          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          Text(title,
+              style: TextStyle(
+                  color: c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18)),
           const SizedBox(height: 8),
-          Text(message, textAlign: TextAlign.center, style: TextStyle(color: c.muted, height: 1.4)),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.muted, height: 1.4)),
           const SizedBox(height: 16),
-          GradientButton(label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),
+          GradientButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              onTap: () => onRetry()),
         ],
       ),
     );
@@ -341,7 +303,7 @@ class _DateChip extends StatelessWidget {
   final String day;
   final String date;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -352,7 +314,11 @@ class _DateChip extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         width: 68,
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        // Symmetric padding plus FittedBox-protected text lets the chip
+        // grow to whatever height its content needs while keeping it
+        // visually consistent on narrow screens.
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
           color: selected ? null : c.card.withValues(alpha: .5),
@@ -372,23 +338,30 @@ class _DateChip extends StatelessWidget {
               : null,
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              day,
-              style: TextStyle(
-                color: selected ? Colors.white : c.muted,
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                day,
+                style: TextStyle(
+                  color: selected ? Colors.white : c.muted,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
             ),
             const SizedBox(height: 6),
-            Text(
-              date,
-              style: TextStyle(
-                color: selected ? Colors.white : c.text,
-                fontWeight: FontWeight.w900,
-                fontSize: 20,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                date,
+                style: TextStyle(
+                  color: selected ? Colors.white : c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                ),
               ),
             ),
           ],
@@ -419,23 +392,11 @@ class _SectionTitle extends StatelessWidget {
 
 class _ScheduleFixtureCard extends StatelessWidget {
   const _ScheduleFixtureCard({
-    required this.series,
-    required this.matchNumber,
-    required this.team1,
-    required this.team2,
-    required this.time,
-    required this.venue,
-    required this.status,
+    required this.match,
     required this.onTap,
   });
 
-  final String series;
-  final String matchNumber;
-  final _TeamData team1;
-  final _TeamData team2;
-  final String time;
-  final String venue;
-  final String status;
+  final CricketMatch match;
   final VoidCallback onTap;
 
   @override
@@ -447,207 +408,92 @@ class _ScheduleFixtureCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Series and Status
           Row(
             children: [
               Expanded(
                 child: Text(
-                  series,
+                  match.series.toUpperCase(),
                   style: TextStyle(
                     color: c.cyan,
                     fontWeight: FontWeight.w800,
                     fontSize: 12,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
-              StatusBadge(label: status, color: c.muted, filled: true),
+              StatusBadge(
+                  label: match.statusLabel, color: c.muted, filled: true),
             ],
           ),
           const SizedBox(height: 4),
-          Text(
-            matchNumber,
-            style: TextStyle(
-              color: c.muted,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+          if (match.matchDesc.isNotEmpty)
+            Text(
+              match.matchDesc,
+              style: TextStyle(
+                color: c.text,
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-
-          // Teams
+          const SizedBox(height: 14),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Team 1
               Expanded(
-                child: Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.card2,
-                        border: Border.all(color: c.border),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        team1.emoji,
-                        style: const TextStyle(fontSize: 24),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            team1.code,
-                            style: TextStyle(
-                              color: c.text,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                            ),
-                          ),
-                          Text(
-                            team1.name,
-                            style: TextStyle(
-                              color: c.muted,
-                              fontSize: 12,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // VS Circle
-              Container(
-                width: 40,
-                height: 40,
-                margin: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: c.primaryGradient,
-                  boxShadow: [
-                    BoxShadow(
-                      color: c.cyan.withValues(alpha: .3),
-                      blurRadius: 12,
-                    )
-                  ],
-                ),
-                alignment: Alignment.center,
-                child: const Text(
-                  'VS',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-
-              // Team 2
-              Expanded(
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            team2.code,
-                            style: TextStyle(
-                              color: c.text,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                            ),
-                          ),
-                          Text(
-                            team2.name,
-                            style: TextStyle(
-                              color: c.muted,
-                              fontSize: 12,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.end,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: c.card2,
-                        border: Border.all(color: c.border),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        team2.emoji,
-                        style: const TextStyle(fontSize: 24),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Time and Venue
-          Row(
-            children: [
-              Icon(Icons.access_time_rounded, color: c.cyan, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  time,
-                  style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              InkWell(
-                onTap: () {},
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: c.cyan.withValues(alpha: .15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.notifications_none_rounded,
-                      color: c.cyan, size: 20),
+                child: _CardTeamRow(
+                  shortName: match.teamAShort,
+                  fullName: match.teamA,
                 ),
               ),
               const SizedBox(width: 8),
-              Icon(Icons.chevron_right_rounded, color: c.muted, size: 24),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Icon(Icons.location_on_outlined, color: c.muted, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  venue,
+              Text('VS',
                   style: TextStyle(
                     color: c.muted,
-                    fontSize: 13,
-                  ),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  )),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _CardTeamRow(
+                  shortName: match.teamBShort,
+                  fullName: match.teamB,
+                  alignEnd: true,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Icon(Icons.access_time_rounded, color: c.muted, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  match.statusText.isNotEmpty
+                      ? match.statusText
+                      : _formattedStart(match),
+                  style: TextStyle(
+                      color: c.muted, fontWeight: FontWeight.w600),
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.location_on_outlined,
+                  color: c.muted, size: 16),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  match.venue,
+                  style: TextStyle(
+                      color: c.muted, fontWeight: FontWeight.w600),
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -657,12 +503,57 @@ class _ScheduleFixtureCard extends StatelessWidget {
       ),
     );
   }
+
+  String _formattedStart(CricketMatch match) {
+    final dt = match.startDateTime;
+    if (dt == null) return match.startTime;
+    final local = dt.toLocal();
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final hh = local.hour.toString().padLeft(2, '0');
+    final mm = local.minute.toString().padLeft(2, '0');
+    return '${months[local.month - 1]} ${local.day} • $hh:$mm';
+  }
 }
 
-class _TeamData {
-  final String code;
-  final String name;
-  final String emoji;
+class _CardTeamRow extends StatelessWidget {
+  const _CardTeamRow({
+    required this.shortName,
+    required this.fullName,
+    this.alignEnd = false,
+  });
 
-  _TeamData(this.code, this.name, this.emoji);
+  final String shortName;
+  final String fullName;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Column(
+      crossAxisAlignment:
+          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        Text(
+          shortName.isEmpty ? fullName : shortName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: c.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+          ),
+        ),
+        if (fullName.isNotEmpty && fullName != shortName)
+          Text(
+            fullName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: c.muted, fontSize: 12),
+          ),
+      ],
+    );
+  }
 }

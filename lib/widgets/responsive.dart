@@ -287,19 +287,13 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return;
-    final box = ctx.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final viewportW = _controller.position.viewportDimension;
-    final offset = box.localToGlobal(Offset.zero).dx +
-        _controller.offset -
-        ((box.size.width) / 2) -
-        ((viewportW > 0 ? viewportW : MediaQuery.sizeOf(context).width) / 2);
-    final target = offset.clamp(
-      _controller.position.minScrollExtent,
-      _controller.position.maxScrollExtent,
-    );
-    _controller.animateTo(
-      target,
+    // Use Scrollable.ensureVisible with `alignment: 0.5` to center the
+    // selected tab in the viewport. This is reliable regardless of viewport
+    // width and avoids the manual offset math (which previously scrolled the
+    // first tab partially off-screen, clipping `Scorecard` to `ecard`).
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.5,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
     );
@@ -367,10 +361,13 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
               : null,
         ),
         alignment: Alignment.center,
+        // Wrapping in an IntrinsicWidth keeps the Text from being clipped by
+        // the surrounding Container — required because the AnimatedContainer
+        // would otherwise size to a smaller-than-natural width and trigger
+        // `TextOverflow` mid-label (e.g. "Sq" instead of "Squads").
         child: Text(
           widget.items[i],
           maxLines: 1,
-          overflow: TextOverflow.fade,
           softWrap: false,
           style: TextStyle(
             color: selected ? Colors.white : c.text,

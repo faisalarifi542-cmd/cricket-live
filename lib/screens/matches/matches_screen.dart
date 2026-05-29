@@ -18,7 +18,9 @@ class MatchesScreen extends StatefulWidget {
     required this.onOpenSeries,
   });
 
-  final VoidCallback onOpenMatch;
+  /// Invoked with the resolved match id (empty string allowed) when a card
+  /// is tapped.
+  final ValueChanged<String> onOpenMatch;
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
@@ -158,15 +160,22 @@ class _MatchesScreenState extends State<MatchesScreen> {
                           style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700),
                         ),
                       ),
-                    for (final item in items)
+                    for (var i = 0; i < items.length; i++)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 18),
-                        child: topTab == 2
-                            ? FinishedMatchCard(match: item, onTap: widget.onOpenMatch)
-                            : UpcomingMatchCard(
-                                match: item,
-                                onTap: widget.onOpenMatch,
-                                onReminder: widget.onOpenReminders),
+                        child: Builder(builder: (_) {
+                          final matchId = (useDemo || i >= apiItems.length)
+                              ? ''
+                              : apiItems[i].id;
+                          void onTap() => widget.onOpenMatch(matchId);
+                          return topTab == 2
+                              ? FinishedMatchCard(
+                                  match: items[i], onTap: onTap)
+                              : UpcomingMatchCard(
+                                  match: items[i],
+                                  onTap: onTap,
+                                  onReminder: widget.onOpenReminders);
+                        }),
                       ),
                   ],
                 );

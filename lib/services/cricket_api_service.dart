@@ -51,6 +51,28 @@ class CricketApiService {
 
   Future<ApiEnvelope<List<dynamic>>> schedule({String type = 'upcoming'}) => _list('/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}');
 
+  /// Returns schedule grouped by day. Each day exposes its label and the list
+  /// of matches that begin on that day. The webcrichd schedule endpoint
+  /// returns `{ data: { days: [{ date, series: [{ matches: [...] }] }] } }`,
+  /// so the helper flattens that structure for the UI layer.
+  Future<ApiEnvelope<List<Map<String, dynamic>>>> scheduleDays({String type = 'upcoming'}) async {
+    final path = '/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}';
+    final json = await _client.get(path);
+    return ApiEnvelope.fromJson(json, (value) {
+      final root = value is Map<String, dynamic> ? value : <String, dynamic>{};
+      final days = root['days'];
+      if (days is! List) return const <Map<String, dynamic>>[];
+      return [
+        for (final raw in days)
+          if (raw is Map<String, dynamic>)
+            <String, dynamic>{
+              'date': raw['date']?.toString() ?? '',
+              'matches': _flattenSeriesMatches(raw),
+            },
+      ];
+    });
+  }
+
   Future<ApiEnvelope<List<dynamic>>> news({int limit = 20}) => _list('/news', query: {'limit': limit});
 
   Future<ApiEnvelope<Map<String, dynamic>>> newsDetail(String newsId) => _map('/news/$newsId');
@@ -74,14 +96,56 @@ class CricketApiService {
     return ApiEnvelope.fromJson(json, (value) => value is Map<String, dynamic> ? value : <String, dynamic>{});
   }
 
+  /// Recursively unwrap the response payload into a flat `List<dynamic>` of
+  /// match-shaped maps. The API returns several different shapes:
+  /// - `{ data: [...] }` — `/matches/live`, `/matches/recent`, ...
+  /// - `{ data: { matches: [...] } }` — alternate shape.
+  /// - `{ data: { days: [{ series: [{ matches: [...] }] }] } }` — schedule.
   List<dynamic> _asList(dynamic value) {
     if (value is List) return value;
     if (value is Map<String, dynamic>) {
+      // Schedule shape — `days` is the outermost grouping.
+      if (value['days'] is List) {
+        final List<dynamic> flat = [];
+        for (final day in (value['days'] as List)) {
+          if (day is Map<String, dynamic>) {
+            flat.addAll(_flattenSeriesMatches(day));
+          }
+        }
+        return flat;
+      }
       for (final key in const ['matches', 'items', 'news', 'data', 'results']) {
         final nested = value[key];
         if (nested is List) return nested;
       }
     }
     return const [];
+  }
+
+  static List<Map<String, dynamic>> _flattenSeriesMatches(Map<String, dynamic> day) {
+    final out = <Map<String, dynamic>>[];
+    final series = day['series'];
+    if (series is! List) return out;
+    for (final entry in series) {
+      if (entry is! Map<String, dynamic>) continue;
+      final matches = entry['matches'];
+      if (matches is! List) continue;
+      for (final raw in matches) {
+        if (raw is! Map<String, dynamic>) continue;
+        // Merge series-level metadata onto each match so the parser has
+        // everything it needs.
+        out.add(<String, dynamic>{
+          ...raw,
+          'series_name': raw['series_name'] ?? raw['seriesName'] ?? entry['seriesName'] ?? entry['series_name'],
+          'series_id': raw['series_id'] ?? raw['seriesId'] ?? entry['seriesId'] ?? entry['series_id'],
+          'match_type': raw['match_type'] ?? raw['matchType'] ?? entry['category'],
+          // Schedule entries don't carry an explicit status — every match
+          // returned by `/schedule/upcoming` is upcoming.
+          'status': raw['status'] ?? 'upcoming',
+          'day_date': day['date'],
+        });
+      }
+    }
+    return out;
   }
 }

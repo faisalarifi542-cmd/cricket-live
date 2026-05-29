@@ -282,11 +282,17 @@ class TeamBadge extends StatelessWidget {
         ],
       ),
       child: team.asset != null
-          ? Image.asset(
-              team.asset!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _teamFallback(context),
-            )
+          ? (team.asset!.startsWith('http')
+              ? Image.network(
+                  team.asset!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _teamFallback(context),
+                )
+              : Image.asset(
+                  team.asset!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _teamFallback(context),
+                ))
           : _teamFallback(context),
     );
   }

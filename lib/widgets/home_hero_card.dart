@@ -115,27 +115,29 @@ class HomeHeroCard extends StatelessWidget {
                       borderColor: Colors.white.withValues(alpha: .85)),
                 ],
               ),
-              if (finished &&
-                  fixture.leftMeta != null &&
-                  fixture.rightMeta != null) ...[
+              if (fixture.leftMeta != null || fixture.rightMeta != null) ...[
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                        child: Text(fixture.leftMeta!,
+                        child: Text(fixture.leftMeta ?? '',
                             textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
-                                fontSize: context.sp(20)))),
+                                fontSize: context.sp(finished ? 20 : 17)))),
                     const Spacer(),
                     Expanded(
-                        child: Text(fixture.rightMeta!,
+                        child: Text(fixture.rightMeta ?? '',
                             textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: Colors.white.withValues(alpha: .85),
                                 fontWeight: FontWeight.w900,
-                                fontSize: context.sp(20)))),
+                                fontSize: context.sp(finished ? 20 : 17)))),
                   ],
                 ),
               ],

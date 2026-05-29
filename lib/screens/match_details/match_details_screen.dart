@@ -6,6 +6,7 @@ import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
+import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 import '../player/player_detail_screen.dart';
 import '../../screens.dart';
@@ -26,6 +27,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
   int tab = 0;
   final CricketRepository _repository = CricketRepository();
   final Map<int, Future<ApiEnvelope<Map<String, dynamic>>>> _tabFutures = {};
+  Future<ApiEnvelope<Map<String, dynamic>>>? _summaryFuture;
   Timer? _liveTimer;
 
   String get _matchId {
@@ -39,6 +41,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
     super.didChangeDependencies();
     if (_matchId.isNotEmpty) {
       _tabFutures.putIfAbsent(tab, () => _loadTab(tab));
+      _summaryFuture ??= _repository.matchDetail(_matchId);
       _liveTimer ??= Timer.periodic(const Duration(seconds: 5), (_) {
         if (mounted && _matchId.isNotEmpty) {
           _repository.matchLiveLine(_matchId, forceRefresh: true);
@@ -102,11 +105,28 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              MatchDetailHeroCard(
-                onWatchLive: widget.onWatchLive == null
-                    ? null
-                    : () => widget.onWatchLive!(_matchId),
-              ),
+              if (_matchId.isNotEmpty && _summaryFuture != null)
+                FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+                  future: _summaryFuture,
+                  builder: (context, snapshot) {
+                    final data = snapshot.data?.data;
+                    final match = data == null
+                        ? null
+                        : CricketMatch.fromJson(data);
+                    return MatchDetailHeroCard(
+                      match: match,
+                      onWatchLive: widget.onWatchLive == null
+                          ? null
+                          : () => widget.onWatchLive!(_matchId),
+                    );
+                  },
+                )
+              else
+                MatchDetailHeroCard(
+                  onWatchLive: widget.onWatchLive == null
+                      ? null
+                      : () => widget.onWatchLive!(_matchId),
+                ),
               const SizedBox(height: 16),
               // Match Details has 5 tabs which squeeze "Commentary" into
               // "Comment…" on narrow widths. Use the scrollable variant so
