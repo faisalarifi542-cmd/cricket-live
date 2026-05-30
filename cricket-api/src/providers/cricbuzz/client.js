@@ -275,15 +275,29 @@ export const cricbuzzApi = {
         hasData: !!jsonData,
         hasInnings: !!(jsonData?.innings),
         inningsCount: jsonData?.innings?.length || 0,
+        hasScoreCard: !!(jsonData?.scoreCard),
+        scoreCardCount: jsonData?.scoreCard?.length || 0,
         keys: jsonData ? Object.keys(jsonData) : []
       });
       
-      // Validate JSON response
-      if (jsonData && jsonData.innings && jsonData.innings.length > 0) {
-        logger.info({ msg: 'Scorecard JSON data found', matchId, innings: jsonData.innings.length });
-        return jsonData;
+      // Validate JSON response - check for innings OR scoreCard
+      const innings = jsonData?.innings || jsonData?.scoreCard || [];
+      if (jsonData && innings.length > 0) {
+        // Check if innings have actual batting/bowling data
+        const hasData = innings.some(inn => 
+          (inn.batTeamDetails?.batsmenData && Object.keys(inn.batTeamDetails.batsmenData).length > 0) ||
+          (inn.bowlTeamDetails?.bowlersData && Object.keys(inn.bowlTeamDetails.bowlersData).length > 0)
+        );
+        
+        if (hasData) {
+          logger.info({ msg: 'Scorecard JSON data found with batting/bowling', matchId, innings: innings.length });
+          // Normalize the structure - ensure it's in the format normalizer expects
+          return { scoreCard: innings };
+        } else {
+          logger.warn({ msg: 'JSON scorecard has innings but no batting/bowling data', matchId, innings: innings.length });
+        }
       } else {
-        logger.warn({ msg: 'JSON scorecard returned empty innings', matchId, data: jsonData });
+        logger.warn({ msg: 'JSON scorecard returned empty innings', matchId });
       }
     } catch (jsonErr) {
       jsonError = jsonErr;
