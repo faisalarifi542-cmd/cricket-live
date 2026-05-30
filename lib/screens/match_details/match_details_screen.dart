@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
@@ -28,6 +29,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
   final CricketRepository _repository = CricketRepository();
   final Map<int, Future<ApiEnvelope<Map<String, dynamic>>>> _tabFutures = {};
   Future<ApiEnvelope<Map<String, dynamic>>>? _summaryFuture;
+  Future<bool>? _streamAvailabilityFuture;
   Timer? _liveTimer;
 
   String get _matchId {
@@ -42,6 +44,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
     if (_matchId.isNotEmpty) {
       _tabFutures.putIfAbsent(tab, () => _loadTab(tab));
       _summaryFuture ??= _repository.matchDetail(_matchId);
+      _streamAvailabilityFuture ??= _repository.hasPlayableStreams(_matchId);
       _liveTimer ??= Timer.periodic(const Duration(seconds: 5), (_) {
         if (mounted && _matchId.isNotEmpty) {
           _repository.matchLiveLine(_matchId, forceRefresh: true);
@@ -56,7 +59,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
     super.dispose();
   }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> _loadTab(int index, {bool forceRefresh = false}) {
+  Future<ApiEnvelope<Map<String, dynamic>>> _loadTab(int index,
+      {bool forceRefresh = false}) {
     final id = _matchId;
     return switch (index) {
       0 => _repository.matchScorecard(id, forceRefresh: forceRefresh),
@@ -70,7 +74,9 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
   void _setTab(int value) {
     setState(() {
       tab = value;
-      if (_matchId.isNotEmpty) _tabFutures.putIfAbsent(value, () => _loadTab(value));
+      if (_matchId.isNotEmpty) {
+        _tabFutures.putIfAbsent(value, () => _loadTab(value));
+      }
     });
   }
 
@@ -93,82 +99,100 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
               padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
                   context.horizontalPadding, context.detailBottomPadding),
               children: [
-              AppHeader(
-                leading: IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.arrow_back_rounded, color: c.text)),
-                title: 'Match Details',
-                trailing: const [
-                  GlowIconButton(icon: Icons.search_rounded),
-                  SizedBox(width: 8),
-                  GlowIconButton(icon: Icons.filter_alt_outlined),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (_matchId.isNotEmpty && _summaryFuture != null)
-                FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
-                  future: _summaryFuture,
-                  builder: (context, snapshot) {
-                    final data = snapshot.data?.data;
-                    final match = data == null
-                        ? null
-                        : CricketMatch.fromJson(data);
-                    return MatchDetailHeroCard(
-                      match: match,
-                      onWatchLive: widget.onWatchLive == null
-                          ? null
-                          : () => widget.onWatchLive!(_matchId),
-                    );
-                  },
-                )
-              else
-                MatchDetailHeroCard(
-                  onWatchLive: widget.onWatchLive == null
-                      ? null
-                      : () => widget.onWatchLive!(_matchId),
+                AppHeader(
+                  leading: IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                  title: 'Match Details',
+                  trailing: const [
+                    GlowIconButton(icon: Icons.search_rounded),
+                    SizedBox(width: 8),
+                    GlowIconButton(icon: Icons.filter_alt_outlined),
+                  ],
                 ),
-              const SizedBox(height: 16),
-              // Match Details has 5 tabs which squeeze "Commentary" into
-              // "Comment…" on narrow widths. Use the scrollable variant so
-              // every label stays fully visible.
-              ScrollableSegmentedTabs(
-                items: const [
-                  'Scorecard',
-                  'Commentary',
-                  'Overs',
-                  'Info',
-                  'Squads'
-                ],
-                selected: tab,
-                onChanged: _setTab,
-                height: 52,
-              ),
-              const SizedBox(height: 16),
-              if (_matchId.isNotEmpty && _tabFutures[tab] != null) ...[
-                _ApiTabStatus(future: _tabFutures[tab]!),
                 const SizedBox(height: 16),
-              ],
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 280),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, anim) => FadeTransition(
-                  opacity: anim,
-                  child: child,
+                if (_matchId.isNotEmpty && _summaryFuture != null)
+                  FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+                    future: _summaryFuture,
+                    builder: (context, snapshot) {
+                      final data = snapshot.data?.data;
+                      final match =
+                          data == null ? null : CricketMatch.fromJson(data);
+                      return FutureBuilder<bool>(
+                        future: _streamAvailabilityFuture,
+                        builder: (context, streamSnapshot) =>
+                            MatchDetailHeroCard(
+                          match: match,
+                          showWatchLive: streamSnapshot.data == true,
+                          onWatchLive: widget.onWatchLive == null
+                              ? null
+                              : () => widget.onWatchLive!(_matchId),
+                        ),
+                      );
+                    },
+                  )
+                else
+                  MatchDetailHeroCard(
+                    showWatchLive: false,
+                    onWatchLive: widget.onWatchLive == null
+                        ? null
+                        : () => widget.onWatchLive!(_matchId),
+                  ),
+                const SizedBox(height: 16),
+                // Match Details has 5 tabs which squeeze "Commentary" into
+                // "Comment…" on narrow widths. Use the scrollable variant so
+                // every label stays fully visible.
+                ScrollableSegmentedTabs(
+                  items: const [
+                    'Scorecard',
+                    'Commentary',
+                    'Overs',
+                    'Info',
+                    'Squads'
+                  ],
+                  selected: tab,
+                  onChanged: _setTab,
+                  height: 52,
                 ),
-                child: KeyedSubtree(
-                  key: ValueKey(tab),
-                  child: _matchId.isNotEmpty && _tabFutures[tab] != null
-                      ? _ApiMatchTabContent(tab: tab, future: _tabFutures[tab]!)
-                      : switch (tab) {
-                          0 => const MatchScorecardTab(),
-                          1 => const MatchCommentaryTab(),
-                          2 => const MatchOversTab(),
-                          3 => const MatchInfoTab(),
-                          _ => const MatchSquadsTab(),
-                        },
+                const SizedBox(height: 16),
+                if (_matchId.isNotEmpty && _tabFutures[tab] != null) ...[
+                  // Debug info - hidden in production
+                  // _ApiTabStatus(future: _tabFutures[tab]!),
+                  // const SizedBox(height: 16),
+                ],
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity: anim,
+                    child: child,
+                  ),
+                  child: KeyedSubtree(
+                    key: ValueKey(tab),
+                    child: _matchId.isNotEmpty && _tabFutures[tab] != null
+                        ? FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
+                            future: _summaryFuture,
+                            builder: (context, snapshot) {
+                              final matchStatus = snapshot.data?.data != null 
+                                  ? snapshot.data!.data['status']?.toString()
+                                  : null;
+                              return _ApiMatchTabContent(
+                                tab: tab,
+                                future: _tabFutures[tab]!,
+                                matchStatus: matchStatus,
+                              );
+                            },
+                          )
+                        : switch (tab) {
+                            0 => const MatchScorecardTab(),
+                            1 => const MatchCommentaryTab(),
+                            2 => const MatchOversTab(),
+                            3 => const MatchInfoTab(),
+                            _ => const MatchSquadsTab(),
+                          },
+                  ),
                 ),
-              ),
               ],
             ),
           ),
@@ -179,10 +203,11 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
 }
 
 class _ApiMatchTabContent extends StatelessWidget {
-  const _ApiMatchTabContent({required this.tab, required this.future});
+  const _ApiMatchTabContent({required this.tab, required this.future, this.matchStatus});
 
   final int tab;
   final Future<ApiEnvelope<Map<String, dynamic>>> future;
+  final String? matchStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -198,19 +223,20 @@ class _ApiMatchTabContent extends StatelessWidget {
         if (snapshot.hasError) {
           return const _MatchDataStateCard(
             icon: Icons.cloud_off_rounded,
-            text: 'This match data is temporarily unavailable. Pull to refresh.',
+            text:
+                'This match data is temporarily unavailable. Pull to refresh.',
           );
         }
         final data = snapshot.data?.data ?? const <String, dynamic>{};
         if (data.isEmpty) {
           return _MatchDataStateCard(
             icon: tab == 4 ? Icons.groups_rounded : Icons.info_outline_rounded,
-            text: _emptyText(tab),
+            text: _emptyText(tab, matchStatus),
           );
         }
         return switch (tab) {
-          0 => _ScorecardPanel(data: data),
-          1 => _CommentaryPanel(data: data),
+          0 => _ScorecardPanel(data: data, matchStatus: matchStatus),
+          1 => _CommentaryPanel(data: data, matchStatus: matchStatus),
           2 => _OversPanel(data: data),
           3 => _InfoPanel(data: data),
           _ => _SquadsPanel(data: data),
@@ -219,20 +245,31 @@ class _ApiMatchTabContent extends StatelessWidget {
     );
   }
 
-  static String _emptyText(int tab) => switch (tab) {
-        0 => 'Scorecard will be available once the match starts.',
-        1 => 'Commentary will appear here once available.',
-        2 => 'Over summaries are not available yet.',
-        3 => 'Match information is not available yet.',
-        _ => 'Squad has not been announced yet.',
-      };
-
+  static String _emptyText(int tab, String? status) {
+    final isUpcoming = status == null || 
+        status.toLowerCase() == 'upcoming' || 
+        status.toLowerCase() == 'scheduled' ||
+        status.toLowerCase() == 'not_started';
+    
+    return switch (tab) {
+      0 => isUpcoming 
+          ? 'Scorecard will be available once the match starts.'
+          : 'Scorecard is not available from the provider yet.',
+      1 => isUpcoming
+          ? 'Commentary will appear when the match starts.'
+          : 'Commentary is not available from the provider yet.',
+      2 => 'Over summaries are not available yet.',
+      3 => 'Match information is not available yet.',
+      _ => 'Squad has not been announced yet.',
+    };
+  }
 }
 
 class _ScorecardPanel extends StatefulWidget {
-  const _ScorecardPanel({required this.data});
+  const _ScorecardPanel({required this.data, this.matchStatus});
 
   final Map<String, dynamic> data;
+  final String? matchStatus;
 
   @override
   State<_ScorecardPanel> createState() => _ScorecardPanelState();
@@ -244,15 +281,32 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
   @override
   Widget build(BuildContext context) {
     final innings = apiList(widget.data['innings']);
-    if (widget.data['scorecard_available'] == false || innings.isEmpty) {
-      return const _MatchDataStateCard(
+    
+    // Check if innings data is actually empty (no batting/bowling data)
+    final hasData = innings.isNotEmpty && innings.any((inn) {
+      final inningsMap = apiMap(inn);
+      final batting = apiList(inningsMap['batting'] ?? inningsMap['batters'] ?? inningsMap['batsmen']);
+      final bowling = apiList(inningsMap['bowling'] ?? inningsMap['bowlers']);
+      return batting.isNotEmpty || bowling.isNotEmpty;
+    });
+    
+    if (!hasData) {
+      final isUpcoming = widget.matchStatus == null || 
+          widget.matchStatus!.toLowerCase() == 'upcoming' || 
+          widget.matchStatus!.toLowerCase() == 'scheduled' ||
+          widget.matchStatus!.toLowerCase() == 'not_started';
+      
+      return _MatchDataStateCard(
         icon: Icons.scoreboard_rounded,
-        text: 'Scorecard will be available once the match starts.',
+        text: isUpcoming
+            ? 'Scorecard will be available once the match starts.'
+            : 'Scorecard data is not available yet.',
       );
     }
     final safeSelected = selected.clamp(0, innings.length - 1);
     final current = apiMap(innings[safeSelected]);
-    final batting = apiList(current['batting'] ?? current['batters'] ?? current['batsmen']);
+    final batting =
+        apiList(current['batting'] ?? current['batters'] ?? current['batsmen']);
     final bowling = apiList(current['bowling'] ?? current['bowlers']);
     final c = context.cric;
 
@@ -263,7 +317,9 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
           ScrollableSegmentedTabs(
             items: [
               for (var i = 0; i < innings.length; i++)
-                str(apiMap(innings[i])['teamName'] ?? apiMap(innings[i])['batting_team'] ?? 'Inn ${i + 1}'),
+                str(apiMap(innings[i])['teamName'] ??
+                    apiMap(innings[i])['batting_team'] ??
+                    'Inn ${i + 1}'),
             ],
             selected: safeSelected,
             onChanged: (value) => setState(() => selected = value),
@@ -271,13 +327,19 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
           ),
         if (innings.length > 1) const SizedBox(height: 12),
         _SectionCard(
-          title: str(current['teamName'] ?? current['batting_team'] ?? 'Batting'),
+          title:
+              str(current['teamName'] ?? current['batting_team'] ?? 'Batting'),
           child: _StatTable(
             headers: const ['Batter', 'R', 'B', '4s', '6s', 'SR'],
             rows: [
               for (final row in batting)
                 [
-                  _playerCell(context, apiMap(row), str(apiMap(row)['name'] ?? apiMap(row)['player_name'] ?? apiMap(row)['batsman'])),
+                  _playerCell(
+                      context,
+                      apiMap(row),
+                      str(apiMap(row)['name'] ??
+                          apiMap(row)['player_name'] ??
+                          apiMap(row)['batsman'])),
                   Text(str(apiMap(row)['runs'])),
                   Text(str(apiMap(row)['balls'])),
                   Text(str(apiMap(row)['fours'])),
@@ -302,10 +364,16 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
             rows: [
               for (final row in bowling)
                 [
-                  _playerCell(context, apiMap(row), str(apiMap(row)['name'] ?? apiMap(row)['player_name'] ?? apiMap(row)['bowler'])),
+                  _playerCell(
+                      context,
+                      apiMap(row),
+                      str(apiMap(row)['name'] ??
+                          apiMap(row)['player_name'] ??
+                          apiMap(row)['bowler'])),
                   Text(str(apiMap(row)['overs'])),
                   Text(str(apiMap(row)['maidens'])),
-                  Text(str(apiMap(row)['runs'] ?? apiMap(row)['runs_conceded'])),
+                  Text(
+                      str(apiMap(row)['runs'] ?? apiMap(row)['runs_conceded'])),
                   Text(str(apiMap(row)['wickets'])),
                   Text(str(apiMap(row)['economy'])),
                 ],
@@ -316,7 +384,9 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
         if (batting.isEmpty && bowling.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
-            child: Text('Raw scorecard loaded, but no innings table was provided by the API.', style: TextStyle(color: c.muted)),
+            child: Text(
+                'Raw scorecard loaded, but no innings table was provided by the API.',
+                style: TextStyle(color: c.muted)),
           ),
       ],
     );
@@ -324,9 +394,10 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
 }
 
 class _CommentaryPanel extends StatefulWidget {
-  const _CommentaryPanel({required this.data});
+  const _CommentaryPanel({required this.data, this.matchStatus});
 
   final Map<String, dynamic> data;
+  final String? matchStatus;
 
   @override
   State<_CommentaryPanel> createState() => _CommentaryPanelState();
@@ -337,18 +408,57 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final source = apiList(widget.data['items'] ?? widget.data['commentary'] ?? widget.data['data']);
+    // Debug: Check what keys are in the data
+    if (kDebugMode) {
+      debugPrint('Commentary data keys: ${widget.data.keys.toList()}');
+      debugPrint('Commentary data type: ${widget.data.runtimeType}');
+      if (widget.data.containsKey('data')) {
+        debugPrint('data field type: ${widget.data['data'].runtimeType}');
+        if (widget.data['data'] is List) {
+          debugPrint('data is List with ${(widget.data['data'] as List).length} items');
+        }
+      }
+    }
+    
+    // Commentary API returns array directly in 'data' key
+    // API structure: { success: true, data: [...], pagination: {...} }
+    final source = apiList(widget.data['data'] ?? 
+                          widget.data['items'] ??
+                          widget.data['commentary']);
+    
+    if (kDebugMode) {
+      debugPrint('Commentary source length: ${source.length}');
+    }
+    
     final filtered = source.where((item) {
       final row = apiMap(item);
-      if (filter == 1) return truthy(row['is_wicket']) || str(row['event']).toLowerCase().contains('wicket');
-      if (filter == 2) return truthy(row['is_boundary']) || truthy(row['is_four']) || truthy(row['is_six']);
-      if (filter == 3) return truthy(row['is_wicket']) || truthy(row['is_boundary']) || str(row['runs']) == '6';
+      if (filter == 1) {
+        return truthy(row['is_wicket']) ||
+            str(row['event']).toLowerCase().contains('wicket');
+      }
+      if (filter == 2) {
+        return truthy(row['is_boundary']) ||
+            truthy(row['is_four']) ||
+            truthy(row['is_six']);
+      }
+      if (filter == 3) {
+        return truthy(row['is_wicket']) ||
+            truthy(row['is_boundary']) ||
+            str(row['runs']) == '6';
+      }
       return true;
     }).toList();
     if (source.isEmpty) {
-      return const _MatchDataStateCard(
+      final isUpcoming = widget.matchStatus == null || 
+          widget.matchStatus!.toLowerCase() == 'upcoming' || 
+          widget.matchStatus!.toLowerCase() == 'scheduled' ||
+          widget.matchStatus!.toLowerCase() == 'not_started';
+      
+      return _MatchDataStateCard(
         icon: Icons.chat_bubble_outline_rounded,
-        text: 'Commentary will appear here once available.',
+        text: isUpcoming
+            ? 'Commentary will appear when the match starts.'
+            : 'Commentary is not available from the provider yet.',
       );
     }
 
@@ -363,7 +473,9 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
         ),
         const SizedBox(height: 12),
         if (filtered.isEmpty)
-          const _MatchDataStateCard(icon: Icons.filter_alt_off_rounded, text: 'No commentary items match this filter.'),
+          const _MatchDataStateCard(
+              icon: Icons.filter_alt_off_rounded,
+              text: 'No commentary items match this filter.'),
         for (final item in filtered.take(50))
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
@@ -387,7 +499,9 @@ class _OversPanel extends StatelessWidget {
     final performance = apiList(data['latest_performance']);
     final recent = apiList(data['recent_overs']);
     if (overs.isEmpty && recent.isEmpty && performance.isEmpty) {
-      return const _MatchDataStateCard(icon: Icons.sports_cricket_rounded, text: 'Over summaries are not available yet.');
+      return const _MatchDataStateCard(
+          icon: Icons.sports_cricket_rounded,
+          text: 'Over summaries are not available yet.');
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -408,7 +522,9 @@ class _OversPanel extends StatelessWidget {
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [for (final ball in recent) _BallBubble(label: str(ball))],
+              children: [
+                for (final ball in recent) _BallBubble(label: str(ball))
+              ],
             ),
           ),
         if (recent.isNotEmpty) const SizedBox(height: 12),
@@ -437,15 +553,20 @@ class _InfoPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionCard(
-          title: '${str(team1['name'], fallback: 'Team 1')} vs ${str(team2['name'], fallback: 'Team 2')}',
+          title:
+              '${str(team1['name'], fallback: 'Team 1')} vs ${str(team2['name'], fallback: 'Team 2')}',
           child: _MiniRows(rows: {
             'Status': data['status_text'] ?? data['status'],
             'Series': data['series_name'],
             'Format': data['match_format'],
             'Type': data['match_type'],
             'Start time': data['start_time'],
-            'Venue': [venue['name'], venue['city'], venue['country']].where((v) => str(v).isNotEmpty).join(', '),
-            'Toss': toss.isEmpty ? null : '${str(toss['winner'])} chose ${str(toss['decision']).toLowerCase()}',
+            'Venue': [venue['name'], venue['city'], venue['country']]
+                .where((v) => str(v).isNotEmpty)
+                .join(', '),
+            'Toss': toss.isEmpty
+                ? null
+                : '${str(toss['winner'])} chose ${str(toss['decision']).toLowerCase()}',
             'Result': data['result'],
             'Last wicket': data['last_wicket'],
             'Recent overs': data['recent_overs'],
@@ -460,7 +581,10 @@ class _InfoPanel extends StatelessWidget {
             child: Column(
               children: [
                 for (final item in apiList(data['current_batsmen']))
-                  _PlayerLine(row: apiMap(item), subtitle: '${str(apiMap(item)['runs'])} (${str(apiMap(item)['balls'])})'),
+                  _PlayerLine(
+                      row: apiMap(item),
+                      subtitle:
+                          '${str(apiMap(item)['runs'])} (${str(apiMap(item)['balls'])})'),
               ],
             ),
           ),
@@ -496,7 +620,9 @@ class _SquadsPanelState extends State<_SquadsPanel> {
   Widget build(BuildContext context) {
     final teams = apiList(widget.data['teams']);
     if (teams.isEmpty) {
-      return const _MatchDataStateCard(icon: Icons.groups_rounded, text: 'Squad has not been announced yet.');
+      return const _MatchDataStateCard(
+          icon: Icons.groups_rounded,
+          text: 'Squad has not been announced yet.');
     }
     final safeTeam = team.clamp(0, teams.length - 1);
     final current = apiMap(teams[safeTeam]);
@@ -506,7 +632,12 @@ class _SquadsPanelState extends State<_SquadsPanel> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ScrollableSegmentedTabs(
-          items: [for (final item in teams) str(apiMap(item)['teamShort'] ?? apiMap(item)['team_short'] ?? apiMap(item)['teamName'])],
+          items: [
+            for (final item in teams)
+              str(apiMap(item)['teamShort'] ??
+                  apiMap(item)['team_short'] ??
+                  apiMap(item)['teamName'])
+          ],
           selected: safeTeam,
           onChanged: (value) => setState(() => team = value),
           height: 44,
@@ -542,7 +673,9 @@ class _SectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 17)),
+          Text(title,
+              style: TextStyle(
+                  color: c.text, fontWeight: FontWeight.w900, fontSize: 17)),
           const SizedBox(height: 12),
           child,
         ],
@@ -552,7 +685,8 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _StatTable extends StatelessWidget {
-  const _StatTable({required this.headers, required this.rows, required this.empty});
+  const _StatTable(
+      {required this.headers, required this.rows, required this.empty});
 
   final List<String> headers;
   final List<List<Widget>> rows;
@@ -565,9 +699,13 @@ class _StatTable extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
-        headingTextStyle: TextStyle(color: c.muted, fontWeight: FontWeight.w900, fontSize: 12),
-        dataTextStyle: TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 12),
-        columns: [for (final header in headers) DataColumn(label: Text(header))],
+        headingTextStyle: TextStyle(
+            color: c.muted, fontWeight: FontWeight.w900, fontSize: 12),
+        dataTextStyle:
+            TextStyle(color: c.text, fontWeight: FontWeight.w700, fontSize: 12),
+        columns: [
+          for (final header in headers) DataColumn(label: Text(header))
+        ],
         rows: [
           for (final row in rows)
             DataRow(cells: [for (final cell in row) DataCell(cell)]),
@@ -585,8 +723,11 @@ class _MiniRows extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final visible = rows.entries.where((entry) => str(entry.value).isNotEmpty).toList();
-    if (visible.isEmpty) return const _InlineEmpty(text: 'Details are not available yet.');
+    final visible =
+        rows.entries.where((entry) => str(entry.value).isNotEmpty).toList();
+    if (visible.isEmpty) {
+      return const _InlineEmpty(text: 'Details are not available yet.');
+    }
     return Column(
       children: [
         for (final entry in visible)
@@ -595,8 +736,17 @@ class _MiniRows extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(width: 108, child: Text(entry.key, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800))),
-                Expanded(child: Text(str(entry.value), style: TextStyle(color: c.text, fontWeight: FontWeight.w700, height: 1.3))),
+                SizedBox(
+                    width: 108,
+                    child: Text(entry.key,
+                        style: TextStyle(
+                            color: c.muted, fontWeight: FontWeight.w800))),
+                Expanded(
+                    child: Text(str(entry.value),
+                        style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w700,
+                            height: 1.3))),
               ],
             ),
           ),
@@ -614,11 +764,25 @@ class _CommentaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final isWicket = truthy(row['is_wicket']);
-    final isSix = truthy(row['is_six']) || str(row['event']).toLowerCase() == 'six';
-    final isFour = truthy(row['is_four']) || str(row['event']).toLowerCase() == 'four';
-    final tone = isWicket ? Colors.redAccent : (isSix ? Colors.purpleAccent : (isFour ? c.cyan : c.muted));
-    final label = isWicket ? 'Wicket' : (isSix ? 'Six' : (isFour ? 'Four' : (str(row['runs']) == '0' ? 'Dot' : '${str(row['runs'], fallback: '0')} runs')));
-    final over = str(row['over']).isEmpty ? '--' : '${str(row['over'])}.${str(row['ball'], fallback: '0')}';
+    final isSix =
+        truthy(row['is_six']) || str(row['event']).toLowerCase() == 'six';
+    final isFour =
+        truthy(row['is_four']) || str(row['event']).toLowerCase() == 'four';
+    final tone = isWicket
+        ? Colors.redAccent
+        : (isSix ? Colors.purpleAccent : (isFour ? c.cyan : c.muted));
+    final label = isWicket
+        ? 'Wicket'
+        : (isSix
+            ? 'Six'
+            : (isFour
+                ? 'Four'
+                : (str(row['runs']) == '0'
+                    ? 'Dot'
+                    : '${str(row['runs'], fallback: '0')} runs')));
+    final over = str(row['over']).isEmpty
+        ? '--'
+        : '${str(row['over'])}.${str(row['ball'], fallback: '0')}';
     return PremiumCard(
       padding: const EdgeInsets.all(14),
       borderColor: tone.withValues(alpha: 0.28),
@@ -636,12 +800,18 @@ class _CommentaryCard extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     _EventBadge(label: label, color: tone),
-                    if (str(row['batsman']).isNotEmpty) _SoftChip(text: str(row['batsman'])),
-                    if (str(row['bowler']).isNotEmpty) _SoftChip(text: str(row['bowler'])),
+                    if (str(row['batsman']).isNotEmpty)
+                      _SoftChip(text: str(row['batsman'])),
+                    if (str(row['bowler']).isNotEmpty)
+                      _SoftChip(text: str(row['bowler'])),
                   ],
                 ),
                 const SizedBox(height: 10),
-                Text(str(row['text'] ?? row['commentary']), style: TextStyle(color: c.text, height: 1.4, fontWeight: FontWeight.w700)),
+                Text(str(row['text'] ?? row['commentary']),
+                    style: TextStyle(
+                        color: c.text,
+                        height: 1.4,
+                        fontWeight: FontWeight.w700)),
               ],
             ),
           ),
@@ -660,6 +830,9 @@ class _OverCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final balls = apiList(row['balls']);
+    final overNumber = str(row['overNumber'] ?? row['over']);
+    final normalizedOver = normalizeOversText(overNumber);
+    
     return PremiumCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -667,18 +840,28 @@ class _OverCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Over ${str(row['overNumber'] ?? row['over'])}', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+              Text('Over ${normalizedOver.isEmpty ? overNumber : normalizedOver}',
+                  style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
               const Spacer(),
-              Text('${str(row['runs'], fallback: '0')} runs', style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+              Text('${str(row['runs'], fallback: '0')} runs',
+                  style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
             ],
           ),
           const SizedBox(height: 4),
-          Text('${str(row['bowlerName'] ?? row['bowler'])} | ${str(row['scoreAfter'])}', style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
+          Text(
+              '${str(row['bowlerName'] ?? row['bowler'])} | ${str(row['scoreAfter'])}',
+              style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: [for (final ball in balls) _BallBubble(label: str(apiMap(ball)['result']), wicket: truthy(apiMap(ball)['isWicket']), boundary: truthy(apiMap(ball)['isBoundary']))],
+            children: [
+              for (final ball in balls)
+                _BallBubble(
+                    label: str(apiMap(ball)['result']),
+                    wicket: truthy(apiMap(ball)['isWicket']),
+                    boundary: truthy(apiMap(ball)['isBoundary']))
+            ],
           ),
         ],
       ),
@@ -701,13 +884,16 @@ class _PerformanceChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: c.cyan.withValues(alpha: 0.25)),
       ),
-      child: Text('${str(row['label'])}: ${str(row['runs'])}/${str(row['wickets'])}', style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
+      child: Text(
+          '${str(row['label'])}: ${str(row['runs'])}/${str(row['wickets'])}',
+          style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
     );
   }
 }
 
 class _BallBubble extends StatelessWidget {
-  const _BallBubble({required this.label, this.wicket = false, this.boundary = false});
+  const _BallBubble(
+      {required this.label, this.wicket = false, this.boundary = false});
 
   final String label;
   final bool wicket;
@@ -716,7 +902,9 @@ class _BallBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final color = wicket ? Colors.redAccent : (boundary || label == '4' || label == '6' ? c.cyan : c.muted);
+    final color = wicket
+        ? Colors.redAccent
+        : (boundary || label == '4' || label == '6' ? c.cyan : c.muted);
     return Container(
       width: 34,
       height: 34,
@@ -726,7 +914,9 @@ class _BallBubble extends StatelessWidget {
         color: color.withValues(alpha: 0.14),
         border: Border.all(color: color.withValues(alpha: 0.55)),
       ),
-      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 12)),
+      child: Text(label,
+          style: TextStyle(
+              color: color, fontWeight: FontWeight.w900, fontSize: 12)),
     );
   }
 }
@@ -738,11 +928,14 @@ class _PlayerGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (players.isEmpty) return const _InlineEmpty(text: 'Players are not available yet.');
+    if (players.isEmpty) {
+      return const _InlineEmpty(text: 'Players are not available yet.');
+    }
     return Column(
       children: [
         for (final player in players)
-          _PlayerLine(row: apiMap(player), subtitle: str(apiMap(player)['role'])),
+          _PlayerLine(
+              row: apiMap(player), subtitle: str(apiMap(player)['role'])),
       ],
     );
   }
@@ -760,7 +953,10 @@ class _PlayerLine extends StatelessWidget {
     final id = str(row['playerId'] ?? row['player_id']);
     final image = str(row['imageUrl'] ?? row['image_url']);
     return InkWell(
-      onTap: id.isEmpty ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
+      onTap: id.isEmpty
+          ? null
+          : () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => PlayerDetailScreen(playerId: id))),
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -770,20 +966,33 @@ class _PlayerLine extends StatelessWidget {
               radius: 20,
               backgroundColor: c.card,
               backgroundImage: image.isEmpty ? null : NetworkImage(image),
-              child: image.isEmpty ? Icon(Icons.person_rounded, color: c.muted) : null,
+              child: image.isEmpty
+                  ? Icon(Icons.person_rounded, color: c.muted)
+                  : null,
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(str(row['name'] ?? row['player_name'], fallback: 'Player'), style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-                  if (subtitle.isNotEmpty) Text(subtitle, style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700)),
+                  Text(
+                      str(row['name'] ?? row['player_name'],
+                          fallback: 'Player'),
+                      style: TextStyle(
+                          color: c.text, fontWeight: FontWeight.w900)),
+                  if (subtitle.isNotEmpty)
+                    Text(subtitle,
+                        style: TextStyle(
+                            color: c.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700)),
                 ],
               ),
             ),
-            if (truthy(row['isCaptain']) || truthy(row['is_captain'])) const _SoftChip(text: 'C'),
-            if (truthy(row['isWicketKeeper']) || truthy(row['is_wicketkeeper'])) const _SoftChip(text: 'WK'),
+            if (truthy(row['isCaptain']) || truthy(row['is_captain']))
+              const _SoftChip(text: 'C'),
+            if (truthy(row['isWicketKeeper']) || truthy(row['is_wicketkeeper']))
+              const _SoftChip(text: 'WK'),
           ],
         ),
       ),
@@ -800,8 +1009,13 @@ class _EventBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withValues(alpha: 0.35))),
-        child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 11)),
+        decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: color.withValues(alpha: 0.35))),
+        child: Text(label,
+            style: TextStyle(
+                color: color, fontWeight: FontWeight.w900, fontSize: 11)),
       );
 }
 
@@ -815,8 +1029,11 @@ class _SoftChip extends StatelessWidget {
     final c = context.cric;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: c.card, borderRadius: BorderRadius.circular(999)),
-      child: Text(text, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800, fontSize: 11)),
+      decoration: BoxDecoration(
+          color: c.card, borderRadius: BorderRadius.circular(999)),
+      child: Text(text,
+          style: TextStyle(
+              color: c.muted, fontWeight: FontWeight.w800, fontSize: 11)),
     );
   }
 }
@@ -829,7 +1046,9 @@ class _PaginationHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Text('Page ${str(data['page'])} of ${str(data['pages'])}', textAlign: TextAlign.center, style: TextStyle(color: c.muted, fontWeight: FontWeight.w800));
+    return Text('Page ${str(data['page'])} of ${str(data['pages'])}',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: c.muted, fontWeight: FontWeight.w800));
   }
 }
 
@@ -839,15 +1058,20 @@ class _InlineEmpty extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Text(text, style: TextStyle(color: context.cric.muted, fontWeight: FontWeight.w700));
+  Widget build(BuildContext context) => Text(text,
+      style: TextStyle(color: context.cric.muted, fontWeight: FontWeight.w700));
 }
 
-Widget _playerCell(BuildContext context, Map<String, dynamic> row, String label) {
+Widget _playerCell(
+    BuildContext context, Map<String, dynamic> row, String label) {
   final id = str(row['playerId'] ?? row['player_id']);
   if (id.isEmpty) return Text(label);
   return InkWell(
-    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
-    child: Text(label, style: TextStyle(color: context.cric.cyan, fontWeight: FontWeight.w900)),
+    onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
+    child: Text(label,
+        style:
+            TextStyle(color: context.cric.cyan, fontWeight: FontWeight.w900)),
   );
 }
 
@@ -856,19 +1080,30 @@ String _scoreText(Map<String, dynamic> row) {
   final wickets = str(row['wickets'] ?? row['total_wickets']);
   final overs = str(row['overs'] ?? row['total_overs']);
   if (runs.isEmpty) return '';
-  return '$runs/$wickets${overs.isEmpty ? '' : ' ($overs ov)'}';
+  final normalizedOvers = overs.isEmpty ? '' : normalizeOversText(overs);
+  return '$runs/$wickets${normalizedOvers.isEmpty ? '' : ' ($normalizedOvers OV)'}';
 }
 
-Map<String, dynamic> apiMap(dynamic value) => value is Map<String, dynamic> ? value : <String, dynamic>{};
+Map<String, dynamic> apiMap(dynamic value) =>
+    value is Map<String, dynamic> ? value : <String, dynamic>{};
 
 String str(dynamic value, {String fallback = ''}) {
   if (value == null) return fallback;
-  if (value is List) return value.map((item) => str(item)).where((item) => item.isNotEmpty).join(', ');
+  if (value is List) {
+    return value
+        .map((item) => str(item))
+        .where((item) => item.isNotEmpty)
+        .join(', ');
+  }
   final text = value.toString().trim();
   return text.isEmpty || text == 'null' ? fallback : text;
 }
 
-bool truthy(dynamic value) => value == true || value == 1 || value == '1' || value.toString().toLowerCase() == 'true';
+bool truthy(dynamic value) =>
+    value == true ||
+    value == 1 ||
+    value == '1' ||
+    value.toString().toLowerCase() == 'true';
 
 class _MatchDataStateCard extends StatelessWidget {
   const _MatchDataStateCard({required this.icon, required this.text});
@@ -885,47 +1120,12 @@ class _MatchDataStateCard extends StatelessWidget {
         children: [
           Icon(icon, color: c.cyan),
           const SizedBox(width: 12),
-          Expanded(child: Text(text, style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
+          Expanded(
+              child: Text(text,
+                  style:
+                      TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
         ],
       ),
-    );
-  }
-}
-
-class _ApiTabStatus extends StatelessWidget {
-  const _ApiTabStatus({required this.future});
-
-  final Future<ApiEnvelope<Map<String, dynamic>>> future;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
-      future: future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const LinearProgressIndicator();
-        }
-        if (snapshot.hasError) {
-          return PremiumCard(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'This match section is temporarily unavailable. Pull to refresh.',
-              style: TextStyle(color: c.muted, fontWeight: FontWeight.w700),
-            ),
-          );
-        }
-        final meta = snapshot.data?.meta;
-        return PremiumCard(
-          padding: const EdgeInsets.all(14),
-          child: Text(
-            meta?.lastUpdated == null
-                ? 'Loaded from ${meta?.provider ?? 'WebCricHD'}'
-                : 'Loaded from ${meta?.provider ?? 'WebCricHD'} - Last updated ${meta!.lastUpdated!.toLocal()}',
-            style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w800),
-          ),
-        );
-      },
     );
   }
 }
