@@ -8,15 +8,19 @@ class HomeHeroCard extends StatelessWidget {
   const HomeHeroCard({
     super.key,
     required this.fixture,
+    this.onTap,
     this.onButtonTap,
     this.finished = false,
     this.live = false,
+    this.showButton = true,
   });
 
   final HeroFixture fixture;
+  final VoidCallback? onTap;
   final VoidCallback? onButtonTap;
   final bool finished;
   final bool live;
+  final bool showButton;
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +29,7 @@ class HomeHeroCard extends StatelessWidget {
     final narrow = w <= 400;
     final badgeSize = narrow ? 78.0 : (w <= 480 ? 90.0 : 110.0);
     final cardPad = narrow ? 14.0 : 18.0;
-    return Container(
+    final card = Container(
       padding: EdgeInsets.all(cardPad),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
@@ -97,7 +101,7 @@ class HomeHeroCard extends StatelessWidget {
               const SizedBox(height: 10),
               Center(
                 child: Text(
-                  finished ? 'India vs Australia' : fixture.date,
+                  fixture.date,
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -188,22 +192,24 @@ class HomeHeroCard extends StatelessWidget {
                   ],
                 ),
               SizedBox(height: narrow ? 16 : 20),
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 280),
-                  child: GradientButton(
-                    label: fixture.button,
-                    icon: finished
-                        ? Icons.list_alt_rounded
-                        : live
-                            ? Icons.play_circle_fill_rounded
-                            : Icons.notifications_none_rounded,
-                    outlined: finished,
-                    onTap: onButtonTap,
+              if (showButton) ...[
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: GradientButton(
+                      label: fixture.button,
+                      icon: finished
+                          ? Icons.list_alt_rounded
+                          : live
+                              ? Icons.play_circle_fill_rounded
+                              : Icons.notifications_none_rounded,
+                      outlined: finished,
+                      onTap: onButtonTap,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
+              ],
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -228,10 +234,23 @@ class HomeHeroCard extends StatelessWidget {
         ],
       ),
     );
+
+    if (onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(28),
+        child: card,
+      ),
+    );
   }
 
   Widget _heroTeamBlock(
       BuildContext context, TeamInfo team, String stat, double badgeSize) {
+    // Don't show stat if it's the same as the team code (avoids duplication)
+    final showStat = stat != team.code && stat != team.shortName;
+
     return Column(
       children: [
         TeamBadge(team, size: badgeSize),
@@ -243,14 +262,16 @@ class HomeHeroCard extends StatelessWidget {
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
                 fontSize: context.sp(16))),
-        const SizedBox(height: 4),
-        Text(stat,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: .95),
-                fontSize: context.sp(14),
-                fontWeight: FontWeight.w700)),
+        if (showStat) ...[
+          const SizedBox(height: 4),
+          Text(stat,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: .95),
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w700)),
+        ],
       ],
     );
   }

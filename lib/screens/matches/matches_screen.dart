@@ -16,6 +16,7 @@ class MatchesScreen extends StatefulWidget {
     required this.onOpenFilters,
     required this.onOpenReminders,
     required this.onOpenSeries,
+    required this.onWatchLive,
   });
 
   /// Invoked with the resolved match id (empty string allowed) when a card
@@ -25,6 +26,7 @@ class MatchesScreen extends StatefulWidget {
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
   final VoidCallback onOpenSeries;
+  final ValueChanged<String> onWatchLive;
 
   @override
   State<MatchesScreen> createState() => _MatchesScreenState();
@@ -42,7 +44,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
     _apiMatches = _loadMatches();
   }
 
-  Future<ApiEnvelope<List<CricketMatch>>> _loadMatches({bool forceRefresh = false}) =>
+  Future<ApiEnvelope<List<CricketMatch>>> _loadMatches(
+          {bool forceRefresh = false}) =>
       _repository.matchesForTab(topTab, forceRefresh: forceRefresh);
 
   void _setTopTab(int value) {
@@ -72,118 +75,172 @@ class _MatchesScreenState extends State<MatchesScreen> {
             padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
                 context.horizontalPadding, context.mainBottomPadding),
             children: [
-            AppHeader(
-              showLogo: true,
-              trailing: [
-                GlowIconButton(
-                    icon: Icons.search_rounded, onTap: widget.onOpenSearch),
-                const SizedBox(width: 8),
-                GlowIconButton(
-                    icon: Icons.filter_alt_outlined,
-                    onTap: widget.onOpenFilters),
-              ],
-            ),
-            const SizedBox(height: 22),
-            SegmentedTabs(
-              items: const [
-                ('Live', Icons.podcasts_rounded),
-                ('Upcoming', Icons.calendar_month_rounded),
-                ('Finished', Icons.check_circle_outline_rounded),
-              ],
-              selected: topTab,
-              onChanged: _setTopTab,
-            ),
-            const SizedBox(height: 18),
-            SizedBox(
-              height: 46,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemBuilder: (_, i) => PillChip(filters[i],
-                    selected: category == i,
-                    onTap: () => setState(() => category = i)),
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemCount: filters.length,
+              AppHeader(
+                showLogo: true,
+                trailing: [
+                  GlowIconButton(
+                      icon: Icons.search_rounded, onTap: widget.onOpenSearch),
+                  const SizedBox(width: 8),
+                  GlowIconButton(
+                      icon: Icons.filter_alt_outlined,
+                      onTap: widget.onOpenFilters),
+                ],
               ),
-            ),
-            const SizedBox(height: 22),
-            FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
-              future: _apiMatches,
-              builder: (context, snapshot) {
-                final apiItems = snapshot.data?.data ?? const <CricketMatch>[];
-                final useDemo = ApiConfig.allowDemoFallback && apiItems.isEmpty && snapshot.hasError;
-                final items = useDemo
-                    ? list
-                    : apiItems.map((match) => match.toCompactFixture(finished: topTab == 2)).toList();
+              const SizedBox(height: 22),
+              SegmentedTabs(
+                items: const [
+                  ('Live', Icons.podcasts_rounded),
+                  ('Upcoming', Icons.calendar_month_rounded),
+                  ('Finished', Icons.check_circle_outline_rounded),
+                ],
+                selected: topTab,
+                onChanged: _setTopTab,
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 46,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemBuilder: (_, i) => PillChip(filters[i],
+                      selected: category == i,
+                      onTap: () => setState(() => category = i)),
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemCount: filters.length,
+                ),
+              ),
+              const SizedBox(height: 22),
+              FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
+                future: _apiMatches,
+                builder: (context, snapshot) {
+                  final apiItems =
+                      snapshot.data?.data ?? const <CricketMatch>[];
+                  final useDemo = ApiConfig.allowDemoFallback &&
+                      apiItems.isEmpty &&
+                      snapshot.hasError;
+                  final items = useDemo
+                      ? list
+                      : apiItems
+                          .map((match) =>
+                              match.toCompactFixture(finished: topTab == 2))
+                          .toList();
 
-                if (snapshot.connectionState == ConnectionState.waiting && apiItems.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 26),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
+                  if (snapshot.connectionState == ConnectionState.waiting &&
+                      apiItems.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 26),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
 
-                if (snapshot.hasError && !useDemo) {
-                  return _StateCard(
-                    icon: Icons.cloud_off_rounded,
-                    title: 'Unable to load matches',
-                    message: 'Please check your connection and try again.',
-                    action: 'Retry',
-                    onAction: () => setState(() => _apiMatches = _loadMatches(forceRefresh: true)),
-                  );
-                }
+                  if (snapshot.hasError && !useDemo) {
+                    return _StateCard(
+                      icon: Icons.cloud_off_rounded,
+                      title: 'Unable to load matches',
+                      message: 'Please check your connection and try again.',
+                      action: 'Retry',
+                      onAction: () => setState(
+                          () => _apiMatches = _loadMatches(forceRefresh: true)),
+                    );
+                  }
 
-                if (items.isEmpty) {
-                  return _StateCard(
-                    icon: topTab == 0 ? Icons.sports_cricket_rounded : Icons.event_busy_rounded,
-                    title: topTab == 0 ? 'No live matches right now' : 'No matches found',
-                    message: topTab == 0
-                        ? 'Upcoming fixtures are ready when you want to look ahead.'
-                        : 'Please refresh or try a different category.',
-                    action: topTab == 0 ? 'View Upcoming' : 'Refresh',
-                    onAction: topTab == 0 ? () => _setTopTab(1) : () => setState(() => _apiMatches = _loadMatches(forceRefresh: true)),
-                  );
-                }
+                  if (items.isEmpty) {
+                    return _StateCard(
+                      icon: topTab == 0
+                          ? Icons.sports_cricket_rounded
+                          : Icons.event_busy_rounded,
+                      title: topTab == 0
+                          ? 'No live matches right now'
+                          : 'No matches found',
+                      message: topTab == 0
+                          ? 'Upcoming fixtures are ready when you want to look ahead.'
+                          : 'Please refresh or try a different category.',
+                      action: topTab == 0 ? 'View Upcoming' : 'Refresh',
+                      onAction: topTab == 0
+                          ? () => _setTopTab(1)
+                          : () => setState(() =>
+                              _apiMatches = _loadMatches(forceRefresh: true)),
+                    );
+                  }
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (useDemo)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 12),
-                        child: _DemoDataLabel(),
-                      ),
-                    if (snapshot.data?.meta.lastUpdated != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(
-                          'Last updated ${snapshot.data!.meta.lastUpdated!.toLocal()}',
-                          style: TextStyle(color: c.muted, fontSize: 12, fontWeight: FontWeight.w700),
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (useDemo)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: _DemoDataLabel(),
                         ),
-                      ),
-                    for (var i = 0; i < items.length; i++)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: Builder(builder: (_) {
-                          final matchId = (useDemo || i >= apiItems.length)
-                              ? ''
-                              : apiItems[i].id;
-                          void onTap() => widget.onOpenMatch(matchId);
-                          return topTab == 2
-                              ? FinishedMatchCard(
-                                  match: items[i], onTap: onTap)
-                              : UpcomingMatchCard(
-                                  match: items[i],
-                                  onTap: onTap,
-                                  onReminder: widget.onOpenReminders);
-                        }),
-                      ),
-                  ],
-                );
-              },
-            ),
+                      if (snapshot.data?.meta.lastUpdated != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(
+                            'Last updated ${snapshot.data!.meta.lastUpdated!.toLocal()}',
+                            style: TextStyle(
+                                color: c.muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      for (var i = 0; i < items.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 18),
+                          child: Builder(builder: (_) {
+                            final matchId = (useDemo || i >= apiItems.length)
+                                ? ''
+                                : apiItems[i].id;
+                            void onTap() => widget.onOpenMatch(matchId);
+                            return topTab == 2
+                                ? FinishedMatchCard(
+                                    match: items[i], onTap: onTap)
+                                : topTab == 0
+                                    ? _StreamAwareLiveMatchCard(
+                                        match: items[i],
+                                        matchId: matchId,
+                                        onOpenMatch: widget.onOpenMatch,
+                                        onWatchLive: widget.onWatchLive,
+                                      )
+                                    : UpcomingMatchCard(
+                                        match: items[i],
+                                        onTap: onTap,
+                                        onReminder: widget.onOpenReminders);
+                          }),
+                        ),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _StreamAwareLiveMatchCard extends StatelessWidget {
+  const _StreamAwareLiveMatchCard({
+    required this.match,
+    required this.matchId,
+    required this.onOpenMatch,
+    required this.onWatchLive,
+  });
+
+  final CompactFixture match;
+  final String matchId;
+  final ValueChanged<String> onOpenMatch;
+  final ValueChanged<String> onWatchLive;
+
+  @override
+  Widget build(BuildContext context) {
+    if (matchId.isEmpty) {
+      return UpcomingMatchCard(match: match, onTap: () => onOpenMatch(matchId));
+    }
+    return FutureBuilder<bool>(
+      future: CricketRepository().hasPlayableStreams(matchId),
+      builder: (context, snapshot) => UpcomingMatchCard(
+        match: match,
+        onTap: () => onOpenMatch(matchId),
+        onReminder: snapshot.data == true ? () => onWatchLive(matchId) : null,
       ),
     );
   }
@@ -213,11 +270,16 @@ class _StateCard extends StatelessWidget {
         children: [
           Icon(icon, color: c.cyan, size: 38),
           const SizedBox(height: 12),
-          Text(title, style: TextStyle(color: c.text, fontSize: 18, fontWeight: FontWeight.w900)),
+          Text(title,
+              style: TextStyle(
+                  color: c.text, fontSize: 18, fontWeight: FontWeight.w900)),
           const SizedBox(height: 8),
-          Text(message, textAlign: TextAlign.center, style: TextStyle(color: c.muted, height: 1.4)),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.muted, height: 1.4)),
           const SizedBox(height: 16),
-          GradientButton(label: action, icon: Icons.refresh_rounded, onTap: onAction),
+          GradientButton(
+              label: action, icon: Icons.refresh_rounded, onTap: onAction),
         ],
       ),
     );
@@ -232,7 +294,8 @@ class _DemoDataLabel extends StatelessWidget {
     final c = context.cric;
     return Text(
       'Demo data shown because the API is unavailable in this debug build.',
-      style: TextStyle(color: c.warning, fontSize: 12, fontWeight: FontWeight.w800),
+      style: TextStyle(
+          color: c.warning, fontSize: 12, fontWeight: FontWeight.w800),
     );
   }
 }

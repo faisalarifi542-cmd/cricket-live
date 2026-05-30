@@ -228,7 +228,7 @@ export async function controlledFetch({
   requiredId = false,
   force = false,
 }) {
-  const source = await getDataSource(dataType);
+  const source = await getDataSource(dataType).catch(() => null);
   const key = cacheKeyFor(dataType, targetId);
   const ttl = Number(source?.cacheTtlSeconds || DATA_SOURCES.find((d) => d.dataType === dataType)?.ttl || 300);
   const cacheEnabled = source?.cacheEnabled !== false;

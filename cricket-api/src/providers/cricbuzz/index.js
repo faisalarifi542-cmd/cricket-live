@@ -184,6 +184,18 @@ export class CricbuzzProvider extends BaseProvider {
     }
   }
 
+  async getRankings(params) {
+    try {
+      const raw = await cricbuzzApi.getRankings(params);
+      this.recordSuccess();
+      return raw;
+    } catch (err) {
+      this.recordFailure();
+      logger.error({ msg: 'Cricbuzz getRankings failed', error: err.message, params });
+      throw err;
+    }
+  }
+
   async getSeriesStatsTypes(seriesId) {
     try {
       const raw = await cricbuzzApi.getSeriesStatsTypes(seriesId);

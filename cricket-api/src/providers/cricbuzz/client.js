@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { spawnSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import logger from '../../lib/logger.js';
@@ -443,8 +444,10 @@ export const cricbuzzApi = {
       logger.warn({ msg: 'Series JSON API failed, falling back to HTML scraping', seriesId, error: jsonErr.message });
     }
 
-    // Fallback to HTML scraping if JSON API returned no match IDs
-    if (matchIds.length === 0) {
+    // Always scrape the full Cricbuzz series page as well. The JSON endpoint
+    // can return only a small global/current schedule subset, while the
+    // slugged Next/RSC page contains the complete `matchesData` payload.
+    if (seriesId) {
       try {
         const html = await request(htmlClient, `/cricket-series/${seriesId}/matches`, { responseType: 'text' });
         const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
@@ -453,22 +456,29 @@ export const cricbuzzApi = {
         }
 
         scrapedMatches = extractSeriesMatchesFromHtml(html, seriesId);
-        if (scrapedMatches.length < 10) {
-          const slug = buildSeriesSlugFromTitle(titleMatch?.[1] || seriesName);
-          if (slug) {
-            try {
-              const slugHtml = await request(htmlClient, `/cricket-series/${seriesId}/${slug}/matches`, { responseType: 'text' });
-              const slugMatches = extractSeriesMatchesFromHtml(slugHtml, seriesId);
-              if (slugMatches.length > scrapedMatches.length) scrapedMatches = slugMatches;
-            } catch (slugErr) {
-              logger.debug({ msg: 'Series slug schedule scrape failed', seriesId, slug, error: slugErr.message });
-            }
+        const slug = buildSeriesSlugFromTitle(titleMatch?.[1] || seriesName);
+        if (slug) {
+          try {
+            const slugHtml = await request(htmlClient, `/cricket-series/${seriesId}/${slug}/matches`, { responseType: 'text' });
+            const slugMatches = extractSeriesMatchesFromHtml(slugHtml, seriesId);
+            if (slugMatches.length > scrapedMatches.length) scrapedMatches = slugMatches;
+          } catch (slugErr) {
+            logger.debug({ msg: 'Series slug schedule scrape failed', seriesId, slug, error: slugErr.message });
           }
         }
         if (scrapedMatches.length > 0) {
           const embeddedSeriesName = scrapedMatches.find((m) => m.matchInfo?.seriesName)?.matchInfo?.seriesName;
           if (embeddedSeriesName) seriesName = embeddedSeriesName;
-          logger.info({ msg: 'Series embedded schedule parsed', seriesId, matches: scrapedMatches.length, seriesName });
+          logger.info({
+            msg: 'Series embedded schedule parsed',
+            seriesId,
+            matches: scrapedMatches.length,
+            jsonMatchIds: matchIds.length,
+            seriesName,
+            htmlLength: html?.length || 0,
+            containsSeriesTitle: seriesName ? html?.includes(seriesName) : false,
+            containsMatchKeyword: html?.includes('matchInfo'),
+          });
         } else {
           await saveDebugFile(`series-${seriesId}.html`, html);
         }
@@ -565,23 +575,20 @@ export const cricbuzzApi = {
   },
 
   async getPointsTable(seriesId) {
-    const html = await request(htmlClient, `/cricket-series/${seriesId}/points-table`, { responseType: 'text' });
-    
     try {
-      // Use FIXED parser for better IPL points table extraction
-      const pointsTableData = parsePointsTableFromHtml_FIXED(html, seriesId);
-      
-      // Validate: Don't return empty for IPL if data exists
-      if ((!pointsTableData.pointsTable || pointsTableData.pointsTable.length === 0) && 
-          (seriesId === '9241' || seriesId === 9241)) {
-        logger.error({ msg: 'IPL points table returned empty', seriesId, htmlLength: html?.length });
-        await saveDebugFile(`points-table-${seriesId}.html`, html);
+      const seriesInfo = await this.getSeriesInfo(seriesId).catch(() => null);
+      const seriesSlug = buildSeriesSlugFromTitle(seriesInfo?.seriesName || seriesInfo?.series_name || '');
+      const pointsTableData = fetchPointsTableInCleanProcess(seriesId, seriesSlug);
+      if (pointsTableData?.pointsTable?.some((group) => Array.isArray(group.pointsTableInfo) && group.pointsTableInfo.length > 0)) {
+        return {
+          ...pointsTableData,
+          source: 'cricbuzz',
+        };
       }
-      
       return pointsTableData;
     } catch (err) {
       logger.error({ msg: 'Failed to parse points table HTML', seriesId, error: err.message });
-      return { pointsTable: [], _error: err.message };
+      return { pointsTable: [], message: 'Points table is not available for this series yet.', source: 'cricbuzz' };
     }
   },
 
@@ -596,8 +603,25 @@ export const cricbuzzApi = {
   },
 
   // --- News APIs ---
-  async getNewsStories(cursor = '138847') {
-    return request(apiClient, `/cricket-news/${cursor}/all-stories`);
+  async getNewsStories(cursor) {
+    const path = buildNewsPath(cursor);
+    return request(apiClient, path);
+  },
+
+  async getRankings({ gender = 'men', category = 'batting', format = 'test' } = {}) {
+    const safeGender = normalizeRankingGender(gender);
+    const safeCategory = normalizeRankingCategory(category);
+    const safeFormat = normalizeRankingFormat(format);
+    const html = await request(
+      htmlClient,
+      `/cricket-stats/icc-rankings/${safeGender}/${safeCategory}`,
+      { responseType: 'text' },
+    );
+    return parseRankingsHtml(html, {
+      gender: safeGender,
+      category: safeCategory,
+      format: safeFormat,
+    });
   },
 
   async getSeriesNews(seriesId, cursor) {
@@ -622,12 +646,37 @@ export const cricbuzzApi = {
   },
 
   async getSeriesStatsTable(seriesId, statType) {
-    const data = await request(apiClient, `/cricket-series/series-stats/${seriesId}/${statType}`);
-    const statsKey = data && Object.keys(data).find((k) => k.endsWith('StatsList') || k.toLowerCase().includes('statslist'));
-    if (!statsKey || !data?.[statsKey]?.values?.length) {
-      await saveDebugFile(`stats-${seriesId}-${statType}.json`, data || {});
+    const statTypeValue = String(statType || 'mostRuns');
+    const matchFormatCandidates = [3, 2, 1];
+    let lastData = null;
+    let lastError = null;
+
+    for (const matchFormat of matchFormatCandidates) {
+      try {
+        const path = `/cricket-series/series-stats/${seriesId}?statsType=${encodeURIComponent(statTypeValue)}&seasonSeriesId=${seriesId}&matchFormat=${matchFormat}`;
+        const data = await request(apiClient, path);
+        const statsKey = data && Object.keys(data).find((k) => k.endsWith('StatsList') || k.toLowerCase().includes('statslist'));
+        const values = statsKey ? data?.[statsKey]?.values || [] : [];
+        if (values.length > 0) {
+          return data;
+        }
+        if (data) lastData = data;
+      } catch (err) {
+        lastError = err;
+      }
     }
-    return data;
+
+    if (lastData) {
+      const statsKey = Object.keys(lastData).find((k) => k.endsWith('StatsList') || k.toLowerCase().includes('statslist'));
+      const values = statsKey ? lastData?.[statsKey]?.values || [] : [];
+      if (values.length === 0) {
+        await saveDebugFile(`stats-${seriesId}-${statTypeValue}.json`, lastData || {});
+      }
+      return lastData;
+    }
+
+    if (lastError) throw lastError;
+    return {};
   },
 
   // --- Full Commentary ---
@@ -740,9 +789,8 @@ export const cricbuzzApi = {
   // --- Series Teams (from series matches JSON) ---
   async getSeriesTeams(seriesId) {
     try {
-      // Get series matches and extract teams
       const seriesData = await this.getSeriesInfo(seriesId);
-      return seriesData;
+      return normalizeSeriesTeamsFromSeriesData(seriesData, seriesId);
     } catch (err) {
       logger.warn({ msg: 'Failed to fetch series teams', seriesId, error: err.message });
       return { teams: [] };
@@ -755,6 +803,326 @@ function decodeNextPayloadText(html = '') {
     .replace(/\\"/g, '"')
     .replace(/\\u0026/g, '&')
     .replace(/\\\//g, '/');
+}
+
+function buildNewsPath(cursor) {
+  const fallback = '/cricket-news/138966/latest-news';
+  if (!cursor) return fallback;
+  const raw = String(cursor).trim();
+  if (!raw) return fallback;
+
+  if (raw.startsWith('/api/cricket-news/')) {
+    return raw.replace(/^\/api/, '');
+  }
+  if (raw.startsWith('/cricket-news/')) return raw;
+
+  const urlMatch = raw.match(/\/api\/cricket-news\/(\d+)\/([a-z-]+)/i);
+  if (urlMatch) return `/cricket-news/${urlMatch[1]}/${urlMatch[2]}`;
+
+  const idMatch = raw.match(/\d+/);
+  return idMatch ? `/cricket-news/${idMatch[0]}/latest-news` : fallback;
+}
+
+function normalizeRankingGender(value) {
+  const text = String(value || 'men').toLowerCase();
+  return text === 'women' ? 'women' : 'men';
+}
+
+function normalizeRankingCategory(value) {
+  const text = String(value || 'batting').toLowerCase().replace(/[_\s]/g, '-');
+  if (['bowling', 'bowlers', 'bowler'].includes(text)) return 'bowling';
+  if (['all-rounder', 'allrounder', 'all-rounders', 'allrounders'].includes(text)) return 'all-rounder';
+  if (['teams', 'team'].includes(text)) return 'teams';
+  return 'batting';
+}
+
+function normalizeRankingFormat(value) {
+  const text = String(value || 'test').toLowerCase();
+  if (text === 'odi' || text === 'odis') return 'odi';
+  if (text === 't20' || text === 't20i' || text === 't20s') return 't20';
+  return 'test';
+}
+
+function rankingImageUrl(row = {}) {
+  const id = row.faceImageId || row.face_image_id || row.imageId || row.image_id;
+  if (!id) return '';
+  const normalized = String(id).startsWith('c') ? String(id).slice(1) : String(id);
+  if (!/^\d+$/.test(normalized)) return '';
+  return `https://static.cricbuzz.com/a/img/v1/i1/c${normalized}/i.jpg`;
+}
+
+function safeRankingInt(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '$undefined' || text === 'undefined' || text === 'null') return 0;
+  const match = text.match(/-?\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function safeRankingText(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '$undefined' || text === 'undefined' || text === 'null') return '';
+  return text;
+}
+
+function rankingMovement(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text || text === 'flat' || text === 'same') return 0;
+  const match = text.match(/-?\d+/);
+  const amount = match ? Number(match[0]) : 0;
+  if (text.includes('down') || text.includes('fall')) return amount ? -Math.abs(amount) : -1;
+  if (text.includes('up') || text.includes('rise')) return amount || 1;
+  return 0;
+}
+
+function extractRankingsData(html = '') {
+  const marker = '\\"categoryType\\"';
+  const categoryIndex = html.indexOf(marker);
+  const dataMarker = '\\"data\\":';
+  const start = html.lastIndexOf(dataMarker, categoryIndex >= 0 ? categoryIndex : html.length);
+  if (start < 0) return null;
+
+  const bodyStart = start + dataMarker.length;
+  let depth = 0;
+  let end = -1;
+  for (let i = bodyStart; i < html.length; i += 1) {
+    const ch = html[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
+
+  const escaped = html.slice(start, end);
+  const jsonText = `{${decodeNextPayloadText(escaped)}}`;
+  return JSON.parse(jsonText).data;
+}
+
+function parseRankingsHtml(html, { gender, category, format }) {
+  const pageData = extractRankingsData(html);
+  const formatData = pageData?.formatTypesData || {};
+  const selected = formatData[format] || formatData[pageData?.initialFormatType] || Object.values(formatData)[0] || {};
+  const rows = Array.isArray(selected.rank) ? selected.rank : [];
+  const isTeam = category === 'teams';
+
+  return {
+    gender,
+    category: isTeam ? 'teams' : pageData?.categoryType || category,
+    format: selected.formatType || format,
+    availableFormats: Object.keys(formatData),
+    rows: rows.map((row, index) => {
+      const common = {
+        rank: safeRankingInt(row.rank) || index + 1,
+        movement: rankingMovement(row.trend ?? row.movement),
+        country: safeRankingText(row.country || row.countryCode),
+        rating: safeRankingInt(row.rating),
+        points: safeRankingInt(row.points),
+        matches: safeRankingInt(row.matches),
+        imageId: (() => {
+          const id = row.faceImageId || row.face_image_id || row.imageId || row.image_id;
+          return id && String(id) !== '$undefined' && String(id) !== 'undefined' ? String(id) : null;
+        })(),
+        imageUrl: rankingImageUrl(row),
+        category: isTeam ? 'teams' : category,
+        format,
+        gender,
+      };
+      if (isTeam) {
+        return {
+          ...common,
+          teamId: String(row.id || ''),
+          teamName: row.name || '',
+        };
+      }
+      return {
+        ...common,
+        playerId: String(row.id || ''),
+        playerName: row.name || '',
+      };
+    }),
+    source: 'cricbuzz',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeSeriesTeamsFromSeriesData(raw, seriesId) {
+  const teamMap = new Map();
+  const addTeam = (team) => {
+    if (!team) return;
+    const teamId = String(team.teamId || team.id || team.team_id || team.teamId || '').trim();
+    const teamName = String(team.teamName || team.name || team.team_name || '').trim();
+    const teamShort = String(team.shortName || team.teamSName || team.teamShort || team.teamShortName || team.short_name || '').trim();
+    const imageId = String(team.imageId || team.image_id || '').trim();
+    const logoUrl = String(team.logoUrl || team.logo_url || '').trim();
+    const normalizedName = teamName.toLowerCase();
+    if (!teamName || ['tbc', 'tbd', 'unknown', 'n/a'].includes(normalizedName)) return;
+    const key = teamId || normalizedName || teamShort.toLowerCase();
+    if (!key || teamMap.has(key)) return;
+    teamMap.set(key, {
+      team_id: teamId,
+      team_name: teamName,
+      team_short: teamShort,
+      logo_url: logoUrl || (imageId ? `https://static.cricbuzz.com/a/img/v1/i1/c${imageId}/i.jpg` : ''),
+      image_id: imageId,
+      players: Array.isArray(team.players) ? team.players : Array.isArray(team.squad) ? team.squad : [],
+      matches_played: Number(team.matchesPlayed || team.matches_played || team.played || 0) || 0,
+      wins: Number(team.matchesWon || team.wins || team.won || 0) || 0,
+      losses: Number(team.matchesLost || team.losses || team.lost || 0) || 0,
+    });
+  };
+
+  if (raw?.teams && Array.isArray(raw.teams)) {
+    raw.teams.forEach(addTeam);
+  }
+
+  const matches = [];
+  if (Array.isArray(raw?.matches)) matches.push(...raw.matches);
+  if (Array.isArray(raw?.matchList)) matches.push(...raw.matchList);
+  if (Array.isArray(raw?.typeMatches)) {
+    for (const group of raw.typeMatches) {
+      const seriesMatches = group?.seriesMatches || group?.matchList || group?.matches || [];
+      for (const seriesGroup of Array.isArray(seriesMatches) ? seriesMatches : [seriesMatches]) {
+        const wrapper = seriesGroup?.seriesAdWrapper || seriesGroup;
+        if (Array.isArray(wrapper?.matches)) matches.push(...wrapper.matches);
+      }
+    }
+  }
+
+  for (const match of matches) {
+    const matchData = match?.matchInfo || match?.match || match;
+    addTeam(matchData?.team1);
+    addTeam(matchData?.team2);
+  }
+
+  return {
+    series_id: String(seriesId),
+    teams: Array.from(teamMap.values()),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function fetchPointsTableInCleanProcess(seriesId, seriesSlug) {
+  const url = `https://www.cricbuzz.com/cricket-series/${seriesId}/${seriesSlug || ''}/points-table`.replace(/\/+points-table$/, '/points-table');
+  const script = String.raw`
+const https = require('node:https');
+function decodeNextPayloadText(html = '') {
+  return String(html)
+    .replace(/\\\"/g, '"')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\\\\//g, '/');
+}
+function extractJsonObjectAt(text, startIndex) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(startIndex, i + 1);
+    }
+  }
+  return null;
+}
+https.get(${JSON.stringify(url)}, {
+  headers: {
+    'User-Agent': ${JSON.stringify(BROWSER_HEADERS['User-Agent'])},
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.cricbuzz.com/',
+  },
+}, (res) => {
+  let data = '';
+  res.setEncoding('utf8');
+  res.on('data', (chunk) => { data += chunk; });
+  res.on('end', () => {
+    const text = decodeNextPayloadText(data);
+    const key = '"pointsTableData":';
+    const keyIndex = text.indexOf(key);
+    if (keyIndex === -1) {
+      console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
+      return;
+    }
+    const objectText = extractJsonObjectAt(text, text.indexOf('{', keyIndex));
+    if (!objectText) {
+      console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
+      return;
+    }
+    try {
+      const parsed = JSON.parse(objectText);
+      console.log(JSON.stringify(parsed));
+    } catch (jsonErr) {
+      try {
+        const parsed = new Function('return (' + objectText + ');')();
+        console.log(JSON.stringify(parsed));
+      } catch (evalErr) {
+        console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
+      }
+    }
+  });
+}).on('error', (err) => {
+  console.error(err.message);
+  process.exit(1);
+});
+`;
+  const result = spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error((result.stderr || result.stdout || 'Failed to fetch points table').trim());
+  }
+  const output = String(result.stdout || '').trim();
+  if (!output) {
+    throw new Error('Empty points table payload from clean process');
+  }
+  return JSON.parse(output);
+}
+
+function extractEmbeddedNextObject(html, key) {
+  const text = decodeNextPayloadText(html);
+  const needle = `"${key}":`;
+  const keyIndex = text.indexOf(needle);
+  if (keyIndex === -1) return null;
+
+  const startIndex = text.indexOf('{', keyIndex);
+  if (startIndex === -1) return null;
+
+  const objectText = extractJsonObjectAt(text, startIndex);
+  if (!objectText) return null;
+
+  try {
+    return JSON.parse(objectText);
+  } catch (err) {
+    try {
+      return new Function(`return (${objectText});`)();
+    } catch (evalErr) {
+      logger.debug({
+        msg: 'Failed to parse embedded Next payload object',
+        key,
+        error: evalErr.message,
+      });
+      return null;
+    }
+  }
 }
 
 function extractJsonObjectAt(text, startIndex) {
@@ -830,10 +1198,22 @@ function extractSeriesMatchesFromHtml(html, seriesId) {
 }
 
 function buildSeriesSlugFromTitle(title = '') {
-  const primary = String(title).split('|')[1] || String(title).split('|')[0] || '';
-  return primary
+  const rawTitle = String(title || '').trim();
+  if (!rawTitle) return '';
+
+  const beforeSite = rawTitle.split('| Cricbuzz')[0].trim() || rawTitle;
+  const beforeSchedule = beforeSite.replace(/\s+schedule[\s\S]*$/i, '').trim();
+  const parts = beforeSchedule
+    .split('|')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidate = parts.length ? parts[parts.length - 1] : beforeSchedule;
+
+  return candidate
     .toLowerCase()
-    .replace(/cricbuzz\.com|schedule|live scores|scorecards|points table|videos|statistics|results/g, '')
+    .replace(/cricbuzz\.com/g, '')
+    .replace(/\b(schedule|live scores|scorecards?|points table|videos?|statistics?|results?)\b/g, '')
+    .replace(/\band\b/g, ' ')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
@@ -2363,16 +2743,29 @@ function parseMatchSquadsFromHtml_FIXED(html, matchId) {
 // FIXED: Parse points table from Cricbuzz HTML
 function parsePointsTableFromHtml_FIXED(html, seriesId) {
   logger.info({ msg: '[FIXED] Parsing points table HTML', seriesId, htmlLength: html?.length || 0 });
-  
+  const embedded = extractEmbeddedNextObject(html, 'pointsTableData');
+  if (embedded) {
+    logger.info({
+      msg: '[FIXED] Parsed embedded points table payload',
+      seriesId,
+      seriesName: embedded.seriesName || '',
+      groups: Array.isArray(embedded.pointsTable) ? embedded.pointsTable.length : 0,
+    });
+    return {
+      ...embedded,
+      source: 'cricbuzz',
+    };
+  }
+
   const pointsTableInfo = [];
   let tableHtml = null;
-  
+
   // Strategy 1: Look for cb-srs-pnts-tble class
   const tableMatch = html.match(/<table[^>]*class="[^"]*cb-srs-pnts-tble[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
   if (tableMatch) {
     tableHtml = tableMatch[0];
   }
-  
+
   // Strategy 2: Look for any table with points-related headers
   if (!tableHtml) {
     const allTables = html.match(/<table[^>]*>[\s\S]*?<\/table>/gi) || [];
@@ -2383,7 +2776,7 @@ function parsePointsTableFromHtml_FIXED(html, seriesId) {
       }
     }
   }
-  
+
   // Strategy 3: Div-based points table
   if (!tableHtml) {
     const divTableMatch = html.match(/<div[^>]*class="[^"]*cb-srs-pnts[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
@@ -2392,16 +2785,16 @@ function parsePointsTableFromHtml_FIXED(html, seriesId) {
       const rowPattern = /<div[^>]*class="[^"]*cb-srs-pnts-dgt-wdg[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
       let rowMatch;
       let position = 1;
-      
+
       while ((rowMatch = rowPattern.exec(divHtml)) !== null) {
         const rowHtml = rowMatch[1];
         const teamMatch = rowHtml.match(/<a[^>]*>([\s\S]*?)<\/a>/i);
         const teamName = teamMatch ? teamMatch[1].replace(/<[^>]+>/g, '').trim() : '';
         const numbers = rowHtml.match(/>(\d+)</g);
-        
+
         if (teamName && numbers && numbers.length >= 5) {
-          const values = numbers.map(n => parseInt(n.replace(/[><]/g, '')));
-          
+          const values = numbers.map((n) => parseInt(n.replace(/[><]/g, ''), 10));
+
           pointsTableInfo.push({
             rank: position++,
             team_id: '',
@@ -2421,74 +2814,74 @@ function parsePointsTableFromHtml_FIXED(html, seriesId) {
       }
     }
   }
-  
+
   // Parse table rows
   if (tableHtml && pointsTableInfo.length === 0) {
     const tbodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
     const tbody = tbodyMatch ? tbodyMatch[1] : tableHtml;
-    
+
     const rowPattern = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let rowMatch;
     let position = 1;
-    
+
     while ((rowMatch = rowPattern.exec(tbody)) !== null) {
       const rowHtml = rowMatch[1];
-      
+
       // Stop at Opposition section
       if (rowHtml.includes('Opposition') || rowHtml.includes('Description') || rowHtml.includes('Date')) {
         break;
       }
-      
+
       const cellPattern = /<td[^>]*>([\s\S]*?)<\/td>/gi;
       const cells = [];
       let cellMatch;
-      
+
       while ((cellMatch = cellPattern.exec(rowHtml)) !== null) {
-        let cellText = cellMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const cellText = cellMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         cells.push(cellText);
       }
-      
+
       if (cells.length >= 7) {
-        const rank = parseInt(cells[0]) || position;
+        const rank = parseInt(cells[0], 10) || position;
         const teamName = cells[1];
-        
+
         if (teamName && teamName.length > 1 && !teamName.match(/^\d+$/)) {
           const qualified = cells[1].includes('Q') ? 'Q' : (cells[1].includes('E') ? 'E' : '');
-          
+
           pointsTableInfo.push({
-            rank: rank,
+            rank,
             team_id: '',
             team_name: teamName.replace(/\s+Q\s*$/, '').replace(/\s+E\s*$/, '').trim(),
             team_short: generateShortName(teamName),
-            played: parseInt(cells[2]) || 0,
-            won: parseInt(cells[3]) || 0,
-            lost: parseInt(cells[4]) || 0,
-            tied: parseInt(cells[5]) || 0,
-            no_result: parseInt(cells[6]) || 0,
-            points: parseInt(cells[7]) || 0,
+            played: parseInt(cells[2], 10) || 0,
+            won: parseInt(cells[3], 10) || 0,
+            lost: parseInt(cells[4], 10) || 0,
+            tied: parseInt(cells[5], 10) || 0,
+            no_result: parseInt(cells[6], 10) || 0,
+            points: parseInt(cells[7], 10) || 0,
             nrr: parseFloat(cells[8]) || 0,
-            qualified: qualified,
+            qualified,
             logo_url: ''
           });
-          
+
           position++;
         }
       }
     }
   }
-  
-  // Validate for IPL
-  if ((seriesId === '9241' || seriesId === 9241) && pointsTableInfo.length < 8) {
-    logger.error({ 
-      msg: '[FIXED] IPL points table has too few teams', 
-      seriesId, 
-      count: pointsTableInfo.length,
-      teams: pointsTableInfo.map(t => t.team_name)
-    });
-    return { pointsTable: [], _error: `Only found ${pointsTableInfo.length} teams, expected 10 for IPL` };
-  }
-  
-  logger.info({ msg: '[FIXED] Parsed points table', seriesId, teams: pointsTableInfo.length });
-  
-  return { pointsTable: pointsTableInfo };
+
+  logger.info({
+    msg: '[FIXED] Parsed points table',
+    seriesId,
+    teams: pointsTableInfo.length,
+  });
+
+  return {
+    seriesId: String(seriesId),
+    pointsTable: [{
+      groupName: 'Points Table',
+      pointsTableInfo,
+    }],
+    source: 'cricbuzz',
+  };
 }

@@ -292,6 +292,7 @@ export default async function adminPanelRoutes(fastify) {
       success: true,
       data: {
         matchId: request.params.id,
+        hasStreams: rows.length > 0,
         streams: rows.map((s) => ({
           id: String(s.id),
           quality: s.quality,

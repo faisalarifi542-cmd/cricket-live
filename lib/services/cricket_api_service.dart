@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../core/api/api_client.dart';
 import '../models/api_response.dart';
 import '../models/cricket_match.dart';
@@ -7,55 +9,119 @@ class CricketApiService {
 
   final ApiClient _client;
 
-  Future<ApiEnvelope<List<CricketMatch>>> liveMatches() => _matchList('/matches/live');
+  Future<ApiEnvelope<List<CricketMatch>>> liveMatches() =>
+      _matchList('/matches/live');
 
-  Future<ApiEnvelope<List<CricketMatch>>> upcomingMatches() => _matchList('/matches/upcoming');
+  Future<ApiEnvelope<List<CricketMatch>>> upcomingMatches() =>
+      _matchList('/matches/upcoming');
 
-  Future<ApiEnvelope<List<CricketMatch>>> recentMatches() => _matchList('/matches/recent');
+  Future<ApiEnvelope<List<CricketMatch>>> recentMatches() =>
+      _matchList('/matches/recent');
 
   Future<ApiEnvelope<Map<String, dynamic>>> appConfig() => _map('/app-config');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> homeConfig() => _map('/home-config');
+  Future<ApiEnvelope<Map<String, dynamic>>> homeConfig() =>
+      _map('/home-config');
 
   Future<ApiEnvelope<Map<String, dynamic>>> appHome() => _map('/app/home');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchDetail(String matchId) => _map('/match/$matchId');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchDetail(String matchId) =>
+      _map('/match/$matchId');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchLiveLine(String matchId) => _map('/match/$matchId/live-line');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchLiveLine(String matchId) =>
+      _map('/match/$matchId/live-line');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchScorecard(String matchId) => _map('/match/$matchId/scorecard');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchScorecard(String matchId) =>
+      _map('/match/$matchId/scorecard');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId, {int page = 1, int limit = 50}) =>
-      _map('/match/$matchId/commentary', query: {'page': page, 'limit': limit});
+  Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId,
+      {int page = 1, int limit = 50}) async {
+    final json = await _client.get(
+      '/match/$matchId/commentary',
+      query: {'page': page, 'limit': limit},
+    );
+    return ApiEnvelope.fromJson(json, (value) {
+      return <String, dynamic>{
+        'data': value is List ? value : _asList(value),
+        'pagination': json['pagination'],
+      };
+    });
+  }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId) => _map('/match/$matchId/overs');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId) =>
+      _map('/match/$matchId/overs');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchSquads(String matchId) => _map('/match/$matchId/squads');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchSquads(String matchId) =>
+      _map('/match/$matchId/squads');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> matchStreams(String matchId) => _map('/match/$matchId/streams');
+  Future<ApiEnvelope<Map<String, dynamic>>> matchStreams(String matchId) =>
+      _map('/match/$matchId/streams');
 
   Future<ApiEnvelope<List<dynamic>>> series() => _list('/series');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> seriesDetail(String seriesId) => _map('/series/$seriesId');
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesDetail(
+      String seriesId) async {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId');
+    }
+    final json = await _client.get('/series/$seriesId');
+    return ApiEnvelope.fromJson(json, (value) {
+      if (value is Map<String, dynamic>) return value;
+      return <String, dynamic>{
+        'seriesId': json['seriesId'],
+        'seriesName': json['seriesName'],
+        'matches': json['matches'],
+        'totalFetched': json['totalFetched'],
+        'totalFiltered': json['totalFiltered'],
+      };
+    });
+  }
 
-  Future<ApiEnvelope<List<dynamic>>> seriesMatches(String seriesId, {String? status}) =>
-      _list('/series/$seriesId/matches', query: {'status': status});
+  Future<ApiEnvelope<List<dynamic>>> seriesMatches(String seriesId,
+      {String? status}) {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId/matches');
+    }
+    return _list('/series/$seriesId/matches', query: {'status': status});
+  }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> pointsTable(String seriesId) => _map('/points-table/$seriesId');
+  Future<ApiEnvelope<Map<String, dynamic>>> pointsTable(String seriesId) {
+    if (kDebugMode) {
+      debugPrint('API GET /points-table/$seriesId');
+    }
+    return _map('/points-table/$seriesId', allowFailure: true);
+  }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> seriesStats(String seriesId) => _map('/series/$seriesId/stats');
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesStats(String seriesId) {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId/stats');
+    }
+    return _map('/series/$seriesId/stats', allowFailure: true);
+  }
 
-  Future<ApiEnvelope<List<dynamic>>> seriesSchedule(String seriesId) => _list('/series/$seriesId/schedule');
+  Future<ApiEnvelope<List<dynamic>>> seriesSchedule(String seriesId) {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId/schedule');
+    }
+    return _list('/series/$seriesId/schedule');
+  }
 
-  Future<ApiEnvelope<List<dynamic>>> seriesTeams(String seriesId) => _list('/series/$seriesId/teams');
+  Future<ApiEnvelope<List<dynamic>>> seriesTeams(String seriesId) {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId/teams');
+    }
+    return _list('/series/$seriesId/teams');
+  }
 
-  Future<ApiEnvelope<List<dynamic>>> schedule({String type = 'upcoming'}) => _list('/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}');
+  Future<ApiEnvelope<List<dynamic>>> schedule({String type = 'upcoming'}) =>
+      _list('/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}');
 
   /// Returns schedule grouped by day. Each day exposes its label and the list
   /// of matches that begin on that day. The webcrichd schedule endpoint
   /// returns `{ data: { days: [{ date, series: [{ matches: [...] }] }] } }`,
   /// so the helper flattens that structure for the UI layer.
-  Future<ApiEnvelope<List<Map<String, dynamic>>>> scheduleDays({String type = 'upcoming'}) async {
+  Future<ApiEnvelope<List<Map<String, dynamic>>>> scheduleDays(
+      {String type = 'upcoming'}) async {
     final path = '/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}';
     final json = await _client.get(path);
     return ApiEnvelope.fromJson(json, (value) {
@@ -73,27 +139,53 @@ class CricketApiService {
     });
   }
 
-  Future<ApiEnvelope<List<dynamic>>> news({int limit = 20}) => _list('/news', query: {'limit': limit});
+  Future<ApiEnvelope<List<dynamic>>> news({int limit = 20}) =>
+      _list('/news', query: {'limit': limit});
 
-  Future<ApiEnvelope<Map<String, dynamic>>> newsDetail(String newsId) => _map('/news/$newsId');
+  Future<ApiEnvelope<Map<String, dynamic>>> newsDetail(String newsId) =>
+      _map('/news/$newsId');
 
-  Future<ApiEnvelope<Map<String, dynamic>>> player(String playerId) => _map('/player/$playerId');
+  Future<ApiEnvelope<List<dynamic>>> rankings({
+    String gender = 'men',
+    String category = 'batting',
+    String format = 'test',
+  }) =>
+      _list('/rankings', query: {
+        'gender': gender,
+        'category': category,
+        'format': format,
+      });
 
-  Future<ApiEnvelope<Map<String, dynamic>>> team(String teamId) => _map('/team/$teamId');
+  Future<ApiEnvelope<Map<String, dynamic>>> player(String playerId) =>
+      _map('/player/$playerId');
+
+  Future<ApiEnvelope<Map<String, dynamic>>> team(String teamId) =>
+      _map('/team/$teamId');
 
   Future<ApiEnvelope<List<CricketMatch>>> _matchList(String path) async {
     final json = await _client.get(path);
-    return ApiEnvelope.fromJson(json, (value) => _asList(value).map(CricketMatch.fromJson).toList());
+    return ApiEnvelope.fromJson(
+        json, (value) => _asList(value).map(CricketMatch.fromJson).toList());
   }
 
-  Future<ApiEnvelope<List<dynamic>>> _list(String path, {Map<String, dynamic>? query}) async {
+  Future<ApiEnvelope<List<dynamic>>> _list(String path,
+      {Map<String, dynamic>? query}) async {
     final json = await _client.get(path, query: query);
-    return ApiEnvelope.fromJson(json, _asList);
+    return ApiEnvelope.fromJson(json, (value) => _asList(value ?? json));
   }
 
-  Future<ApiEnvelope<Map<String, dynamic>>> _map(String path, {Map<String, dynamic>? query}) async {
-    final json = await _client.get(path, query: query);
-    return ApiEnvelope.fromJson(json, (value) => value is Map<String, dynamic> ? value : <String, dynamic>{});
+  Future<ApiEnvelope<Map<String, dynamic>>> _map(String path,
+      {Map<String, dynamic>? query, bool allowFailure = false}) async {
+    final json =
+        await _client.get(path, query: query, allowFailure: allowFailure);
+    return ApiEnvelope.fromJson(json, (value) {
+      if (value is Map<String, dynamic>) return value;
+      final fallback = Map<String, dynamic>.from(json)
+        ..remove('success')
+        ..remove('meta')
+        ..remove('error');
+      return fallback;
+    });
   }
 
   /// Recursively unwrap the response payload into a flat `List<dynamic>` of
@@ -114,7 +206,18 @@ class CricketApiService {
         }
         return flat;
       }
-      for (final key in const ['matches', 'items', 'news', 'data', 'results']) {
+      for (final key in const [
+        'matches',
+        'teams',
+        'rows',
+        'groups',
+        'items',
+        'stories',
+        'paginatedData',
+        'news',
+        'data',
+        'results'
+      ]) {
         final nested = value[key];
         if (nested is List) return nested;
       }
@@ -122,7 +225,8 @@ class CricketApiService {
     return const [];
   }
 
-  static List<Map<String, dynamic>> _flattenSeriesMatches(Map<String, dynamic> day) {
+  static List<Map<String, dynamic>> _flattenSeriesMatches(
+      Map<String, dynamic> day) {
     final out = <Map<String, dynamic>>[];
     final series = day['series'];
     if (series is! List) return out;
@@ -136,9 +240,16 @@ class CricketApiService {
         // everything it needs.
         out.add(<String, dynamic>{
           ...raw,
-          'series_name': raw['series_name'] ?? raw['seriesName'] ?? entry['seriesName'] ?? entry['series_name'],
-          'series_id': raw['series_id'] ?? raw['seriesId'] ?? entry['seriesId'] ?? entry['series_id'],
-          'match_type': raw['match_type'] ?? raw['matchType'] ?? entry['category'],
+          'series_name': raw['series_name'] ??
+              raw['seriesName'] ??
+              entry['seriesName'] ??
+              entry['series_name'],
+          'series_id': raw['series_id'] ??
+              raw['seriesId'] ??
+              entry['seriesId'] ??
+              entry['series_id'],
+          'match_type':
+              raw['match_type'] ?? raw['matchType'] ?? entry['category'],
           // Schedule entries don't carry an explicit status — every match
           // returned by `/schedule/upcoming` is upcoming.
           'status': raw['status'] ?? 'upcoming',

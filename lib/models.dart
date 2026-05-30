@@ -197,6 +197,13 @@ class StatLine {
   final IconData icon;
 }
 
+// ⚠️ WARNING: This class contains MOCK/DEMO data for UI development only.
+// DO NOT use AppData in production code paths.
+// Production UI must use real API data from CricketRepository.
+// This data is only for:
+// - UI component previews/storybook
+// - Debug/demo mode with kDebugMode guards
+// - Unit tests
 class AppData {
   static const india = TeamInfo(
     code: 'IND',

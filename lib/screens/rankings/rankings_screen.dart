@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+
 import '../../app_theme.dart';
+import '../../components.dart';
+import '../../models/api_models.dart';
+import '../../models/api_response.dart';
+import '../../repositories/cricket_repository.dart';
 
 class RankingsScreen extends StatefulWidget {
   const RankingsScreen({super.key});
@@ -9,180 +14,230 @@ class RankingsScreen extends StatefulWidget {
 }
 
 class _RankingsScreenState extends State<RankingsScreen> {
-  String category = 'BATSMEN';
-  String format = 'TEST';
+  final CricketRepository _repository = CricketRepository();
+  String gender = 'men';
+  String category = 'batting';
+  String format = 'test';
+  late Future<ApiEnvelope<List<RankingEntry>>> _rankings;
 
-  final categories = ['BATSMEN', 'BOWLERS', 'ALL-ROUNDERS', 'TEAMS'];
-  final formats = ['TEST', 'ODI', 'T20'];
+  final categories = const [
+    _FilterOption('Batsmen', 'batting', Icons.person_outline_rounded),
+    _FilterOption('Bowlers', 'bowling', Icons.sports_baseball_rounded),
+    _FilterOption('All-rounders', 'allrounder', Icons.auto_awesome_rounded),
+    _FilterOption('Teams', 'teams', Icons.groups_rounded),
+  ];
+  final formats = const [
+    _FilterOption('Test', 'test', Icons.sports_cricket_rounded),
+    _FilterOption('ODI', 'odi', Icons.sports_cricket_rounded),
+    _FilterOption('T20', 't20', Icons.sports_cricket_rounded),
+  ];
 
-  List<RankingPlayerData> get players {
-    // Premium ranking data based on category and format
-    if (category == 'BATSMEN' && format == 'TEST') {
-      return [
-        RankingPlayerData(1, 'Joe Root', '🏴 England',
-            'assets/images/player_joe_root.png', 908, 0),
-        RankingPlayerData(2, 'Harry Brook', '🏴 England',
-            'assets/images/player_harry_brook.png', 868, 1),
-        RankingPlayerData(3, 'Kane Williamson', '🇳🇿 New Zealand',
-            'assets/images/player_kane_williamson.png', 850, -1),
-        RankingPlayerData(4, 'Steven Smith', '🇦🇺 Australia',
-            'assets/images/player_steven_smith.png', 816, 0),
-        RankingPlayerData(5, 'Yashasvi Jaiswal', '🇮🇳 India',
-            'assets/images/player_yashasvi_jaiswal.png', 791, 2),
-        RankingPlayerData(6, 'Kamindu Mendis', '🇱🇰 Sri Lanka',
-            'assets/images/player_kamindu_mendis.png', 781, 1),
-      ];
-    }
-    // Default fallback
-    return [
-      RankingPlayerData(1, 'Rohit Sharma', '🇮🇳 India',
-          'assets/images/player_rohit_sharma.png', 781, 0),
-      RankingPlayerData(2, 'Ibrahim Zadran', '🇦🇫 Afghanistan',
-          'assets/images/player_ibrahim_zadran.png', 774, 1),
-      RankingPlayerData(3, 'Daryl Mitchell', '🇳🇿 New Zealand',
-          'assets/images/player_daryl_mitchell.png', 746, -1),
-    ];
+  @override
+  void initState() {
+    super.initState();
+    _rankings = _load();
+  }
+
+  Future<ApiEnvelope<List<RankingEntry>>> _load({bool forceRefresh = false}) {
+    return _repository.rankings(
+      gender: gender,
+      category: category,
+      format: format,
+      forceRefresh: forceRefresh,
+    );
+  }
+
+  void _reload({bool forceRefresh = false}) {
+    setState(() => _rankings = _load(forceRefresh: forceRefresh));
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final currentCategory = categories.firstWhere((x) => x.value == category);
+    final currentFormat = formats.firstWhere((x) => x.value == format);
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),
         child: SafeArea(
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(
-              context.horizontalPadding,
-              18,
-              context.horizontalPadding,
-              context.detailBottomPadding,
-            ),
-            children: [
-              // Header
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon:
-                        Icon(Icons.arrow_back_rounded, color: c.text, size: 28),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'ICC Men\'s Ranking',
-                      style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: context.sp(28),
+          child: RefreshIndicator(
+            onRefresh: () async => _reload(forceRefresh: true),
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(
+                context.horizontalPadding,
+                18,
+                context.horizontalPadding,
+                context.detailBottomPadding,
+              ),
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(Icons.arrow_back_rounded,
+                          color: c.text, size: 28),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'ICC ${gender == 'women' ? 'Women' : 'Men'}\'s Ranking',
+                        style: TextStyle(
+                          color: c.text,
+                          fontWeight: FontWeight.w900,
+                          fontSize: context.sp(28),
+                        ),
                       ),
                     ),
-                  ),
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: c.card.withValues(alpha: .5),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: c.border),
+                    GlowIconButton(
+                      icon: Icons.tune_rounded,
+                      onTap: _showGenderPicker,
                     ),
-                    child: Icon(Icons.tune_rounded, color: c.cyan, size: 24),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Dropdown Pills Row
-              Row(
-                children: [
-                  Expanded(
-                    child: _DropdownPill(
-                      icon: Icons.person_outline_rounded,
-                      label: category,
-                      onTap: () => _showCategoryPicker(),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _DropdownPill(
-                      icon: Icons.sports_cricket_rounded,
-                      label: format,
-                      onTap: () => _showFormatPicker(),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Ranking Cards
-              for (final player in players)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: _PremiumRankingCard(player: player),
+                  ],
                 ),
-            ],
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DropdownPill(
+                        icon: currentCategory.icon,
+                        label: currentCategory.label.toUpperCase(),
+                        onTap: () => _showPicker(categories, category, (value) {
+                          category = value;
+                          _reload();
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _DropdownPill(
+                        icon: currentFormat.icon,
+                        label: currentFormat.label.toUpperCase(),
+                        onTap: () => _showPicker(formats, format, (value) {
+                          format = value;
+                          _reload();
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                FutureBuilder<ApiEnvelope<List<RankingEntry>>>(
+                  future: _rankings,
+                  builder: (context, snapshot) {
+                    final rows = snapshot.data?.data ?? const <RankingEntry>[];
+                    if (snapshot.connectionState == ConnectionState.waiting &&
+                        rows.isEmpty) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 42),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    if (snapshot.hasError) {
+                      return _RankingStateCard(
+                        title: 'Unable to load rankings',
+                        onRetry: () => _reload(forceRefresh: true),
+                      );
+                    }
+                    if (rows.isEmpty) {
+                      return _RankingStateCard(
+                        title: 'Rankings are not available yet',
+                        onRetry: () => _reload(forceRefresh: true),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        for (final row in rows)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: _PremiumRankingCard(entry: row),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  void _showCategoryPicker() {
+  void _showPicker(
+    List<_FilterOption> options,
+    String selected,
+    ValueChanged<String> onSelected,
+  ) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: context.cric.card,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final cat in categories)
-              ListTile(
-                title: Text(cat, style: TextStyle(color: context.cric.text)),
-                trailing: category == cat
-                    ? Icon(Icons.check, color: context.cric.cyan)
-                    : null,
-                onTap: () {
-                  setState(() => category = cat);
-                  Navigator.pop(context);
-                },
-              ),
-          ],
-        ),
+      builder: (context) => _PickerSheet(
+        options: options,
+        selected: selected,
+        onSelected: onSelected,
       ),
     );
   }
 
-  void _showFormatPicker() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: context.cric.card,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final fmt in formats)
-              ListTile(
-                title: Text(fmt, style: TextStyle(color: context.cric.text)),
-                trailing: format == fmt
-                    ? Icon(Icons.check, color: context.cric.cyan)
-                    : null,
-                onTap: () {
-                  setState(() => format = fmt);
-                  Navigator.pop(context);
-                },
-              ),
-          ],
-        ),
+  void _showGenderPicker() {
+    _showPicker(
+      const [
+        _FilterOption('Men', 'men', Icons.male_rounded),
+        _FilterOption('Women', 'women', Icons.female_rounded),
+      ],
+      gender,
+      (value) {
+        gender = value;
+        _reload();
+      },
+    );
+  }
+}
+
+class _FilterOption {
+  const _FilterOption(this.label, this.value, this.icon);
+  final String label;
+  final String value;
+  final IconData icon;
+}
+
+class _PickerSheet extends StatelessWidget {
+  const _PickerSheet({
+    required this.options,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<_FilterOption> options;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.cric.card,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final option in options)
+            ListTile(
+              leading: Icon(option.icon, color: context.cric.cyan),
+              title: Text(option.label,
+                  style: TextStyle(
+                      color: context.cric.text, fontWeight: FontWeight.w800)),
+              trailing: selected == option.value
+                  ? Icon(Icons.check, color: context.cric.cyan)
+                  : null,
+              onTap: () {
+                onSelected(option.value);
+                Navigator.pop(context);
+              },
+            ),
+        ],
       ),
     );
   }
@@ -207,7 +262,7 @@ class _DropdownPill extends StatelessWidget {
       borderRadius: BorderRadius.circular(28),
       child: Container(
         height: 64,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 18),
         decoration: BoxDecoration(
           color: c.card.withValues(alpha: .7),
           borderRadius: BorderRadius.circular(28),
@@ -225,16 +280,18 @@ class _DropdownPill extends StatelessWidget {
               ),
               child: Icon(icon, color: c.cyan, size: 20),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Text(
                 label,
                 style: TextStyle(
                   color: c.text,
                   fontWeight: FontWeight.w800,
-                  fontSize: 16,
+                  fontSize: 15,
                 ),
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
             Icon(Icons.keyboard_arrow_down_rounded, color: c.muted, size: 24),
@@ -246,14 +303,14 @@ class _DropdownPill extends StatelessWidget {
 }
 
 class _PremiumRankingCard extends StatelessWidget {
-  const _PremiumRankingCard({required this.player});
+  const _PremiumRankingCard({required this.entry});
 
-  final RankingPlayerData player;
+  final RankingEntry entry;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final isFirst = player.rank == 1;
+    final isFirst = entry.rank == 1;
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -280,7 +337,6 @@ class _PremiumRankingCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Rank with crown for #1
           SizedBox(
             width: 50,
             child: Column(
@@ -289,7 +345,7 @@ class _PremiumRankingCard extends StatelessWidget {
                   Icon(Icons.emoji_events_rounded, color: c.cyan, size: 28),
                 if (isFirst) const SizedBox(height: 4),
                 Text(
-                  '${player.rank}',
+                  '${entry.rank}',
                   style: TextStyle(
                     color: isFirst ? c.cyan : c.text,
                     fontWeight: FontWeight.w900,
@@ -300,14 +356,12 @@ class _PremiumRankingCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-
-          // Player Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  player.name,
+                  entry.name,
                   style: TextStyle(
                     color: c.text,
                     fontWeight: FontWeight.w800,
@@ -315,46 +369,35 @@ class _PremiumRankingCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  player.country,
-                  style: TextStyle(
-                    color: c.muted,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                if (entry.country.isNotEmpty)
+                  Text(
+                    entry.country,
+                    style: TextStyle(
+                      color: c.muted,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 8),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
                   children: [
-                    Text(
-                      '${player.rating}',
-                      style: TextStyle(
-                        color: c.cyan,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'RATING',
-                      style: TextStyle(
-                        color: c.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                    _Metric(label: 'RATING', value: '${entry.rating}'),
+                    if (entry.points != null)
+                      _Metric(label: 'PTS', value: '${entry.points}'),
+                    if (entry.matches != null)
+                      _Metric(label: 'MAT', value: '${entry.matches}'),
                   ],
                 ),
               ],
             ),
           ),
-
-          // Movement indicator
-          if (player.movement != 0)
+          if (entry.movement != 0)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: player.movement > 0
+                color: entry.movement > 0
                     ? Colors.green.withValues(alpha: .15)
                     : Colors.red.withValues(alpha: .15),
                 borderRadius: BorderRadius.circular(12),
@@ -363,17 +406,17 @@ class _PremiumRankingCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    player.movement > 0
+                    entry.movement > 0
                         ? Icons.arrow_upward_rounded
                         : Icons.arrow_downward_rounded,
-                    color: player.movement > 0 ? Colors.green : Colors.red,
+                    color: entry.movement > 0 ? Colors.green : Colors.red,
                     size: 16,
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    '${player.movement.abs()}',
+                    '${entry.movement.abs()}',
                     style: TextStyle(
-                      color: player.movement > 0 ? Colors.green : Colors.red,
+                      color: entry.movement > 0 ? Colors.green : Colors.red,
                       fontWeight: FontWeight.w800,
                       fontSize: 14,
                     ),
@@ -382,52 +425,118 @@ class _PremiumRankingCard extends StatelessWidget {
               ),
             ),
           const SizedBox(width: 12),
-
-          // Player Image
-          Container(
-            width: 80,
-            height: 80,
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: c.border, width: 1.5),
-              color: c.card2,
-            ),
-            child: Image.asset(
-              player.asset,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Center(
-                child: Text(
-                  player.name.substring(0, 1),
-                  style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 32,
-                  ),
-                ),
-              ),
-            ),
-          ),
+          _RankingImage(entry: entry),
         ],
       ),
     );
   }
 }
 
-class RankingPlayerData {
-  final int rank;
-  final String name;
-  final String country;
-  final String asset;
-  final int rating;
-  final int movement; // positive = up, negative = down, 0 = no change
+class _Metric extends StatelessWidget {
+  const _Metric({required this.label, required this.value});
 
-  RankingPlayerData(
-    this.rank,
-    this.name,
-    this.country,
-    this.asset,
-    this.rating,
-    this.movement,
-  );
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: context.cric.cyan,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: context.cric.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
+}
+
+class _RankingImage extends StatelessWidget {
+  const _RankingImage({required this.entry});
+
+  final RankingEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final image = entry.imageUrl;
+    return Container(
+      width: 80,
+      height: 80,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.border, width: 1.5),
+        color: c.card2,
+      ),
+      child: image == null || image.isEmpty
+          ? _Initial(entry.name)
+          : Image.network(
+              image,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _Initial(entry.name),
+            ),
+    );
+  }
+}
+
+class _Initial extends StatelessWidget {
+  const _Initial(this.name);
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    return Center(
+      child: Text(
+        initial,
+        style: TextStyle(
+          color: context.cric.text,
+          fontWeight: FontWeight.w900,
+          fontSize: 32,
+        ),
+      ),
+    );
+  }
+}
+
+class _RankingStateCard extends StatelessWidget {
+  const _RankingStateCard({required this.title, required this.onRetry});
+
+  final String title;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return PremiumCard(
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        children: [
+          Icon(Icons.leaderboard_rounded, color: c.cyan, size: 38),
+          const SizedBox(height: 12),
+          Text(title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(height: 16),
+          GradientButton(
+              label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),
+        ],
+      ),
+    );
+  }
 }

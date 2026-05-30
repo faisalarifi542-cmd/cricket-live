@@ -35,6 +35,7 @@ import adminPanelRoutes from './admin/index.js';
 import newsRoutes from './routes/news.js';
 import scheduleRoutes from './routes/schedule.js';
 import appRoutes from './routes/app.js';
+import rankingsRoutes from './routes/rankings.js';
 
 async function buildServer() {
   const fastify = Fastify({
@@ -193,6 +194,7 @@ async function buildServer() {
   await fastify.register(newsRoutes);
   await fastify.register(scheduleRoutes);
   await fastify.register(appRoutes);
+  await fastify.register(rankingsRoutes);
 
   // Keep the old username/password admin API away from the new admin panel.
   // The Next.js admin panel posts email/password to /admin/login.

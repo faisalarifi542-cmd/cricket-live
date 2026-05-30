@@ -1,4 +1,11 @@
 import 'package:flutter/material.dart';
+// ⚠️ WARNING: MOCK DATA FILE
+// This file contains demo/sample match data for UI development ONLY.
+// DO NOT use MockMatches in production code paths.
+// Production UI must fetch real matches from CricketRepository.
+//
+// If you see "India vs Australia" or "NZ vs WI" in the running app, it's a BUG.
+
 import '../models.dart';
 
 class MockMatches {

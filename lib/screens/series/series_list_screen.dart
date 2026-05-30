@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
 import '../../repositories/cricket_repository.dart';
+import 'series_detail_screen.dart';
 
 class SeriesListScreen extends StatefulWidget {
   const SeriesListScreen({super.key, required this.onOpenSeries});
@@ -66,16 +68,16 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                       return _SeriesStateCard(
                         title: 'Unable to load series',
                         message: 'Please check your connection and try again.',
-                        onRetry: () => setState(() =>
-                            _series = _repository.seriesList(forceRefresh: true)),
+                        onRetry: () => setState(() => _series =
+                            _repository.seriesList(forceRefresh: true)),
                       );
                     }
                     if (items.isEmpty) {
                       return _SeriesStateCard(
                         title: 'No series available',
                         message: 'Series will appear here when available.',
-                        onRetry: () => setState(() =>
-                            _series = _repository.seriesList(forceRefresh: true)),
+                        onRetry: () => setState(() => _series =
+                            _repository.seriesList(forceRefresh: true)),
                       );
                     }
                     return Column(
@@ -85,7 +87,21 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                             padding: const EdgeInsets.only(bottom: 12),
                             child: _SeriesCard(
                               series: item,
-                              onTap: () => widget.onOpenSeries(item.id),
+                              onTap: () {
+                                if (kDebugMode) {
+                                  debugPrint(
+                                      'SERIES_TAP id=${item.id} name=${item.name} raw=${item.id}/${item.name}');
+                                }
+                                Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (_) => SeriesDetailScreen(
+                                    seriesId: item.id,
+                                    initialSeries: item,
+                                    onOpenReminders: () {},
+                                    onOpenCalendar: () {},
+                                    onOpenPlayer: () {},
+                                  ),
+                                ));
+                              },
                             ),
                           ),
                       ],
@@ -135,7 +151,8 @@ class _SeriesCard extends StatelessWidget {
                   color: c.cyan.withValues(alpha: 0.13),
                   border: Border.all(color: c.cyan.withValues(alpha: 0.28)),
                 ),
-                child: Icon(Icons.emoji_events_outlined, color: c.cyan, size: 26),
+                child:
+                    Icon(Icons.emoji_events_outlined, color: c.cyan, size: 26),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -143,7 +160,11 @@ class _SeriesCard extends StatelessWidget {
                   series.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 17, height: 1.15),
+                  style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 17,
+                      height: 1.15),
                 ),
               ),
               Icon(Icons.chevron_right_rounded, color: c.muted),
@@ -155,9 +176,12 @@ class _SeriesCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               _SeriesChip(text: series.status),
-              if (series.format?.isNotEmpty == true) _SeriesChip(text: series.format!),
-              if (series.country?.isNotEmpty == true) _SeriesChip(text: series.country!),
-              if (series.matchCount != null) _SeriesChip(text: '${series.matchCount} matches'),
+              if (series.format?.isNotEmpty == true)
+                _SeriesChip(text: series.format!),
+              if (series.country?.isNotEmpty == true)
+                _SeriesChip(text: series.country!),
+              if (series.matchCount != null)
+                _SeriesChip(text: '${series.matchCount} matches'),
             ],
           ),
           if (dateRange.isNotEmpty) ...[
@@ -166,7 +190,10 @@ class _SeriesCard extends StatelessWidget {
               children: [
                 Icon(Icons.calendar_month_rounded, color: c.muted, size: 16),
                 const SizedBox(width: 8),
-                Expanded(child: Text(dateRange, style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
+                Expanded(
+                    child: Text(dateRange,
+                        style: TextStyle(
+                            color: c.muted, fontWeight: FontWeight.w700))),
               ],
             ),
           ],
@@ -191,7 +218,9 @@ class _SeriesChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: c.cyan.withValues(alpha: 0.24)),
       ),
-      child: Text(text, style: TextStyle(color: c.cyan, fontSize: 11, fontWeight: FontWeight.w900)),
+      child: Text(text,
+          style: TextStyle(
+              color: c.cyan, fontSize: 11, fontWeight: FontWeight.w900)),
     );
   }
 }

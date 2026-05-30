@@ -5,22 +5,51 @@ import logger from '../lib/logger.js';
 
 export default async function seriesRoutes(fastify) {
   function normalizePointsTableResponse(seriesId, raw, seriesName = '') {
-    const rows = Array.isArray(raw?.groups)
-      ? raw.groups.flatMap((g) => (g.teams || []).map((t) => ({ ...t, groupName: g.groupName || '' })))
-      : Array.isArray(raw)
-        ? raw
+    const groups = Array.isArray(raw?.groups)
+      ? raw.groups
+      : Array.isArray(raw?.pointsTable)
+        ? raw.pointsTable.map((group) => ({
+            name: group.groupName || group.name || 'Points Table',
+            rows: Array.isArray(group.rows)
+              ? group.rows
+              : Array.isArray(group.pointsTableInfo)
+                ? group.pointsTableInfo
+                : Array.isArray(group.teams)
+                  ? group.teams
+                  : [],
+          }))
         : [];
+
+    const rows = groups.flatMap((group) => {
+      const entries = Array.isArray(group.rows)
+        ? group.rows
+        : Array.isArray(group.teams)
+          ? group.teams
+          : Array.isArray(group.pointsTableInfo)
+            ? group.pointsTableInfo
+            : [];
+
+      return entries.map((team, index) => ({
+        ...team,
+        groupName: group.name || group.groupName || '',
+        rank: team.rank || team.position || index + 1,
+        teamId: String(team.teamId || team.team_id || ''),
+        teamName: team.teamName || team.team_name || '',
+        teamShortName: team.teamShortName || team.teamShort || team.team_short || '',
+        logoUrl: team.logoUrl || team.logo_url || '',
+      }));
+    });
 
     const teams = rows.map((team, index) => ({
       position: team.position || team.rank || index + 1,
       teamId: String(team.teamId || team.team_id || ''),
       teamName: team.teamName || team.team_name || '',
-      teamShort: team.teamShort || team.team_short || '',
-      played: team.played || 0,
-      won: team.won || 0,
-      lost: team.lost || 0,
-      tied: team.tied || 0,
-      noResult: team.noResult ?? team.no_result ?? 0,
+      teamShort: team.teamShort || team.teamShortName || team.team_short || '',
+      played: team.played || team.matches || team.matchesPlayed || 0,
+      won: team.won || team.matchesWon || 0,
+      lost: team.lost || team.matchesLost || 0,
+      tied: team.tied || team.matchesTied || 0,
+      noResult: team.noResult ?? team.no_result ?? team.noRes ?? 0,
       nrr: Number(team.nrr || 0),
       points: Number(team.points || 0),
       qualified: team.qualified || false,
@@ -30,7 +59,9 @@ export default async function seriesRoutes(fastify) {
     return {
       seriesId: String(seriesId),
       seriesName,
-      groups: teams.length ? [{ groupName: rows[0]?.groupName || '', teams }] : [],
+      groups: teams.length ? [{ name: rows[0]?.groupName || 'Points Table', rows: teams }] : [],
+      rows: teams,
+      source: raw?.source || 'cricbuzz',
       updatedAt: new Date().toISOString(),
     };
   }
@@ -147,13 +178,24 @@ export default async function seriesRoutes(fastify) {
     return { table, fromCache: false, sourcePath: `/api/cricket-series/series-stats/${seriesId}/${providerType}` };
   }
 
-  function emptyStatsFailure(seriesId, type, sourcePath, table) {
+  function emptyStatsResponse(seriesId, type, sourcePath, table) {
+    const emptyTable = {
+      header: type || 'grouped',
+      category: '',
+      type: type || 'grouped',
+      rows: [],
+      players: [],
+      headers: [],
+      filters: null,
+    };
     return {
-      success: false,
+      success: true,
       seriesId: String(seriesId),
       ...(type ? { type } : {}),
-      data: null,
-      message: 'Series stats source returned no rows',
+      data: type ? emptyTable : { batting: emptyTable, bowling: emptyTable, items: [] },
+      count: 0,
+      counts: { batting: 0, bowling: 0 },
+      message: 'Series stats are not available for this series yet.',
       debug: {
         type: type || 'grouped',
         sourcePath,
@@ -164,28 +206,42 @@ export default async function seriesRoutes(fastify) {
   }
 
   async function fetchPointsTable(seriesId) {
-    const hasUsableRows = (value) => {
-      const rows = Array.isArray(value?.groups)
-        ? value.groups.flatMap((g) => g.teams || [])
-        : Array.isArray(value)
-          ? value
-          : [];
-      return rows.some((team) => {
-        const name = team.teamName || team.team_name || '';
-        const played = Number(team.played || 0);
-        const won = Number(team.won || 0);
-        const lost = Number(team.lost || 0);
-        const points = Number(team.points || 0);
-        return name && name !== 'Team' && (played || won || lost || points);
-      });
+    const extractRows = (value) => {
+      if (Array.isArray(value?.groups)) {
+        return value.groups.flatMap((group) => Array.isArray(group.rows)
+          ? group.rows
+          : Array.isArray(group.teams)
+            ? group.teams
+            : Array.isArray(group.pointsTableInfo)
+              ? group.pointsTableInfo
+              : []);
+      }
+      if (Array.isArray(value?.rows)) return value.rows;
+      if (Array.isArray(value?.pointsTable)) {
+        return value.pointsTable.flatMap((group) => Array.isArray(group.pointsTableInfo)
+          ? group.pointsTableInfo
+          : Array.isArray(group.rows)
+            ? group.rows
+            : []);
+      }
+      return Array.isArray(value) ? value : [];
     };
+
+    const hasUsableRows = (value) => extractRows(value).some((team) => {
+      const name = team.teamName || team.team_name || team.teamFullName || '';
+      const played = Number(team.played || team.matches || team.matchesPlayed || 0);
+      const won = Number(team.won || team.matchesWon || 0);
+      const lost = Number(team.lost || team.matchesLost || 0);
+      const points = Number(team.points || 0);
+      return name && name !== 'Team' && (played || won || lost || points);
+    });
     let data = await cacheGet(KEYS.pointsTable(seriesId));
     const cachedHasRows = hasUsableRows(data);
     let fromCache = !!cachedHasRows;
 
     if (!cachedHasRows) {
       const result = await providerManager.execute('getPointsTable', seriesId);
-      data = result?.data || [];
+      data = result?.data || result || [];
       const hasRows = hasUsableRows(data);
       if (hasRows) await cacheSet(KEYS.pointsTable(seriesId), data, TTL.POINTS_TABLE);
       fromCache = false;
@@ -319,20 +375,6 @@ export default async function seriesRoutes(fastify) {
       const response = normalizePointsTableResponse(seriesId, data);
       
       reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
-      if (!response.groups.length) {
-        return {
-          success: false,
-          seriesId,
-          data: null,
-          fromCache,
-          message: 'Points table source not found',
-          debug: {
-            reason: data?._error || 'No team rows parsed from Cricbuzz points table source',
-            teamsCount: 0,
-          },
-        };
-      }
-      
       return {
         success: true,
         seriesId,
@@ -340,7 +382,7 @@ export default async function seriesRoutes(fastify) {
         ...response,
         fromCache,
         message: response.groups.length === 0
-          ? 'Points table not available for this series'
+          ? (data?.message || 'Points table is not available for this series yet.')
           : null,
       };
     } catch (err) {
@@ -369,25 +411,12 @@ export default async function seriesRoutes(fastify) {
       const series = await fetchSeriesMatches(id).catch(() => ({ seriesName: '' }));
       const response = normalizePointsTableResponse(id, data, series.seriesName);
       reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
-      if (!response.groups.length) {
-        return {
-          success: false,
-          seriesId: id,
-          data: null,
-          fromCache,
-          message: 'Points table source not found',
-          debug: {
-            reason: data?._error || 'No team rows parsed from Cricbuzz points table source',
-            teamsCount: 0,
-          },
-        };
-      }
       return {
         success: true,
         ...response,
         data: response,
         fromCache,
-        message: response.groups.length === 0 ? 'Points table not available for this series' : null,
+        message: response.groups.length === 0 ? (data?.message || 'Points table is not available for this series yet.') : null,
       };
     } catch (err) {
       logger.error({ msg: 'Points table fetch failed', seriesId: id, error: err.message });
@@ -431,7 +460,7 @@ export default async function seriesRoutes(fastify) {
 
       if (!batting.rows.length && !bowling.rows.length) {
         reply.header('X-Cache', 'MISS');
-        return emptyStatsFailure(
+        return emptyStatsResponse(
           id,
           null,
           `${battingResult.sourcePath}, ${bowlingResult.sourcePath}`,
@@ -443,7 +472,7 @@ export default async function seriesRoutes(fastify) {
       return {
         success: true,
         seriesId: id,
-        data: { batting, bowling },
+        data: { batting, bowling, items: [...batting.rows, ...bowling.rows] },
         counts: {
           batting: batting.rows.length,
           bowling: bowling.rows.length,
@@ -503,14 +532,14 @@ export default async function seriesRoutes(fastify) {
       const data = toStatsRows(table, providerType);
       reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
       if (!data.rows.length) {
-        return emptyStatsFailure(id, toAppStatsType(providerType), sourcePath, table);
+        return emptyStatsResponse(id, toAppStatsType(providerType), sourcePath, table);
       }
       return {
         success: true,
         seriesId: id,
         type: toAppStatsType(providerType),
         providerType,
-        data,
+        data: { ...data, items: data.rows },
         count: data.rows.length,
         message: null,
       };

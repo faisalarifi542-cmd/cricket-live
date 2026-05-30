@@ -25,11 +25,9 @@ class FeaturedNewsCard extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(
-              child: Image.asset(
-                article.asset ?? 'assets/images/stadium_live.png',
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    const EmptyOrErrorImage(label: 'Featured'),
+              child: _NewsImage(
+                source: article.asset,
+                fallbackLabel: 'Featured',
               ),
             ),
             Positioned.fill(
@@ -148,12 +146,7 @@ class NewsListCard extends StatelessWidget {
             child: SizedBox(
               width: compact ? 94 : 132,
               height: compact ? 76 : 108,
-              child: Image.asset(
-                article.asset ?? 'assets/images/stadium_live.png',
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    const EmptyOrErrorImage(label: 'News'),
-              ),
+              child: _NewsImage(source: article.asset, fallbackLabel: 'News'),
             ),
           ),
           const SizedBox(width: 14),
@@ -197,6 +190,34 @@ class NewsListCard extends StatelessWidget {
           Icon(Icons.chevron_right_rounded, color: c.muted),
         ],
       ),
+    );
+  }
+}
+
+class _NewsImage extends StatelessWidget {
+  const _NewsImage({required this.source, required this.fallbackLabel});
+
+  final String? source;
+  final String fallbackLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final src = source?.trim() ?? '';
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return Image.network(
+        src,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const EmptyOrErrorImage(label: 'Loading');
+        },
+        errorBuilder: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
+      );
+    }
+    return Image.asset(
+      src.isEmpty ? 'assets/images/stadium_live.png' : src,
+      fit: BoxFit.cover,
+      errorBuilder: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
     );
   }
 }

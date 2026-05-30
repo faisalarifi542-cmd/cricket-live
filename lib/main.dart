@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'components.dart';
+import 'models.dart';
 import 'sheets.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/matches/matches_screen.dart';
@@ -139,7 +140,8 @@ class _RootShellState extends State<RootShell> {
 
   void _openReminders() => showReminderSheet(context);
 
-  void _openArticle() => _push(const NewsDetailScreen());
+  void _openArticle(NewsArticle article) =>
+      _push(NewsDetailScreen(article: article));
 
   void _openHighlights() => _push(HighlightsScreen(
         onOpenVideo: _openHighlightDetail,
@@ -168,6 +170,7 @@ class _RootShellState extends State<RootShell> {
           onOpenFilters: _openFilters,
           onOpenReminders: _openReminders,
           onOpenSeries: _openSeries,
+          onWatchLive: (id) => _openLivePlayer(matchId: id),
         ),
       AppTab.schedule => ScheduleScreen(
           onOpenSeries: _openSeries,

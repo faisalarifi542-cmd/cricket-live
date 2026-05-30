@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'models.dart';
+import 'models/api_models.dart';
 import 'widgets/responsive.dart';
 
 export 'widgets/responsive.dart'
@@ -286,6 +287,11 @@ class TeamBadge extends StatelessWidget {
               ? Image.network(
                   team.asset!,
                   fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return _teamLoading(context);
+                  },
                   errorBuilder: (_, __, ___) => _teamFallback(context),
                 )
               : Image.asset(
@@ -297,11 +303,37 @@ class TeamBadge extends StatelessWidget {
     );
   }
 
-  Widget _teamFallback(BuildContext context) {
+  Widget _teamLoading(BuildContext context) {
+    final c = context.cric;
     return Center(
-      child: Text(
-        team.emoji ?? team.code,
-        style: TextStyle(fontSize: size * .46),
+      child: SizedBox(
+        width: size * .32,
+        height: size * .32,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.2,
+          valueColor: AlwaysStoppedAnimation<Color>(c.cyan),
+        ),
+      ),
+    );
+  }
+
+  Widget _teamFallback(BuildContext context) {
+    final initials = safeTeamInitials(team.code);
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Padding(
+          padding: EdgeInsets.all(size * 0.15),
+          child: Text(
+            team.emoji ?? initials,
+            style: TextStyle(
+              fontSize: size * .42,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
       ),
     );
   }

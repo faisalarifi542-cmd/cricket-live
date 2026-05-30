@@ -16,30 +16,32 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient}) : _httpClient = httpClient ?? http.Client();
+  ApiClient({http.Client? httpClient})
+      : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
 
   Future<Map<String, dynamic>> get(
     String path, {
     Map<String, dynamic>? query,
+    bool allowFailure = false,
   }) async {
     late final http.Response response;
     try {
-      response = await _httpClient
-          .get(
-            ApiConfig.uri(path, query),
-            headers: const {
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+      response = await _httpClient.get(
+        ApiConfig.uri(path, query),
+        headers: const {
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
     } on TimeoutException {
-      throw const ApiClientException('The cricket data service is taking too long to respond.');
+      throw const ApiClientException(
+          'The cricket data service is taking too long to respond.');
     } on http.ClientException catch (error) {
       throw ApiClientException(error.message);
     } catch (_) {
-      throw const ApiClientException('Unable to connect to the cricket data service.');
+      throw const ApiClientException(
+          'Unable to connect to the cricket data service.');
     }
 
     final contentType = response.headers['content-type'] ?? '';
@@ -67,7 +69,7 @@ class ApiClient {
     }
 
     final success = decoded['success'] != false;
-    if (response.statusCode >= 400 || !success) {
+    if (response.statusCode >= 400 || (!success && !allowFailure)) {
       throw ApiClientException(
         decoded['error']?.toString() ?? 'Unable to load cricket data.',
         statusCode: response.statusCode,

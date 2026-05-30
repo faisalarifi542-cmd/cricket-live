@@ -114,20 +114,31 @@ class UpcomingMatchCard extends StatelessWidget {
             children: [
               StatusBadge(label: match.status, color: c.muted),
               const Spacer(),
-              InkWell(
-                onTap: onReminder,
-                child: Row(
-                  children: [
-                    Icon(Icons.notifications_none_rounded, color: c.cyan),
-                    const SizedBox(width: 8),
-                    Text(match.action,
-                        style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16)),
-                  ],
-                ),
-              )
+              if (onReminder != null)
+                InkWell(
+                  onTap: onReminder,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                    child: Row(
+                      children: [
+                        Icon(
+                          match.action.toLowerCase().contains('watch')
+                              ? Icons.play_circle_fill_rounded
+                              : Icons.notifications_none_rounded,
+                          color: c.cyan,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(match.action,
+                            style: TextStyle(
+                                color: c.cyan,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16)),
+                      ],
+                    ),
+                  ),
+                )
             ],
           )
         ],
@@ -243,8 +254,7 @@ class FinishedMatchCard extends StatelessWidget {
                 outlined: true,
                 height: 44,
               );
-              final hasPlayer =
-                  (match.playerOfMatch ?? '').isNotEmpty;
+              final hasPlayer = (match.playerOfMatch ?? '').isNotEmpty;
               if (!hasPlayer) {
                 // No POTM data — just show the action button so the card
                 // stays compact instead of advertising an empty section.

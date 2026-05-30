@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../models.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
 import '../../repositories/cricket_repository.dart';
@@ -64,16 +65,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     if (snapshot.hasError) {
                       return _TeamStateCard(
                         text: 'Unable to load team profile. Pull to retry.',
-                        onRetry: () => setState(() => _team =
-                            _repository.team(widget.teamId, forceRefresh: true)),
+                        onRetry: () => setState(() => _team = _repository
+                            .team(widget.teamId, forceRefresh: true)),
                       );
                     }
                     final team = snapshot.data?.data;
                     if (team == null || team.id.isEmpty) {
                       return _TeamStateCard(
                         text: 'Team profile is not available yet.',
-                        onRetry: () => setState(() => _team =
-                            _repository.team(widget.teamId, forceRefresh: true)),
+                        onRetry: () => setState(() => _team = _repository
+                            .team(widget.teamId, forceRefresh: true)),
                       );
                     }
                     return Column(
@@ -85,14 +86,16 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                           title: 'Squad',
                           empty: 'Squad is not available yet.',
                           items: team.squad,
-                          itemBuilder: (item) => _SquadPlayerTile(player: apiMap(item)),
+                          itemBuilder: (item) =>
+                              _SquadPlayerTile(player: apiMap(item)),
                         ),
                         const SizedBox(height: 16),
                         _TeamSection(
                           title: 'Recent matches',
                           empty: 'Recent matches are not available yet.',
                           items: team.recentMatches,
-                          itemBuilder: (item) => _SimpleTeamRow(data: apiMap(item)),
+                          itemBuilder: (item) =>
+                              _SimpleTeamRow(data: apiMap(item)),
                         ),
                       ],
                     );
@@ -119,22 +122,23 @@ class _TeamHero extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          CircleAvatar(
-            radius: 46,
-            backgroundColor: c.card2,
-            backgroundImage: team.logo == null ? null : NetworkImage(team.logo!),
-            child: team.logo == null
-                ? Text(
-                    (team.shortName ?? team.name).isEmpty ? '?' : (team.shortName ?? team.name)[0],
-                    style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 30),
-                  )
-                : null,
+          TeamBadge(
+            TeamInfo(
+              code: team.shortName ?? team.name,
+              name: team.name,
+              shortName: team.shortName ?? team.name,
+              color: c.cyan,
+              asset: team.logo,
+            ),
+            size: 92,
+            borderColor: c.cyan.withValues(alpha: .45),
           ),
           const SizedBox(height: 14),
           Text(
             team.name,
             textAlign: TextAlign.center,
-            style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 26),
+            style: TextStyle(
+                color: c.text, fontWeight: FontWeight.w900, fontSize: 26),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -143,7 +147,8 @@ class _TeamHero extends StatelessWidget {
             runSpacing: 8,
             children: [
               _TeamChip(text: team.shortName ?? team.id),
-              if (team.country?.isNotEmpty == true) _TeamChip(text: team.country!),
+              if (team.country?.isNotEmpty == true)
+                _TeamChip(text: team.country!),
             ],
           ),
         ],
@@ -173,10 +178,13 @@ class _TeamSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          Text(title,
+              style: TextStyle(
+                  color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
           const SizedBox(height: 12),
           if (items.isEmpty)
-            Text(empty, style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))
+            Text(empty,
+                style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))
           else
             for (final item in items.take(20)) itemBuilder(item),
         ],
@@ -193,11 +201,15 @@ class _SquadPlayerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final id = apiString(player['playerId'] ?? player['player_id'] ?? player['id']);
+    final id =
+        apiString(player['playerId'] ?? player['player_id'] ?? player['id']);
     final name = apiString(player['name'] ?? player['playerName'], 'Player');
-    final image = apiString(player['imageUrl'] ?? player['image_url']);
+    final image = resolveCricbuzzImageUrl(player);
     return InkWell(
-      onTap: id.isEmpty ? null : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerDetailScreen(playerId: id))),
+      onTap: id.isEmpty
+          ? null
+          : () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => PlayerDetailScreen(playerId: id))),
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -206,20 +218,29 @@ class _SquadPlayerTile extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundColor: c.card2,
-              backgroundImage: image.isEmpty ? null : NetworkImage(image),
-              child: image.isEmpty ? Icon(Icons.person_rounded, color: c.muted) : null,
+              backgroundImage: image == null ? null : NetworkImage(image),
+              child: image == null
+                  ? Icon(Icons.person_rounded, color: c.muted)
+                  : null,
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-                  Text(apiString(player['role'], 'Role unavailable'), style: TextStyle(color: c.muted, fontWeight: FontWeight.w700, fontSize: 12)),
+                  Text(name,
+                      style: TextStyle(
+                          color: c.text, fontWeight: FontWeight.w900)),
+                  Text(apiString(player['role'], 'Role unavailable'),
+                      style: TextStyle(
+                          color: c.muted,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12)),
                 ],
               ),
             ),
-            if (id.isNotEmpty) Icon(Icons.chevron_right_rounded, color: c.muted),
+            if (id.isNotEmpty)
+              Icon(Icons.chevron_right_rounded, color: c.muted),
           ],
         ),
       ),
@@ -260,7 +281,9 @@ class _TeamChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: c.cyan.withValues(alpha: 0.25)),
       ),
-      child: Text(text, style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900, fontSize: 12)),
+      child: Text(text,
+          style: TextStyle(
+              color: c.cyan, fontWeight: FontWeight.w900, fontSize: 12)),
     );
   }
 }

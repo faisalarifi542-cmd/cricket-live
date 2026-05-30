@@ -8,6 +8,23 @@ The app has **backend data scraping issues**, not frontend problems. Cricbuzz pa
 
 ## ✅ COMPLETED: Backend Scorecard Fix
 
+### Status: DEPLOYED AND WORKING ✅
+
+The scorecard endpoint is now returning complete batting and bowling data!
+
+**Test Result**:
+```bash
+curl "https://api.webcrichd.co/match/155398/scorecard"
+```
+
+**Returns**:
+- ✅ Both innings (RR and GT)
+- ✅ Complete batting statistics (runs, balls, fours, sixes, strike rate, dismissals)
+- ✅ Complete bowling figures (overs, runs, wickets, economy)
+- ✅ Fall of wickets
+- ✅ Partnerships
+- ✅ Extras breakdown
+
 ### Changes Made
 **File**: `cricket-api/src/providers/cricbuzz/client.js`
 
@@ -16,17 +33,22 @@ The app has **backend data scraping issues**, not frontend problems. Cricbuzz pa
    - Strategy 2: Use provided matchInfo if available
    - Strategy 3: Generic fallback
 
-2. **Completely rewritten `parseScorecardFromHtml()`**
+2. **Fixed JSON validation logic**
+   - Check for `batTeamDetails.batsmenData` and `bowlTeamDetails.bowlersData`
+   - Validate that innings have actual data, not just empty arrays
+   - Return data in format normalizer expects: `{ scoreCard: innings }`
+
+3. **Completely rewritten `parseScorecardFromHtml()` (fallback)**
    - Strategy 1: Extract from Next.js JSON payloads (`self.__next_f.push()`)
    - Strategy 2: Traditional HTML parsing (fallback)
    - Strategy 3: Meta tag extraction (last resort)
 
-### Testing Required
-```bash
-curl "https://api.webcrichd.co/match/155398/scorecard"
-```
+### Commits
+- `c84a508` - Initial scorecard parser rewrite
+- `90fdcae` - Fixed JSON validation logic
 
-**Expected**: Non-empty innings array with batting/bowling data
+### Next Step: Flutter Integration
+Verify the Flutter app can parse and display this data in the Scorecard tab.
 
 ---
 

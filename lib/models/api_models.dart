@@ -4,6 +4,62 @@ String apiString(dynamic value, [String fallback = '']) {
   return text.isEmpty ? fallback : text;
 }
 
+String cleanText(dynamic value, [String fallback = '']) {
+  final text = apiString(value, fallback);
+  if (text.isEmpty) return fallback;
+  return text.replaceAll('\\', '').trim();
+}
+
+String formatMatchDateTime(dynamic value) {
+  if (value == null) return '';
+  DateTime? date;
+  if (value is DateTime) {
+    date = value;
+  } else {
+    final text = value.toString().trim();
+    if (text.isEmpty) return '';
+    date = DateTime.tryParse(text);
+    if (date == null) {
+      final epoch = int.tryParse(text);
+      if (epoch != null && epoch > 1000000000000) {
+        date = DateTime.fromMillisecondsSinceEpoch(epoch, isUtc: true);
+      }
+    }
+  }
+  if (date == null) return value.toString();
+  final local = date.toLocal();
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
+  ];
+  final now = DateTime.now();
+  final sameDay = now.year == local.year &&
+      now.month == local.month &&
+      now.day == local.day;
+  final tomorrow = now.add(const Duration(days: 1));
+  final isTomorrow = tomorrow.year == local.year &&
+      tomorrow.month == local.month &&
+      tomorrow.day == local.day;
+  final day = sameDay
+      ? 'Today'
+      : isTomorrow
+          ? 'Tomorrow'
+          : '${local.day} ${months[local.month - 1]} ${local.year}';
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$day • $hour:$minute';
+}
+
 int? apiInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
@@ -24,7 +80,18 @@ Map<String, dynamic> apiMap(dynamic value) =>
 List<dynamic> apiList(dynamic value) {
   if (value is List) return value;
   if (value is Map<String, dynamic>) {
-    for (final key in const ['items', 'matches', 'news', 'data', 'results']) {
+    for (final key in const [
+      'items',
+      'stories',
+      'paginatedData',
+      'matches',
+      'teams',
+      'news',
+      'data',
+      'results',
+      'commentary',
+      'commentaryList',
+    ]) {
       final nested = value[key];
       if (nested is List) return nested;
     }
@@ -32,20 +99,205 @@ List<dynamic> apiList(dynamic value) {
   return const [];
 }
 
+String? resolveCricbuzzImageUrl(dynamic value) {
+  if (value is String && value.trim().isNotEmpty) {
+    final text = value.trim();
+    if (text.startsWith('http://') || text.startsWith('https://')) return text;
+    if (RegExp(r'^\d+$').hasMatch(text) || text.startsWith('c')) {
+      return resolveCricbuzzImageUrlFromFields(imageId: text);
+    }
+  }
+  final json = apiMap(value);
+  final imageDetails = apiMap(json['imageDetails'] ?? json['image_details']);
+  return resolveCricbuzzImageUrlFromFields(
+    logoUrl: json['logo_url'] ??
+        json['logoUrl'] ??
+        json['logoURL'] ??
+        json['logo'] ??
+        json['image_url'] ??
+        json['imageUrl'] ??
+        json['imageURL'] ??
+        imageDetails['url'] ??
+        imageDetails['imageUrl'],
+    imageId: json['image_id'] ??
+        json['imageId'] ??
+        json['faceImageId'] ??
+        imageDetails['imageId'] ??
+        imageDetails['image_id'],
+  );
+}
+
+String? resolveCricbuzzImageUrlFromFields({
+  dynamic logoUrl,
+  dynamic imageUrl,
+  dynamic imageId,
+}) {
+  final direct = apiString(logoUrl ?? imageUrl ?? '', '');
+  if (direct.isNotEmpty) return direct;
+
+  final imageKey = apiString(imageId);
+  if (imageKey.isEmpty) return null;
+  final normalized =
+      imageKey.startsWith('c') ? imageKey.substring(1) : imageKey;
+  return 'https://static.cricbuzz.com/a/img/v1/i1/c$normalized/i.jpg';
+}
+
+/// Normalizes cricket overs format.
+/// Converts invalid formats like 19.6 to 20.0 (6 balls = 1 over).
+/// Examples:
+/// - 19.6 → 20.0
+/// - 18.6 → 19.0
+/// - 4.6 → 5.0
+/// - 18.4 → 18.4 (valid, unchanged)
+String normalizeOversText(dynamic value) {
+  if (value == null) return '';
+
+  final str = value.toString().trim();
+  if (str.isEmpty) return '';
+
+  // Try to parse as number
+  final num? parsed = num.tryParse(str);
+  if (parsed == null) return str;
+
+  // Split into overs and balls
+  final overs = parsed.floor();
+  final balls = ((parsed - overs) * 10).round();
+
+  // If balls >= 6, carry over to next over
+  if (balls >= 6) {
+    final extraOvers = balls ~/ 6;
+    final remainingBalls = balls % 6;
+    final normalizedOvers = overs + extraOvers;
+
+    if (remainingBalls == 0) {
+      return '$normalizedOvers.0';
+    }
+    return '$normalizedOvers.$remainingBalls';
+  }
+
+  // Valid format, return as is
+  if (balls == 0) {
+    return '$overs.0';
+  }
+  return '$overs.$balls';
+}
+
+/// Formats team initials safely, ensuring they fit in UI circles.
+/// Returns 2-3 character uppercase initials.
+String safeTeamInitials(String name) {
+  final cleaned = name.trim();
+  if (cleaned.isEmpty) return 'TBD';
+
+  // If already short (3 chars or less), use as is
+  if (cleaned.length <= 3) {
+    return cleaned.toUpperCase();
+  }
+
+  // Split by spaces and take first letters
+  final parts =
+      cleaned.split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  if (parts.length >= 2) {
+    // Take first letter of first two words
+    return parts.take(2).map((p) => p[0]).join().toUpperCase();
+  }
+
+  // Single word, take first 3 characters
+  return cleaned.substring(0, 3).toUpperCase();
+}
+
+/// Formats match title from team names, avoiding hardcoded titles.
+String formatMatchTitle(String team1, String team2,
+    {String? shortName1, String? shortName2}) {
+  final t1 = team1.trim().isEmpty ? 'TBD' : team1.trim();
+  final t2 = team2.trim().isEmpty ? 'TBD' : team2.trim();
+
+  // Use short names if available and not empty
+  if (shortName1 != null &&
+      shortName1.trim().isNotEmpty &&
+      shortName2 != null &&
+      shortName2.trim().isNotEmpty) {
+    return '${shortName1.trim()} vs ${shortName2.trim()}';
+  }
+
+  return '$t1 vs $t2';
+}
+
+/// Formats team score with normalized overs.
+String formatTeamScore(int? runs, int? wickets, dynamic overs) {
+  if (runs == null) return '';
+
+  final scoreText = wickets == null ? '$runs' : '$runs/$wickets';
+
+  if (overs == null) return scoreText;
+
+  final normalizedOvers = normalizeOversText(overs);
+  if (normalizedOvers.isEmpty) return scoreText;
+
+  return '$scoreText ($normalizedOvers OV)';
+}
+
+/// Formats result text, normalizing common abbreviations.
+String formatResultText(String? result) {
+  if (result == null || result.trim().isEmpty) return '';
+
+  final text = result.trim();
+
+  // Normalize common abbreviations
+  final normalized = text
+      .replaceAll(RegExp(r'\bwkts\b', caseSensitive: false), 'wickets')
+      .replaceAll(RegExp(r'\bruns?\b', caseSensitive: false), 'runs');
+
+  return normalized;
+}
+
+/// Formats status chip text.
+String formatStatusChip(String status) {
+  final lower = status.toLowerCase().trim();
+
+  if (lower == 'live' || lower == 'in_progress' || lower == 'inprogress') {
+    return 'LIVE';
+  }
+  if (lower == 'completed' || lower == 'finished' || lower == 'result') {
+    return 'RESULT';
+  }
+  if (lower == 'upcoming' || lower == 'scheduled' || lower == 'not_started') {
+    return 'UPCOMING';
+  }
+
+  return status.toUpperCase();
+}
+
 class ApiTeam {
-  const ApiTeam({required this.id, required this.name, required this.shortName, this.logo});
+  const ApiTeam(
+      {required this.id,
+      required this.name,
+      required this.shortName,
+      this.logo});
   final String id;
   final String name;
   final String shortName;
   final String? logo;
   factory ApiTeam.fromJson(dynamic value) {
     final json = apiMap(value);
-    final name = apiString(json['name'] ?? json['teamName'] ?? value, 'TBD');
+    final name = apiString(
+        json['name'] ?? json['teamName'] ?? json['team_name'] ?? value, 'TBD');
+
+    final logoUrl = resolveCricbuzzImageUrl(json);
+
     return ApiTeam(
-      id: apiString(json['id'] ?? json['teamId'], name),
+      id: apiString(json['id'] ?? json['teamId'] ?? json['team_id'], name),
       name: name,
-      shortName: apiString(json['shortName'] ?? json['code'], name.length > 3 ? name.substring(0, 3).toUpperCase() : name.toUpperCase()),
-      logo: json['logo']?.toString(),
+      shortName: apiString(
+          json['shortName'] ??
+              json['short_name'] ??
+              json['teamShort'] ??
+              json['team_short'] ??
+              json['teamShortName'] ??
+              json['code'],
+          name.length > 3
+              ? name.substring(0, 3).toUpperCase()
+              : name.toUpperCase()),
+      logo: logoUrl,
     );
   }
 }
@@ -83,7 +335,11 @@ class ApiScore {
 }
 
 class ApiMatchDetail {
-  const ApiMatchDetail({required this.id, required this.title, required this.status, required this.venue});
+  const ApiMatchDetail(
+      {required this.id,
+      required this.title,
+      required this.status,
+      required this.venue});
   final String id;
   final String title;
   final String status;
@@ -149,7 +405,8 @@ class OversData {
 class MatchSquads {
   const MatchSquads({required this.teams});
   final List<dynamic> teams;
-  factory MatchSquads.fromJson(dynamic value) => MatchSquads(teams: apiList(value));
+  factory MatchSquads.fromJson(dynamic value) =>
+      MatchSquads(teams: apiList(value));
 }
 
 class StreamSource {
@@ -177,18 +434,41 @@ class StreamSource {
   final String? status;
 
   String get qualityLabel => apiString(label ?? quality, 'AUTO');
+  String get qualityCode => apiString(quality ?? label, 'AUTO').toUpperCase();
+  String get type => apiString(streamType, 'hls').toLowerCase();
+  bool get isHls => type == 'hls' || url.toLowerCase().contains('.m3u8');
+  bool get isDash => type == 'dash' || url.toLowerCase().contains('.mpd');
+  bool get isExternal => type == 'external' || type == 'iframe';
+  bool get isPlayable => url.isNotEmpty && !isExternal && !isDash;
+  bool get isWorking =>
+      status == null ||
+      status!.isEmpty ||
+      status!.toLowerCase() == 'unknown' ||
+      status!.toLowerCase() == 'working' ||
+      status!.toLowerCase() == 'active';
+  int get qualityRank => switch (qualityCode) {
+        'AUTO' => 0,
+        'FHD' => 1,
+        'HD' => 2,
+        'SD' => 3,
+        _ => 4,
+      };
 
   factory StreamSource.fromJson(dynamic value) {
     final json = apiMap(value);
     return StreamSource(
       id: apiString(json['id'] ?? json['streamId']),
-      name: apiString(json['serverName'] ?? json['name'], 'Server'),
-      url: apiString(json['url'] ?? json['streamUrl']),
+      name: apiString(
+          json['serverName'] ?? json['server_name'] ?? json['name'], 'Server'),
+      url: apiString(json['url'] ?? json['streamUrl'] ?? json['stream_url']),
       quality: json['quality']?.toString(),
       label: json['label']?.toString(),
       language: json['language']?.toString(),
-      streamType: json['streamType']?.toString() ?? json['stream_type']?.toString(),
-      isPremium: json['isPremium'] == true || json['isPremium'] == 1 || json['is_premium'] == 1,
+      streamType:
+          json['streamType']?.toString() ?? json['stream_type']?.toString(),
+      isPremium: json['isPremium'] == true ||
+          json['isPremium'] == 1 ||
+          json['is_premium'] == 1,
       priority: apiInt(json['priority']),
       status: json['status']?.toString(),
     );
@@ -216,15 +496,60 @@ class ApiSeries {
   final int? matchCount;
   factory ApiSeries.fromJson(dynamic value) {
     final json = apiMap(value);
+    final id = cleanText(json['seriesId'] ??
+        json['series_id'] ??
+        json['id'] ??
+        json['seasonSeriesId'] ??
+        json['source_series_id'] ??
+        json['sourceSeriesId']);
+    final name = cleanText(
+        json['name'] ??
+            json['seriesName'] ??
+            json['series_name'] ??
+            json['source_series_name'] ??
+            json['sourceSeriesName'] ??
+            json['title'],
+        'Series');
     return ApiSeries(
-      id: apiString(json['seriesId'] ?? json['id']),
-      name: apiString(json['name'] ?? json['seriesName'], 'Series'),
+      id: id,
+      name: name,
       status: apiString(json['status'], 'Upcoming'),
-      startDate: apiString(json['startDate'] ?? json['start_date'], '').isEmpty ? null : apiString(json['startDate'] ?? json['start_date']),
-      endDate: apiString(json['endDate'] ?? json['end_date'], '').isEmpty ? null : apiString(json['endDate'] ?? json['end_date']),
-      format: apiString(json['format'] ?? json['seriesType'] ?? json['series_type'], '').isEmpty ? null : apiString(json['format'] ?? json['seriesType'] ?? json['series_type']),
-      country: apiString(json['country'] ?? json['host'], '').isEmpty ? null : apiString(json['country'] ?? json['host']),
-      matchCount: apiInt(json['matchCount'] ?? json['totalMatches'] ?? json['matchesCount']),
+      startDate: apiString(
+                  json['startDate'] ??
+                      json['start_date'] ??
+                      json['startTime'] ??
+                      json['start_time'],
+                  '')
+              .isEmpty
+          ? null
+          : apiString(json['startDate'] ??
+              json['start_date'] ??
+              json['startTime'] ??
+              json['start_time']),
+      endDate: apiString(
+                  json['endDate'] ??
+                      json['end_date'] ??
+                      json['endTime'] ??
+                      json['end_time'],
+                  '')
+              .isEmpty
+          ? null
+          : apiString(json['endDate'] ??
+              json['end_date'] ??
+              json['endTime'] ??
+              json['end_time']),
+      format: apiString(
+                  json['format'] ?? json['seriesType'] ?? json['series_type'],
+                  '')
+              .isEmpty
+          ? null
+          : apiString(
+              json['format'] ?? json['seriesType'] ?? json['series_type']),
+      country: apiString(json['country'] ?? json['host'], '').isEmpty
+          ? null
+          : apiString(json['country'] ?? json['host']),
+      matchCount: apiInt(
+          json['matchCount'] ?? json['totalMatches'] ?? json['matchesCount']),
     );
   }
 }
@@ -232,36 +557,109 @@ class ApiSeries {
 class PointsTable {
   const PointsTable({required this.rows});
   final List<dynamic> rows;
-  factory PointsTable.fromJson(dynamic value) => PointsTable(rows: apiList(value));
+  factory PointsTable.fromJson(dynamic value) =>
+      PointsTable(rows: apiList(value));
 }
 
 class SeriesStats {
   const SeriesStats({required this.sections});
   final Map<String, dynamic> sections;
-  factory SeriesStats.fromJson(dynamic value) => SeriesStats(sections: apiMap(value));
+  factory SeriesStats.fromJson(dynamic value) =>
+      SeriesStats(sections: apiMap(value));
 }
 
 class ApiSchedule {
   const ApiSchedule({required this.matches});
   final List<dynamic> matches;
-  factory ApiSchedule.fromJson(dynamic value) => ApiSchedule(matches: apiList(value));
+  factory ApiSchedule.fromJson(dynamic value) =>
+      ApiSchedule(matches: apiList(value));
 }
 
 class NewsStory {
-  const NewsStory({required this.id, required this.title, this.summary, this.image, this.publishedAt});
+  const NewsStory(
+      {required this.id,
+      required this.title,
+      this.summary,
+      this.image,
+      this.publishedAt,
+      this.publishedLabel,
+      this.context,
+      this.storyType});
   final String id;
   final String title;
   final String? summary;
   final String? image;
   final DateTime? publishedAt;
+  final String? publishedLabel;
+  final String? context;
+  final String? storyType;
   factory NewsStory.fromJson(dynamic value) {
     final json = apiMap(value);
+    final imageUrl = resolveCricbuzzImageUrl(json);
+    final publishedRaw = json['publishedTime'] ??
+        json['published_time'] ??
+        json['publishedAt'] ??
+        json['date'];
     return NewsStory(
-      id: apiString(json['id'] ?? json['newsId'] ?? json['slug'], apiString(json['title'])),
+      id: apiString(json['id'] ?? json['newsId'] ?? json['slug'],
+          apiString(json['title'] ?? json['headline'])),
       title: apiString(json['title'] ?? json['headline'], 'Cricket news'),
-      summary: json['summary']?.toString() ?? json['description']?.toString(),
-      image: json['image']?.toString() ?? json['imageUrl']?.toString(),
-      publishedAt: apiDate(json['publishedAt'] ?? json['date']),
+      summary: json['summary']?.toString() ??
+          json['description']?.toString() ??
+          json['intro']?.toString(),
+      image: imageUrl,
+      publishedAt: apiDate(publishedRaw),
+      publishedLabel: apiString(publishedRaw, 'Latest'),
+      context: apiString(json['context'] ?? json['category'], ''),
+      storyType: apiString(json['storyType'] ?? json['story_type'], ''),
+    );
+  }
+}
+
+class RankingEntry {
+  const RankingEntry({
+    required this.rank,
+    required this.name,
+    required this.country,
+    required this.rating,
+    this.points,
+    this.matches,
+    this.movement = 0,
+    this.imageUrl,
+    this.isTeam = false,
+  });
+
+  final int rank;
+  final String name;
+  final String country;
+  final int rating;
+  final int? points;
+  final int? matches;
+  final int movement;
+  final String? imageUrl;
+  final bool isTeam;
+
+  factory RankingEntry.fromJson(dynamic value) {
+    final json = apiMap(value);
+    final isTeam = apiString(json['category']).toLowerCase() == 'teams' ||
+        json.containsKey('teamName') ||
+        json.containsKey('team_name');
+    return RankingEntry(
+      rank: apiInt(json['rank'] ?? json['position']) ?? 0,
+      name: apiString(
+          json['playerName'] ??
+              json['player_name'] ??
+              json['teamName'] ??
+              json['team_name'] ??
+              json['name'],
+          isTeam ? 'Team' : 'Player'),
+      country: apiString(json['country'] ?? json['countryCode'] ?? '', ''),
+      rating: apiInt(json['rating']) ?? 0,
+      points: apiInt(json['points']),
+      matches: apiInt(json['matches'] ?? json['matchCount']),
+      movement: apiInt(json['movement'] ?? json['trend']) ?? 0,
+      imageUrl: resolveCricbuzzImageUrl(json),
+      isTeam: isTeam,
     );
   }
 }
@@ -295,11 +693,26 @@ class ApiPlayer {
       id: apiString(json['playerId'] ?? json['id']),
       name: apiString(json['name'], 'Player'),
       role: json['role']?.toString(),
-      country: apiString(json['country'] ?? json['nationality'], '').isEmpty ? null : apiString(json['country'] ?? json['nationality']),
-      image: apiString(json['image'] ?? json['imageUrl'] ?? json['profileImage'], '').isEmpty ? null : apiString(json['image'] ?? json['imageUrl'] ?? json['profileImage']),
-      battingStyle: apiString(json['battingStyle'] ?? json['batting_style'], '').isEmpty ? null : apiString(json['battingStyle'] ?? json['batting_style']),
-      bowlingStyle: apiString(json['bowlingStyle'] ?? json['bowling_style'], '').isEmpty ? null : apiString(json['bowlingStyle'] ?? json['bowling_style']),
-      dateOfBirth: apiString(json['dateOfBirth'] ?? json['dob'], '').isEmpty ? null : apiString(json['dateOfBirth'] ?? json['dob']),
+      country: apiString(json['country'] ?? json['nationality'], '').isEmpty
+          ? null
+          : apiString(json['country'] ?? json['nationality']),
+      image: apiString(
+                  json['image'] ?? json['imageUrl'] ?? json['profileImage'], '')
+              .isEmpty
+          ? null
+          : apiString(
+              json['image'] ?? json['imageUrl'] ?? json['profileImage']),
+      battingStyle:
+          apiString(json['battingStyle'] ?? json['batting_style'], '').isEmpty
+              ? null
+              : apiString(json['battingStyle'] ?? json['batting_style']),
+      bowlingStyle:
+          apiString(json['bowlingStyle'] ?? json['bowling_style'], '').isEmpty
+              ? null
+              : apiString(json['bowlingStyle'] ?? json['bowling_style']),
+      dateOfBirth: apiString(json['dateOfBirth'] ?? json['dob'], '').isEmpty
+          ? null
+          : apiString(json['dateOfBirth'] ?? json['dob']),
       stats: apiMap(json['stats'] ?? json['careerStats']),
       recent: apiList(json['recent'] ?? json['recentPerformance']),
     );
@@ -327,12 +740,31 @@ class ApiTeamProfile {
   final List<dynamic> series;
   factory ApiTeamProfile.fromJson(dynamic value) {
     final json = apiMap(value);
+
+    final logoUrl = resolveCricbuzzImageUrl(json);
+
     return ApiTeamProfile(
       id: apiString(json['teamId'] ?? json['id']),
-      name: apiString(json['name'] ?? json['teamName'], 'Team'),
-      shortName: apiString(json['shortName'] ?? json['teamShort'], '').isEmpty ? null : apiString(json['shortName'] ?? json['teamShort']),
-      country: apiString(json['country'], '').isEmpty ? null : apiString(json['country']),
-      logo: apiString(json['logo'] ?? json['logoUrl'], '').isEmpty ? null : apiString(json['logo'] ?? json['logoUrl']),
+      name: cleanText(
+          json['name'] ?? json['teamName'] ?? json['team_name'], 'Team'),
+      shortName: cleanText(
+                  json['shortName'] ??
+                      json['short_name'] ??
+                      json['teamShort'] ??
+                      json['team_short'] ??
+                      json['teamShortName'],
+                  '')
+              .isEmpty
+          ? null
+          : cleanText(json['shortName'] ??
+              json['short_name'] ??
+              json['teamShort'] ??
+              json['team_short'] ??
+              json['teamShortName']),
+      country: apiString(json['country'], '').isEmpty
+          ? null
+          : apiString(json['country']),
+      logo: logoUrl,
       squad: apiList(json['squad'] ?? json['players']),
       recentMatches: apiList(json['recentMatches'] ?? json['matches']),
       series: apiList(json['series'] ?? json['tournaments']),
@@ -349,5 +781,6 @@ class AppConfig {
 class HomeConfig {
   const HomeConfig({required this.values});
   final Map<String, dynamic> values;
-  factory HomeConfig.fromJson(dynamic value) => HomeConfig(values: apiMap(value));
+  factory HomeConfig.fromJson(dynamic value) =>
+      HomeConfig(values: apiMap(value));
 }

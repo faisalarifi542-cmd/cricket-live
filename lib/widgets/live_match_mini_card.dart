@@ -9,11 +9,21 @@ class LiveMatchMiniCard extends StatelessWidget {
     super.key,
     required this.onWatch,
     required this.onOpen,
-    this.series = 'WEST INDIES TOUR OF NEW ZEALAND',
-    this.title = 'NZ vs WI',
-    this.meta = '1st Test • Day 1 • 158/3 (38.4 OV)',
-    this.accent = AppData.newZealand,
-    this.accent2 = AppData.westIndies,
+    this.series = '',
+    this.title = '',
+    this.meta = '',
+    this.accent = const TeamInfo(
+      code: 'TBD',
+      name: 'Team',
+      shortName: 'TBD',
+      color: Color(0xff22d3ee),
+    ),
+    this.accent2 = const TeamInfo(
+      code: 'TBD',
+      name: 'Team',
+      shortName: 'TBD',
+      color: Color(0xfff59e0b),
+    ),
   });
 
   final VoidCallback onWatch;

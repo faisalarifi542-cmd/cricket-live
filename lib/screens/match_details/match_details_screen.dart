@@ -174,7 +174,7 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                         ? FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
                             future: _summaryFuture,
                             builder: (context, snapshot) {
-                              final matchStatus = snapshot.data?.data != null 
+                              final matchStatus = snapshot.data?.data != null
                                   ? snapshot.data!.data['status']?.toString()
                                   : null;
                               return _ApiMatchTabContent(
@@ -203,7 +203,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
 }
 
 class _ApiMatchTabContent extends StatelessWidget {
-  const _ApiMatchTabContent({required this.tab, required this.future, this.matchStatus});
+  const _ApiMatchTabContent(
+      {required this.tab, required this.future, this.matchStatus});
 
   final int tab;
   final Future<ApiEnvelope<Map<String, dynamic>>> future;
@@ -246,13 +247,13 @@ class _ApiMatchTabContent extends StatelessWidget {
   }
 
   static String _emptyText(int tab, String? status) {
-    final isUpcoming = status == null || 
-        status.toLowerCase() == 'upcoming' || 
+    final isUpcoming = status == null ||
+        status.toLowerCase() == 'upcoming' ||
         status.toLowerCase() == 'scheduled' ||
         status.toLowerCase() == 'not_started';
-    
+
     return switch (tab) {
-      0 => isUpcoming 
+      0 => isUpcoming
           ? 'Scorecard will be available once the match starts.'
           : 'Scorecard is not available from the provider yet.',
       1 => isUpcoming
@@ -279,23 +280,58 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
   int selected = 0;
 
   @override
+  void initState() {
+    super.initState();
+    selected = _preferredInningsIndex(widget.data);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScorecardPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.data != widget.data) {
+      selected = _preferredInningsIndex(widget.data);
+    }
+  }
+
+  int _preferredInningsIndex(Map<String, dynamic> data) {
+    final innings = apiList(data['innings']);
+    if (innings.isEmpty) return 0;
+    final currentBatTeamId =
+        str(data['curr_bat_team_id'] ?? data['currentBatTeamId']);
+    if (currentBatTeamId.isEmpty) return 0;
+    for (var i = 0; i < innings.length; i++) {
+      final inn = apiMap(innings[i]);
+      final batTeamId =
+          str(inn['batting_team_id'] ?? inn['batTeamId'] ?? inn['teamId']);
+      if (batTeamId.isNotEmpty && batTeamId == currentBatTeamId) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final innings = apiList(widget.data['innings']);
-    
+
     // Check if innings data is actually empty (no batting/bowling data)
-    final hasData = innings.isNotEmpty && innings.any((inn) {
-      final inningsMap = apiMap(inn);
-      final batting = apiList(inningsMap['batting'] ?? inningsMap['batters'] ?? inningsMap['batsmen']);
-      final bowling = apiList(inningsMap['bowling'] ?? inningsMap['bowlers']);
-      return batting.isNotEmpty || bowling.isNotEmpty;
-    });
-    
+    final hasData = innings.isNotEmpty &&
+        innings.any((inn) {
+          final inningsMap = apiMap(inn);
+          final batting = apiList(inningsMap['batting'] ??
+              inningsMap['batters'] ??
+              inningsMap['batsmen']);
+          final bowling =
+              apiList(inningsMap['bowling'] ?? inningsMap['bowlers']);
+          return batting.isNotEmpty || bowling.isNotEmpty;
+        });
+
     if (!hasData) {
-      final isUpcoming = widget.matchStatus == null || 
-          widget.matchStatus!.toLowerCase() == 'upcoming' || 
+      final isUpcoming = widget.matchStatus == null ||
+          widget.matchStatus!.toLowerCase() == 'upcoming' ||
           widget.matchStatus!.toLowerCase() == 'scheduled' ||
           widget.matchStatus!.toLowerCase() == 'not_started';
-      
+
       return _MatchDataStateCard(
         icon: Icons.scoreboard_rounded,
         text: isUpcoming
@@ -408,28 +444,17 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // Debug: Check what keys are in the data
+    final source = apiList(widget.data['data'] ??
+        widget.data['items'] ??
+        widget.data['commentary'] ??
+        widget.data['commentaryList']);
+
     if (kDebugMode) {
-      debugPrint('Commentary data keys: ${widget.data.keys.toList()}');
-      debugPrint('Commentary data type: ${widget.data.runtimeType}');
-      if (widget.data.containsKey('data')) {
-        debugPrint('data field type: ${widget.data['data'].runtimeType}');
-        if (widget.data['data'] is List) {
-          debugPrint('data is List with ${(widget.data['data'] as List).length} items');
-        }
-      }
+      debugPrint('Commentary raw payload type: ${widget.data.runtimeType}');
+      debugPrint('Commentary data type: ${widget.data['data']?.runtimeType}');
+      debugPrint('Commentary count: ${source.length}');
     }
-    
-    // Commentary API returns array directly in 'data' key
-    // API structure: { success: true, data: [...], pagination: {...} }
-    final source = apiList(widget.data['data'] ?? 
-                          widget.data['items'] ??
-                          widget.data['commentary']);
-    
-    if (kDebugMode) {
-      debugPrint('Commentary source length: ${source.length}');
-    }
-    
+
     final filtered = source.where((item) {
       final row = apiMap(item);
       if (filter == 1) {
@@ -449,11 +474,11 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
       return true;
     }).toList();
     if (source.isEmpty) {
-      final isUpcoming = widget.matchStatus == null || 
-          widget.matchStatus!.toLowerCase() == 'upcoming' || 
+      final isUpcoming = widget.matchStatus == null ||
+          widget.matchStatus!.toLowerCase() == 'upcoming' ||
           widget.matchStatus!.toLowerCase() == 'scheduled' ||
           widget.matchStatus!.toLowerCase() == 'not_started';
-      
+
       return _MatchDataStateCard(
         icon: Icons.chat_bubble_outline_rounded,
         text: isUpcoming
@@ -699,6 +724,10 @@ class _StatTable extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
+        columnSpacing: 18,
+        horizontalMargin: 12,
+        dataRowMinHeight: 42,
+        dataRowMaxHeight: 58,
         headingTextStyle: TextStyle(
             color: c.muted, fontWeight: FontWeight.w900, fontSize: 12),
         dataTextStyle:
@@ -832,7 +861,7 @@ class _OverCard extends StatelessWidget {
     final balls = apiList(row['balls']);
     final overNumber = str(row['overNumber'] ?? row['over']);
     final normalizedOver = normalizeOversText(overNumber);
-    
+
     return PremiumCard(
       padding: const EdgeInsets.all(14),
       child: Column(
@@ -840,7 +869,8 @@ class _OverCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('Over ${normalizedOver.isEmpty ? overNumber : normalizedOver}',
+              Text(
+                  'Over ${normalizedOver.isEmpty ? overNumber : normalizedOver}',
                   style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
               const Spacer(),
               Text('${str(row['runs'], fallback: '0')} runs',
@@ -951,7 +981,7 @@ class _PlayerLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final id = str(row['playerId'] ?? row['player_id']);
-    final image = str(row['imageUrl'] ?? row['image_url']);
+    final image = resolveCricbuzzImageUrl(row);
     return InkWell(
       onTap: id.isEmpty
           ? null
@@ -965,8 +995,8 @@ class _PlayerLine extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundColor: c.card,
-              backgroundImage: image.isEmpty ? null : NetworkImage(image),
-              child: image.isEmpty
+              backgroundImage: image == null ? null : NetworkImage(image),
+              child: image == null
                   ? Icon(Icons.person_rounded, color: c.muted)
                   : null,
             ),

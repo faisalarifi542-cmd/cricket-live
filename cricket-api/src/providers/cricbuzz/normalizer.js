@@ -428,61 +428,102 @@ export function normalizeSeriesList(raw) {
 }
 
 export function normalizePointsTable(raw) {
-  if (!raw) return [];
+  if (!raw) {
+    return {
+      seriesId: '',
+      seriesName: '',
+      groups: [],
+      rows: [],
+      source: 'cricbuzz',
+      message: 'Points table is not available for this series yet.',
+    };
+  }
 
-  const tables = raw.pointsTable || raw.standings || [];
-  const result = [];
+  const tables = Array.isArray(raw.groups)
+    ? raw.groups
+    : Array.isArray(raw.pointsTable)
+      ? raw.pointsTable
+      : Array.isArray(raw.standings)
+        ? raw.standings
+        : Array.isArray(raw)
+          ? raw
+          : [];
 
-  if (Array.isArray(tables) && tables.length > 0 && (tables[0].team_name || tables[0].teamName)) {
-    return tables.map((e, index) => {
-      const teamId = String(e.team_id || e.teamId || '');
-      return {
-        team_id: teamId,
-        team_name: e.team_name || e.teamName || '',
-        team_short: e.team_short || e.teamShort || '',
-        position: e.position || e.rank || index + 1,
-        played: e.played || 0,
-        won: e.won || 0,
-        lost: e.lost || 0,
-        tied: e.tied || 0,
-        no_result: e.no_result || e.noResult || 0,
-        points: e.points || 0,
-        nrr: parseFloat(e.nrr || 0),
-        group: e.group || '',
-        qualified: e.qualified || false,
-        logo_url: e.logo_url || e.logoUrl || (teamId ? getCricbuzzImageUrl(teamId, 't') : ''),
-      };
+  const normalizeRow = (entry, index, groupName = '') => {
+    const teamId = String(
+      entry.teamId || entry.team_id || entry.teamID || entry.id || '',
+    );
+    const imageId = entry.teamImageId || entry.imageId || entry.image_id || null;
+    const teamShortName = entry.teamShortName || entry.team_short || entry.teamShort || entry.teamName || '';
+    const teamName = entry.teamFullName || entry.teamName || entry.team_name || '';
+    const rawForm = entry.form || entry.teamForm || [];
+    const form = Array.isArray(rawForm)
+      ? rawForm.map((item) => String(item)).filter(Boolean)
+      : typeof rawForm === 'string'
+        ? rawForm.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean)
+        : [];
+
+    return {
+      rank: toNumber(entry.position || entry.rank || index + 1, index + 1),
+      teamId,
+      teamName,
+      teamShortName,
+      logoUrl: entry.logoUrl || entry.logo_url || (imageId ? getTeamLogoUrl(imageId) : ''),
+      imageId: imageId ? String(imageId) : null,
+      matches: toNumber(entry.matchesPlayed || entry.matches || entry.played || entry.Mat, 0),
+      won: toNumber(entry.matchesWon || entry.won || entry.W || 0, 0),
+      lost: toNumber(entry.matchesLost || entry.lost || entry.L || 0, 0),
+      tied: toNumber(entry.matchesTied || entry.tied || entry.T || 0, 0),
+      noResult: toNumber(entry.noRes || entry.noResult || entry.no_result || entry.NR || 0, 0),
+      matchesDrawn: toNumber(entry.matchesDrawn || entry.drawn || entry.D || 0, 0),
+      points: toNumber(entry.points || entry.Pts || entry.pointsTotal || 0, 0),
+      nrr: String(entry.nrr ?? entry.NRR ?? ''),
+      for: entry.for || entry.runsFor || '',
+      against: entry.against || entry.runsAgainst || '',
+      form,
+      qualified: !!(entry.teamQualifyStatus || entry.isQualified || entry.qualified),
+      qualificationStatus: entry.teamQualifyStatus || '',
+      groupName,
+    };
+  };
+
+  const groups = [];
+  for (const table of tables) {
+    if (!table) continue;
+    const entries = Array.isArray(table.pointsTableInfo)
+      ? table.pointsTableInfo
+      : Array.isArray(table.rows)
+        ? table.rows
+        : Array.isArray(table.teams)
+          ? table.teams
+          : Array.isArray(table.entries)
+            ? table.entries
+            : [];
+
+    const rows = entries.map((entry, index) => normalizeRow(entry, index, table.groupName || table.name || 'Points Table'));
+    groups.push({
+      name: table.groupName || table.name || 'Points Table',
+      rows,
     });
   }
 
-  for (const table of Array.isArray(tables) ? tables : [tables]) {
-    const entries = table.pointsTableInfo || table.entries || [];
-    for (const e of Array.isArray(entries) ? entries : [entries]) {
-      const teamId = String(e.teamId || '');
-      result.push({
-        team_id: teamId,
-        team_name: e.teamName || e.teamFullName || '',
-        team_short: e.teamShortName || '',
-        position: e.position || 0,
-        played: e.matchesPlayed || 0,
-        won: e.matchesWon || 0,
-        lost: e.matchesLost || 0,
-        tied: e.matchesTied || 0,
-        no_result: e.noResult || 0,
-        points: e.points || 0,
-        nrr: parseFloat(e.nrr || 0),
-        group: table.groupName || '',
-        qualified: e.isQualified || false,
-        logo_url: teamId ? getCricbuzzImageUrl(teamId, 't') : '',
-      });
-    }
-  }
+  const rows = groups.flatMap((group) => group.rows);
 
-  if (raw._error && result.length === 0) {
-    return { groups: [], _error: raw._error };
-  }
+  return {
+    seriesId: String(raw.seriesId || ''),
+    seriesName: raw.seriesName || '',
+    matchType: raw.match_type || raw.matchType || '',
+    lastUpdated: raw.lastUpdated || new Date().toISOString(),
+    source: raw.source || 'cricbuzz',
+    groups,
+    rows,
+    message: groups.length === 0 ? 'Points table is not available for this series yet.' : null,
+  };
+}
 
-  return result;
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export function normalizeMatchSquads(raw, matchId) {

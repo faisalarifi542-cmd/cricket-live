@@ -6,9 +6,15 @@ import '../models.dart';
 import '../models/cricket_match.dart';
 
 class MatchDetailHeroCard extends StatelessWidget {
-  const MatchDetailHeroCard({super.key, this.onWatchLive, this.match});
+  const MatchDetailHeroCard({
+    super.key,
+    this.onWatchLive,
+    this.match,
+    this.showWatchLive = true,
+  });
 
   final VoidCallback? onWatchLive;
+  final bool showWatchLive;
 
   /// When provided, the hero renders real data from this match. When null
   /// (e.g. demo mode), the hardcoded design preview is shown so the UI
@@ -27,9 +33,7 @@ class MatchDetailHeroCard extends StatelessWidget {
     final isLive = m?.isLive ?? true;
     final isFinished = m?.isFinished ?? false;
     final statusLabel = isLive ? 'LIVE' : (isFinished ? 'RESULT' : 'UPCOMING');
-    final statusColor = isLive
-        ? c.live
-        : (isFinished ? c.success : c.cyan);
+    final statusColor = isLive ? c.live : (isFinished ? c.success : c.cyan);
     final headline = m == null
         ? '1st Test • Day 1'
         : (m.matchDesc.isNotEmpty
@@ -57,27 +61,37 @@ class MatchDetailHeroCard extends StatelessWidget {
             asset: m.teamBLogo,
           );
     final showScore = m == null || isLive || isFinished;
-    final centerScore = m == null
-        ? '158/3'
-        : (m.teamAScoreText.isNotEmpty
-            ? m.teamAScoreText.split(' (').first
-            : (m.teamBScoreText.isNotEmpty
-                ? m.teamBScoreText.split(' (').first
-                : ''));
-    final centerOvers = m == null
-        ? '(38.4 OV)'
-        : _extractParens(m.teamAScoreText.isNotEmpty
-            ? m.teamAScoreText
-            : m.teamBScoreText);
+    final leftScore = m?.teamAScoreText ?? '';
+    final rightScore = m?.teamBScoreText ?? '';
+    final hasAnyScore = leftScore.isNotEmpty || rightScore.isNotEmpty;
+    final centerScore = m == null ? '158/3' : '';
+    final centerOvers = m == null ? '(38.4 OV)' : '';
+    final leftScoreLabel = showScore && hasAnyScore
+        ? (leftScore.isNotEmpty ? leftScore : (isLive ? 'Yet to bat' : ''))
+        : '';
+    final rightScoreLabel = showScore && hasAnyScore
+        ? (rightScore.isNotEmpty ? rightScore : (isLive ? 'Yet to bat' : ''))
+        : '';
+    assert(() {
+      debugPrint('MATCH_DETAIL score team1=$leftScore');
+      debugPrint('MATCH_DETAIL score team2=$rightScore');
+      debugPrint(
+          'MATCH_DETAIL hero leftScore=$leftScoreLabel rightScore=$rightScoreLabel');
+      return true;
+    }());
     final footLine = m == null
         ? 'NZ won the toss & chose to bat'
         : (isFinished
             ? (m.resultText.isNotEmpty ? m.resultText : m.statusText)
             : m.statusText);
-    final buttonLabel = isFinished ? 'View Scorecard' : 'Watch Live';
-    final buttonIcon = isFinished
-        ? Icons.receipt_long_rounded
-        : Icons.play_circle_fill_rounded;
+    final buttonLabel = showWatchLive
+        ? 'Watch Live'
+        : (isFinished ? 'View Scorecard' : 'Watch Live');
+    final buttonIcon = showWatchLive
+        ? Icons.play_circle_fill_rounded
+        : (isFinished
+            ? Icons.receipt_long_rounded
+            : Icons.play_circle_fill_rounded);
 
     return Container(
       padding: EdgeInsets.all(pad),
@@ -108,9 +122,7 @@ class MatchDetailHeroCard extends StatelessWidget {
               Row(
                 children: [
                   StatusBadge(
-                      label: statusLabel,
-                      color: statusColor,
-                      filled: true),
+                      label: statusLabel, color: statusColor, filled: true),
                   const SizedBox(width: 10),
                   Expanded(
                       child: Text(headline,
@@ -141,7 +153,9 @@ class MatchDetailHeroCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(child: _compactTeam(context, leftTeam, badge)),
+                  Expanded(
+                      child: _compactTeam(context, leftTeam, badge,
+                          score: leftScoreLabel)),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -171,7 +185,9 @@ class MatchDetailHeroCard extends StatelessWidget {
                       ],
                     ],
                   ),
-                  Expanded(child: _compactTeam(context, rightTeam, badge)),
+                  Expanded(
+                      child: _compactTeam(context, rightTeam, badge,
+                          score: rightScoreLabel)),
                 ],
               ),
               SizedBox(height: narrow ? 14 : 20),
@@ -184,16 +200,18 @@ class MatchDetailHeroCard extends StatelessWidget {
                         color: c.cyan,
                         fontWeight: FontWeight.w700,
                         fontSize: context.sp(13))),
-              const SizedBox(height: 16),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: GradientButton(
-                  label: buttonLabel,
-                  icon: buttonIcon,
-                  height: 50,
-                  onTap: onWatchLive,
+              if (isFinished || showWatchLive) ...[
+                const SizedBox(height: 16),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 240),
+                  child: GradientButton(
+                    label: buttonLabel,
+                    icon: buttonIcon,
+                    height: 50,
+                    onTap: onWatchLive,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ],
@@ -201,15 +219,8 @@ class MatchDetailHeroCard extends StatelessWidget {
     );
   }
 
-  static String _extractParens(String value) {
-    final start = value.indexOf('(');
-    if (start < 0) return '';
-    final end = value.indexOf(')', start);
-    if (end < 0) return value.substring(start);
-    return value.substring(start, end + 1);
-  }
-
-  Widget _compactTeam(BuildContext context, TeamInfo team, double badge) {
+  Widget _compactTeam(BuildContext context, TeamInfo team, double badge,
+      {String score = ''}) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -225,6 +236,19 @@ class MatchDetailHeroCard extends StatelessWidget {
               fontWeight: FontWeight.w800,
               fontSize: context.sp(13)),
         ),
+        if (score.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            score,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: context.sp(12.5)),
+          ),
+        ],
       ],
     );
   }
