@@ -258,43 +258,132 @@ export const cricbuzzApi = {
   },
 
   async getScorecard(matchId, matchInfo = null) {
+    logger.info({ msg: 'Fetching scorecard', matchId, hasMatchInfo: !!matchInfo });
+    
     // Try JSON API first
     let jsonData = null;
+    let jsonError = null;
     try {
-      jsonData = await request(mcenterClient, `/scorecard/${matchId}`);
+      const jsonUrl = `/scorecard/${matchId}`;
+      logger.info({ msg: 'Trying JSON scorecard API', matchId, url: `${mcenterClient.defaults.baseURL}${jsonUrl}` });
+      
+      jsonData = await request(mcenterClient, jsonUrl);
+      
+      logger.info({ 
+        msg: 'JSON scorecard response received', 
+        matchId, 
+        hasData: !!jsonData,
+        hasInnings: !!(jsonData?.innings),
+        inningsCount: jsonData?.innings?.length || 0,
+        keys: jsonData ? Object.keys(jsonData) : []
+      });
       
       // Validate JSON response
       if (jsonData && jsonData.innings && jsonData.innings.length > 0) {
         logger.info({ msg: 'Scorecard JSON data found', matchId, innings: jsonData.innings.length });
         return jsonData;
+      } else {
+        logger.warn({ msg: 'JSON scorecard returned empty innings', matchId, data: jsonData });
       }
     } catch (jsonErr) {
-      logger.warn({ msg: 'JSON scorecard failed, trying HTML fallback', matchId, error: jsonErr.message });
+      jsonError = jsonErr;
+      logger.warn({ 
+        msg: 'JSON scorecard failed, trying HTML fallback', 
+        matchId, 
+        error: jsonErr.message,
+        status: jsonErr.response?.status,
+        statusText: jsonErr.response?.statusText
+      });
     }
     
-    // JSON failed or empty, try HTML fallback
+    // JSON failed or empty, try HTML fallback with multiple slug strategies
+    const slugStrategies = [];
+    
+    // Strategy 1: Try to fetch match info first to get proper slug
     try {
-      // Build slug from match info if available
-      let slug = 'scorecard';
-      if (matchInfo && matchInfo.title) {
-        slug = matchInfo.title.toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')
-          .replace(/\s+/g, '-')
-          .slice(0, 50);
+      const liveData = await request(mcenterClient, `/${matchId}`);
+      if (liveData?.matchInfo) {
+        const team1 = liveData.matchInfo.team1?.teamSName || liveData.matchInfo.team1?.teamName || '';
+        const team2 = liveData.matchInfo.team2?.teamSName || liveData.matchInfo.team2?.teamName || '';
+        const matchDesc = liveData.matchInfo.matchDesc || liveData.matchInfo.matchFormat || '';
+        const seriesName = liveData.matchInfo.seriesName || '';
+        
+        if (team1 && team2 && seriesName) {
+          const slug = `${team1}-vs-${team2}-${matchDesc}-${seriesName}`
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, '')
+            .replace(/\s+/g, '-')
+            .slice(0, 80);
+          slugStrategies.push(slug);
+        }
       }
-      
-      const html = await request(htmlClient, `/live-cricket-scorecard/${matchId}/${slug}`, { responseType: 'text' });
-      const htmlData = parseScorecardFromHtml(html, matchId);
-      
-      if (htmlData.innings && htmlData.innings.length > 0) {
-        logger.info({ msg: '[FIXED] Scorecard HTML data found', matchId, innings: htmlData.innings.length });
-        return htmlData;
-      }
-    } catch (htmlErr) {
-      logger.error({ msg: 'HTML scorecard fallback also failed', matchId, error: htmlErr.message });
+    } catch (err) {
+      logger.debug({ msg: 'Could not fetch match info for slug', matchId, error: err.message });
     }
     
-    // Both failed
+    // Strategy 2: Use provided matchInfo
+    if (matchInfo && matchInfo.title) {
+      const slug = matchInfo.title.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, '-')
+        .slice(0, 80);
+      slugStrategies.push(slug);
+    }
+    
+    // Strategy 3: Generic fallback
+    slugStrategies.push('scorecard');
+    
+    // Try each slug strategy
+    for (const slug of slugStrategies) {
+      try {
+        const htmlUrl = `/live-cricket-scorecard/${matchId}/${slug}`;
+        logger.info({ msg: 'Trying HTML scorecard fallback', matchId, url: `${htmlClient.defaults.baseURL}${htmlUrl}`, slug });
+        
+        const html = await request(htmlClient, htmlUrl, { responseType: 'text' });
+        
+        logger.info({ 
+          msg: 'HTML scorecard response received', 
+          matchId, 
+          htmlLength: html?.length || 0,
+          titleMatch: html?.match(/<title>([^<]*)<\/title>/i)?.[1] || 'No title'
+        });
+        
+        const htmlData = parseScorecardFromHtml(html, matchId);
+        
+        logger.info({ 
+          msg: 'HTML scorecard parsed', 
+          matchId, 
+          inningsCount: htmlData?.innings?.length || 0,
+          hasData: !!(htmlData?.innings?.length)
+        });
+        
+        if (htmlData.innings && htmlData.innings.length > 0) {
+          logger.info({ msg: '[FIXED] Scorecard HTML data found', matchId, innings: htmlData.innings.length, slug });
+          return htmlData;
+        } else {
+          logger.warn({ msg: 'HTML scorecard parser returned empty innings', matchId, slug });
+        }
+      } catch (htmlErr) {
+        logger.debug({ 
+          msg: 'HTML scorecard attempt failed', 
+          matchId, 
+          slug,
+          error: htmlErr.message,
+          status: htmlErr.response?.status
+        });
+        // Continue to next strategy
+      }
+    }
+    
+    // All strategies failed
+    logger.error({ 
+      msg: 'Scorecard fetch completely failed after all strategies', 
+      matchId, 
+      jsonError: jsonError?.message,
+      jsonStatus: jsonError?.response?.status,
+      triedSlugs: slugStrategies
+    });
+    
     return { innings: [], _error: 'Scorecard not available' };
   },
 
@@ -1908,85 +1997,192 @@ function parsePointsTableFromHtml_OLD(html, seriesId) {
 }
 
 /**
- * Parse scorecard from Cricbuzz HTML
+ * Parse scorecard from Cricbuzz HTML (Next.js with embedded JSON)
  */
 function parseScorecardFromHtml(html, matchId) {
   logger.info({ msg: '[FIXED] Parsing scorecard HTML', matchId, htmlLength: html?.length || 0 });
   
   const innings = [];
-  const inningsPattern = /<div[^>]*id="innings_\d+"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
-  let inningsMatch;
   
-  while ((inningsMatch = inningsPattern.exec(html)) !== null) {
-    const inningsHtml = inningsMatch[1];
-    
-    const headerMatch = inningsHtml.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i) || 
-                       inningsHtml.match(/<span[^>]*class="[^"]*cb-scrcrd-hdr-rw[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    const headerText = headerMatch ? headerMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-    
-    // Parse batting
-    const battingRows = [];
-    const battingPattern = /<tr[^>]*class="[^"]*cb-scrcrd-bat-tr[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
-    let battingMatch;
-    
-    while ((battingMatch = battingPattern.exec(inningsHtml)) !== null) {
-      const rowHtml = battingMatch[1];
-      const cells = rowHtml.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
+  // Strategy 1: Try to extract from Next.js JSON payload
+  // Look for self.__next_f.push patterns that contain scorecard data
+  const nextDataPattern = /self\.__next_f\.push\(\[1,"([^"]+)"\]\)/g;
+  let match;
+  let combinedJson = '';
+  
+  while ((match = nextDataPattern.exec(html)) !== null) {
+    try {
+      // Unescape the JSON string
+      const jsonStr = match[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\\\/g, '\\');
       
-      if (cells.length >= 8) {
-        const playerMatch = cells[0].match(/>([^<]+)</);
-        const dismissalMatch = cells[1].match(/>([^<]+)</);
-        
-        battingRows.push({
-          player: playerMatch ? playerMatch[1].trim() : '',
-          dismissal: dismissalMatch ? dismissalMatch[1].trim() : '',
-          runs: parseInt(cells[2].replace(/<[^>]+>/g, '')) || 0,
-          balls: parseInt(cells[3].replace(/<[^>]+>/g, '')) || 0,
-          fours: parseInt(cells[5].replace(/<[^>]+>/g, '')) || 0,
-          sixes: parseInt(cells[6].replace(/<[^>]+>/g, '')) || 0,
-          strike_rate: parseFloat(cells[7].replace(/<[^>]+>/g, '')) || 0
-        });
-      }
+      combinedJson += jsonStr;
+    } catch (err) {
+      // Skip malformed JSON chunks
     }
-    
-    // Parse bowling
-    const bowlingRows = [];
-    const bowlingPattern = /<tr[^>]*class="[^"]*cb-scrcrd-bwl-tr[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
-    let bowlingMatch;
-    
-    while ((bowlingMatch = bowlingPattern.exec(inningsHtml)) !== null) {
-      const rowHtml = bowlingMatch[1];
-      const cells = rowHtml.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
-      
-      if (cells.length >= 8) {
-        const playerMatch = cells[0].match(/>([^<]+)</);
-        
-        bowlingRows.push({
-          player: playerMatch ? playerMatch[1].trim() : '',
-          overs: cells[1].replace(/<[^>]+>/g, '').trim(),
-          maidens: parseInt(cells[2].replace(/<[^>]+>/g, '')) || 0,
-          runs: parseInt(cells[3].replace(/<[^>]+>/g, '')) || 0,
-          wickets: parseInt(cells[4].replace(/<[^>]+>/g, '')) || 0,
-          no_balls: parseInt(cells[6].replace(/<[^>]+>/g, '')) || 0,
-          wides: parseInt(cells[7].replace(/<[^>]+>/g, '')) || 0,
-          economy: parseFloat(cells[8]?.replace(/<[^>]+>/g, '')) || 0
-        });
-      }
-    }
-    
-    // Extract extras and total
-    const extrasMatch = inningsHtml.match(/extras[\s\S]*?<td[^>]*>(\d+)<\/td>/i);
-    const totalMatch = inningsHtml.match(/total[\s\S]*?<td[^>]*>(\d+)[\s\S]*?(\d+\.\d+)<\/td>/i);
-    
-    innings.push({
-      name: headerText,
-      batting: battingRows,
-      bowling: bowlingRows,
-      extras: extrasMatch ? parseInt(extrasMatch[1]) : 0,
-      total: totalMatch ? parseInt(totalMatch[1]) : 0,
-      overs: totalMatch && totalMatch[2] ? totalMatch[2] : ''
-    });
   }
+  
+  // Try to find innings data in the combined JSON
+  if (combinedJson) {
+    // Look for batting/bowling data patterns
+    const inningsPattern = /"innings[_\w]*":\s*\[([^\]]+)\]/gi;
+    const battingPattern = /"bat(?:ting|smen|Cards)":\s*\[([^\]]+)\]/gi;
+    const bowlingPattern = /"bowl(?:ing|ers|Cards)":\s*\[([^\]]+)\]/gi;
+    
+    // Try to extract structured innings data
+    let inningsMatch;
+    while ((inningsMatch = inningsPattern.exec(combinedJson)) !== null) {
+      try {
+        const inningsData = JSON.parse(`[${inningsMatch[1]}]`);
+        if (Array.isArray(inningsData) && inningsData.length > 0) {
+          innings.push(...inningsData);
+        }
+      } catch (err) {
+        logger.debug({ msg: 'Could not parse innings JSON', matchId, error: err.message });
+      }
+    }
+  }
+  
+  // Strategy 2: Parse from traditional HTML structure (fallback)
+  if (innings.length === 0) {
+    const inningsPattern = /<div[^>]*id="innings_(\d+)"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
+    let inningsMatch;
+    
+    while ((inningsMatch = inningsPattern.exec(html)) !== null) {
+      const inningsId = inningsMatch[1];
+      const inningsHtml = inningsMatch[2];
+      
+      // Extract innings header/name
+      const headerMatch = inningsHtml.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i) || 
+                         inningsHtml.match(/<span[^>]*class="[^"]*cb-scrcrd-hdr-rw[^"]*"[^>]*>([\s\S]*?)<\/span>/i) ||
+                         inningsHtml.match(/<div[^>]*class="[^"]*cb-col-100[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      const headerText = headerMatch ? headerMatch[1].replace(/<[^>]+>/g, '').trim() : `Innings ${inningsId}`;
+      
+      // Parse batting rows
+      const battingRows = [];
+      const battingPattern = /<tr[^>]*class="[^"]*cb-scrcrd-bat-tr[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+      let battingMatch;
+      
+      while ((battingMatch = battingPattern.exec(inningsHtml)) !== null) {
+        const rowHtml = battingMatch[1];
+        const cells = rowHtml.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
+        
+        if (cells.length >= 7) {
+          const playerMatch = cells[0].match(/>([^<]+)</);
+          const dismissalMatch = cells[1].match(/>([^<]+)</);
+          
+          const runs = parseInt(cells[2].replace(/<[^>]+>/g, '').trim()) || 0;
+          const balls = parseInt(cells[3].replace(/<[^>]+>/g, '').trim()) || 0;
+          const fours = parseInt(cells[5].replace(/<[^>]+>/g, '').trim()) || 0;
+          const sixes = parseInt(cells[6].replace(/<[^>]+>/g, '').trim()) || 0;
+          const strikeRate = parseFloat(cells[7]?.replace(/<[^>]+>/g, '').trim()) || (balls > 0 ? ((runs / balls) * 100).toFixed(2) : 0);
+          
+          battingRows.push({
+            player: playerMatch ? playerMatch[1].trim() : '',
+            dismissal: dismissalMatch ? dismissalMatch[1].trim() : '',
+            runs,
+            balls,
+            fours,
+            sixes,
+            strike_rate: strikeRate
+          });
+        }
+      }
+      
+      // Parse bowling rows
+      const bowlingRows = [];
+      const bowlingPattern = /<tr[^>]*class="[^"]*cb-scrcrd-bwl-tr[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+      let bowlingMatch;
+      
+      while ((bowlingMatch = bowlingPattern.exec(inningsHtml)) !== null) {
+        const rowHtml = bowlingMatch[1];
+        const cells = rowHtml.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || [];
+        
+        if (cells.length >= 8) {
+          const playerMatch = cells[0].match(/>([^<]+)</);
+          const overs = cells[1].replace(/<[^>]+>/g, '').trim();
+          const maidens = parseInt(cells[2].replace(/<[^>]+>/g, '').trim()) || 0;
+          const runs = parseInt(cells[3].replace(/<[^>]+>/g, '').trim()) || 0;
+          const wickets = parseInt(cells[4].replace(/<[^>]+>/g, '').trim()) || 0;
+          const noBalls = parseInt(cells[6]?.replace(/<[^>]+>/g, '').trim()) || 0;
+          const wides = parseInt(cells[7]?.replace(/<[^>]+>/g, '').trim()) || 0;
+          const economy = parseFloat(cells[8]?.replace(/<[^>]+>/g, '').trim()) || 0;
+          
+          bowlingRows.push({
+            player: playerMatch ? playerMatch[1].trim() : '',
+            overs,
+            maidens,
+            runs,
+            wickets,
+            no_balls: noBalls,
+            wides,
+            economy
+          });
+        }
+      }
+      
+      // Extract extras and total
+      const extrasMatch = inningsHtml.match(/extras[\s\S]*?<td[^>]*>(\d+)<\/td>/i);
+      const totalMatch = inningsHtml.match(/total[\s\S]*?<td[^>]*>(\d+)[\s\S]*?(\d+\.?\d*)<\/td>/i);
+      
+      if (battingRows.length > 0 || bowlingRows.length > 0) {
+        innings.push({
+          id: inningsId,
+          name: headerText,
+          batting: battingRows,
+          bowling: bowlingRows,
+          extras: extrasMatch ? parseInt(extrasMatch[1]) : 0,
+          total: totalMatch ? parseInt(totalMatch[1]) : 0,
+          overs: totalMatch && totalMatch[2] ? totalMatch[2] : ''
+        });
+      }
+    }
+  }
+  
+  // Strategy 3: Try to extract from page title and meta tags as last resort
+  if (innings.length === 0) {
+    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
+    if (titleMatch) {
+      const title = titleMatch[1];
+      // Look for score patterns like "RR 214/6 vs GT 219/3"
+      const scorePattern = /(\w+)\s+(\d+)\/(\d+).*?vs.*?(\w+)\s+(\d+)\/(\d+)/i;
+      const scoreMatch = title.match(scorePattern);
+      
+      if (scoreMatch) {
+        innings.push({
+          id: '1',
+          name: `${scoreMatch[1]} Innings`,
+          batting: [],
+          bowling: [],
+          extras: 0,
+          total: parseInt(scoreMatch[2]),
+          overs: '',
+          score: `${scoreMatch[2]}/${scoreMatch[3]}`
+        });
+        
+        innings.push({
+          id: '2',
+          name: `${scoreMatch[4]} Innings`,
+          batting: [],
+          bowling: [],
+          extras: 0,
+          total: parseInt(scoreMatch[5]),
+          overs: '',
+          score: `${scoreMatch[5]}/${scoreMatch[6]}`
+        });
+      }
+    }
+  }
+  
+  logger.info({ 
+    msg: '[FIXED] Scorecard HTML parsing complete', 
+    matchId, 
+    inningsFound: innings.length,
+    hasBattingData: innings.some(i => i.batting && i.batting.length > 0),
+    hasBowlingData: innings.some(i => i.bowling && i.bowling.length > 0)
+  });
   
   return { innings };
 }
