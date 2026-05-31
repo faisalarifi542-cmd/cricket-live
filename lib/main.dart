@@ -13,7 +13,6 @@ import 'screens/more/contact_us_screen.dart';
 import 'screens/more/privacy_policy_screen.dart';
 import 'screens/more/terms_screen.dart';
 import 'screens/live/live_player_screen.dart';
-import 'screens/highlights/highlight_detail_screen.dart';
 import 'screens/highlights/highlights_screen.dart';
 import 'screens/rankings/rankings_screen.dart';
 import 'screens/schedule/schedule_screen.dart';
@@ -21,7 +20,6 @@ import 'screens/teams/teams_screen.dart';
 import 'screens/match_details/match_details_screen.dart';
 import 'screens/series/series_detail_screen.dart';
 import 'screens/series/series_list_screen.dart';
-import 'screens/common/search_screen.dart';
 import 'screens/common/notifications_screen.dart';
 import 'screens/player/player_detail_screen.dart';
 import 'repositories/cricket_repository.dart';
@@ -120,8 +118,6 @@ class _RootShellState extends State<RootShell> {
   void _openLivePlayer({String matchId = ''}) =>
       _push(LivePlayerScreen(matchId: matchId));
 
-  void _openHighlightDetail() => _push(const HighlightDetailScreen());
-
   void _openSeries({int initialTab = 0}) => _push(SeriesListScreen(
         onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
           seriesId: seriesId,
@@ -131,8 +127,6 @@ class _RootShellState extends State<RootShell> {
           onOpenPlayer: () => _push(const PlayerDetailScreen()),
         )),
       ));
-
-  void _openSearch() => _push(const SearchScreen());
 
   void _openNotifications() => _push(const NotificationsScreen());
 
@@ -144,8 +138,6 @@ class _RootShellState extends State<RootShell> {
       _push(NewsDetailScreen(article: article));
 
   void _openHighlights() => _push(HighlightsScreen(
-        onOpenVideo: _openHighlightDetail,
-        onOpenSearch: _openSearch,
         onOpenNotifications: _openNotifications,
       ));
 
@@ -157,7 +149,6 @@ class _RootShellState extends State<RootShell> {
       AppTab.home => HomeScreen(
           onOpenMatchDetails: _openMatch,
           onOpenSeries: _openSeries,
-          onOpenSearch: _openSearch,
           onOpenNotifications: _openNotifications,
           onOpenFilters: _openFilters,
           onOpenReminders: _openReminders,
@@ -166,7 +157,6 @@ class _RootShellState extends State<RootShell> {
         ),
       AppTab.matches => MatchesScreen(
           onOpenMatch: _openMatch,
-          onOpenSearch: _openSearch,
           onOpenFilters: _openFilters,
           onOpenReminders: _openReminders,
           onOpenSeries: _openSeries,
@@ -177,7 +167,6 @@ class _RootShellState extends State<RootShell> {
           onOpenMatch: _openMatch,
         ),
       AppTab.news => NewsScreen(
-          onOpenSearch: _openSearch,
           onOpenFilters: _openFilters,
           onOpenArticle: _openArticle,
         ),

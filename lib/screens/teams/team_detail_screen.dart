@@ -9,9 +9,20 @@ import '../../repositories/cricket_repository.dart';
 import '../player/player_detail_screen.dart';
 
 class TeamDetailScreen extends StatefulWidget {
-  const TeamDetailScreen({super.key, required this.teamId});
+  const TeamDetailScreen({
+    super.key,
+    this.teamId = '',
+    this.initialName,
+    this.initialShortName,
+    this.initialLogoUrl,
+    this.sourceSeriesId,
+  });
 
   final String teamId;
+  final String? initialName;
+  final String? initialShortName;
+  final String? initialLogoUrl;
+  final String? sourceSeriesId;
 
   @override
   State<TeamDetailScreen> createState() => _TeamDetailScreenState();
@@ -24,10 +35,34 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _team = _repository.team(widget.teamId);
+    _team = widget.teamId.isNotEmpty
+        ? _repository.team(widget.teamId)
+        : Future.value(
+            ApiEnvelope<ApiTeamProfile>(
+              data: ApiTeamProfile(
+                id: widget.teamId,
+                name: widget.initialName ?? 'Team',
+                shortName: widget.initialShortName,
+                logo: widget.initialLogoUrl,
+                squad: const [],
+                recentMatches: const [],
+                series: widget.sourceSeriesId == null
+                    ? const []
+                    : [
+                        {'seriesId': widget.sourceSeriesId},
+                      ],
+              ),
+              meta: const ApiMeta(
+                provider: 'webcrichd',
+                cache: 'MISS',
+                isStale: false,
+              ),
+            ),
+          );
   }
 
   Future<void> _refresh() async {
+    if (widget.teamId.isEmpty) return;
     setState(() => _team = _repository.team(widget.teamId, forceRefresh: true));
     await _team;
   }
@@ -65,16 +100,20 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     if (snapshot.hasError) {
                       return _TeamStateCard(
                         text: 'Unable to load team profile. Pull to retry.',
-                        onRetry: () => setState(() => _team = _repository
-                            .team(widget.teamId, forceRefresh: true)),
+                        onRetry: widget.teamId.isEmpty
+                            ? null
+                            : () => setState(() => _team = _repository
+                                .team(widget.teamId, forceRefresh: true)),
                       );
                     }
                     final team = snapshot.data?.data;
                     if (team == null || team.id.isEmpty) {
                       return _TeamStateCard(
                         text: 'Team profile is not available yet.',
-                        onRetry: () => setState(() => _team = _repository
-                            .team(widget.teamId, forceRefresh: true)),
+                        onRetry: widget.teamId.isEmpty
+                            ? null
+                            : () => setState(() => _team = _repository
+                                .team(widget.teamId, forceRefresh: true)),
                       );
                     }
                     return Column(
@@ -218,7 +257,12 @@ class _SquadPlayerTile extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundColor: c.card2,
-              backgroundImage: image == null ? null : NetworkImage(image),
+              backgroundImage: image == null
+                  ? null
+                  : NetworkImage(
+                      image,
+                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                    ),
               child: image == null
                   ? Icon(Icons.person_rounded, color: c.muted)
                   : null,
@@ -289,10 +333,10 @@ class _TeamChip extends StatelessWidget {
 }
 
 class _TeamStateCard extends StatelessWidget {
-  const _TeamStateCard({required this.text, required this.onRetry});
+  const _TeamStateCard({required this.text, this.onRetry});
 
   final String text;
-  final VoidCallback onRetry;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -308,7 +352,11 @@ class _TeamStateCard extends StatelessWidget {
               style: TextStyle(color: c.muted, height: 1.4)),
           const SizedBox(height: 16),
           GradientButton(
-              label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),
+            label: 'Retry',
+            icon: Icons.refresh_rounded,
+            onTap: onRetry ?? () {},
+            outlined: onRetry == null,
+          ),
         ],
       ),
     );

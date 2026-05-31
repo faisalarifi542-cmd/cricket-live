@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
-import '../../core/api/api_config.dart';
 import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
@@ -13,7 +12,6 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.onOpenMatchDetails,
     required this.onOpenSeries,
-    required this.onOpenSearch,
     required this.onOpenNotifications,
     required this.onOpenFilters,
     required this.onOpenReminders,
@@ -25,7 +23,6 @@ class HomeScreen extends StatefulWidget {
   /// taps a section header that doesn't reference a specific match.
   final ValueChanged<String> onOpenMatchDetails;
   final VoidCallback onOpenSeries;
-  final VoidCallback onOpenSearch;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
@@ -94,11 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
         .toHeroFixture(live: topTab == 0, finished: topTab == 2);
   }
 
-  List<CompactFixture> _demoListForTab() {
-    if (topTab == 2) return AppData.matchesFinished;
-    return AppData.matchesUpcoming;
-  }
-
   VoidCallback _heroAction({String matchId = ''}) {
     switch (topTab) {
       case 0:
@@ -131,13 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 showLogo: true,
                 trailing: [
                   GlowIconButton(
-                      icon: Icons.search_rounded, onTap: widget.onOpenSearch),
-                  const SizedBox(width: 8),
-                  GlowIconButton(
                     icon: topTab == 2
                         ? Icons.notifications_none_rounded
                         : Icons.notifications_rounded,
-                    badge: '3',
                     onTap: widget.onOpenNotifications,
                   ),
                 ],
@@ -223,8 +211,6 @@ class _HomeScreenState extends State<HomeScreen> {
               _HomeTabContent(
                 future: _tabMatches,
                 topTab: topTab,
-                demoItems: _demoListForTab(),
-                allowDemoFallback: ApiConfig.allowDemoFallback,
                 onRetry: () => setState(() => _tabMatches =
                     _repository.matchesForTab(topTab, forceRefresh: true)),
                 onSwitchUpcoming: () => _setTopTab(1),
@@ -232,80 +218,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 onWatchLive: widget.onWatchLive,
                 onReminder: () => widget.onOpenReminders(),
               ),
-              const SizedBox(height: 28),
-              if (topTab == -100) ...[
-                SectionHeader('Upcoming Series',
-                    icon: Icons.calendar_view_week_rounded,
-                    action: 'See All',
-                    onAction: widget.onOpenSeries),
-                const SizedBox(height: 14),
-                _ResponsiveTwoUp(
-                  stacked: narrow,
-                  children: AppData.upcomingSeries
-                      .map((series) => UpcomingSeriesMiniCard(
-                          series: series, onTap: widget.onOpenSeries))
-                      .toList(),
-                ),
-                const SizedBox(height: 28),
-                SectionHeader('Featured Fixtures',
-                    icon: Icons.star_border_rounded,
-                    action: 'See All',
-                    onAction: widget.onOpenSeries),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: 248,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemBuilder: (_, i) => FeaturedFixtureCard(
-                      fixture: AppData.featuredFixtures[i],
-                      onTap: widget.onOpenReminders,
-                    ),
-                    separatorBuilder: (_, __) => const SizedBox(width: 14),
-                    itemCount: AppData.featuredFixtures.length,
-                  ),
-                ),
-              ] else if (topTab == -101) ...[
-                SectionHeader('Recent Results',
-                    icon: Icons.emoji_events_outlined,
-                    action: 'See All',
-                    onAction: widget.onOpenSeries),
-                const SizedBox(height: 14),
-                _ResponsiveTwoUp(
-                  stacked: narrow,
-                  children: AppData.recentResults
-                      .map((result) => RecentResultMiniCard(
-                          result: result,
-                          onTap: () => widget.onOpenMatchDetails('')))
-                      .toList(),
-                ),
-                const SizedBox(height: 28),
-                SectionHeader('Top Performers',
-                    icon: Icons.auto_graph_rounded,
-                    action: 'See All',
-                    onAction: widget.onOpenSeries),
-                const SizedBox(height: 14),
-                const PlayerOfMatchCard(),
-              ] else if (topTab == -102) ...[
-                SectionHeader('Live Centre',
-                    icon: Icons.live_tv_rounded,
-                    action: 'Open Match',
-                    onAction: () => widget.onOpenMatchDetails('')),
-                const SizedBox(height: 14),
-                LiveMatchMiniCard(
-                  onWatch: () => widget.onWatchLive(''),
-                  onOpen: () => widget.onOpenMatchDetails(''),
-                ),
-                const SizedBox(height: 14),
-                LiveMatchMiniCard(
-                  onWatch: () => widget.onWatchLive(''),
-                  onOpen: () => widget.onOpenMatchDetails(''),
-                  series: 'ENGLAND TOUR OF WEST INDIES',
-                  title: 'ENG vs WI',
-                  meta: '2nd ODI • 142/2 (28.5 OV)',
-                  accent: AppData.england,
-                  accent2: AppData.westIndies,
-                ),
-              ],
               const SizedBox(height: 28),
               SectionHeader('Quick Access',
                   icon: Icons.flash_on_rounded,
@@ -353,8 +265,6 @@ class _HomeTabContent extends StatelessWidget {
   const _HomeTabContent({
     required this.future,
     required this.topTab,
-    required this.demoItems,
-    required this.allowDemoFallback,
     required this.onRetry,
     required this.onSwitchUpcoming,
     required this.onOpenMatch,
@@ -364,8 +274,6 @@ class _HomeTabContent extends StatelessWidget {
 
   final Future<ApiEnvelope<List<CricketMatch>>> future;
   final int topTab;
-  final List<CompactFixture> demoItems;
-  final bool allowDemoFallback;
   final VoidCallback onRetry;
   final VoidCallback onSwitchUpcoming;
   final ValueChanged<String> onOpenMatch;
@@ -377,24 +285,27 @@ class _HomeTabContent extends StatelessWidget {
     return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
       future: future,
       builder: (context, snapshot) {
-        final matches = snapshot.data?.data ?? const <CricketMatch>[];
-        final useDemo =
-            allowDemoFallback && snapshot.hasError && matches.isEmpty;
-        final items = useDemo
-            ? demoItems
-            : matches
-                .map((match) => match.toCompactFixture(finished: topTab == 2))
-                .toList();
+        final allMatches = snapshot.data?.data ?? const <CricketMatch>[];
+        // Drop the hero match from the list so the same fixture is never
+        // shown twice on the Home screen. The first match in `allMatches` is
+        // promoted to the hero card right above, so we skip(1) here for the
+        // "Live Centre" / "Upcoming Fixtures" / "Recent Results" list.
+        final matches = allMatches.isEmpty
+            ? const <CricketMatch>[]
+            : allMatches.skip(1).toList();
+        final items = matches
+            .map((match) => match.toCompactFixture(finished: topTab == 2))
+            .toList();
 
         if (snapshot.connectionState == ConnectionState.waiting &&
-            matches.isEmpty) {
+            allMatches.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
             child: Center(child: CircularProgressIndicator()),
           );
         }
 
-        if (snapshot.hasError && !useDemo) {
+        if (snapshot.hasError && allMatches.isEmpty) {
           return _HomeStateCard(
             icon: Icons.cloud_off_rounded,
             title: 'Unable to refresh cricket data',
@@ -405,7 +316,7 @@ class _HomeTabContent extends StatelessWidget {
           );
         }
 
-        if (items.isEmpty) {
+        if (allMatches.isEmpty) {
           return _HomeStateCard(
             icon: Icons.sports_cricket_rounded,
             title:
@@ -416,6 +327,13 @@ class _HomeTabContent extends StatelessWidget {
             action: topTab == 0 ? 'View Upcoming' : 'Refresh',
             onAction: topTab == 0 ? onSwitchUpcoming : onRetry,
           );
+        }
+
+        if (items.isEmpty) {
+          // We have a single match — that match is the hero above, so the
+          // list below has no additional fixtures to show. Return an empty
+          // sized box so the home screen stays compact.
+          return const SizedBox.shrink();
         }
 
         final title = topTab == 0
@@ -429,26 +347,21 @@ class _HomeTabContent extends StatelessWidget {
                 ? Icons.emoji_events_outlined
                 : Icons.calendar_month_rounded;
 
-        // When showing real matches we can pair each card with its matchId.
-        final pairs = useDemo
-            ? [for (final item in items) (item, '')]
-            : [
-                for (var i = 0; i < items.length && i < matches.length; i++)
-                  (items[i], matches[i].id),
-              ];
+        // Real matches paired with their matchId.
+        final pairs = <(CompactFixture, String)>[
+          for (var i = 0; i < items.length && i < matches.length; i++)
+            (items[i], matches[i].id),
+        ];
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (useDemo)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: _HomeDemoLabel(),
-              ),
             SectionHeader(title,
                 icon: icon,
-                action: topTab == 0 ? 'Open Match' : 'See All',
-                onAction: () => onOpenMatch('')),
+                action: topTab == 0 && pairs.isNotEmpty ? 'Open Match' : null,
+                onAction: topTab == 0 && pairs.isNotEmpty
+                    ? () => onOpenMatch(pairs.first.$2)
+                    : null),
             const SizedBox(height: 14),
             for (final pair in pairs.take(4))
               Padding(
@@ -546,49 +459,6 @@ class _HomeStateCard extends StatelessWidget {
   }
 }
 
-class _HomeDemoLabel extends StatelessWidget {
-  const _HomeDemoLabel();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Text(
-      'Demo data shown because the API is unavailable in this debug build.',
-      style:
-          TextStyle(color: c.cyan, fontSize: 12, fontWeight: FontWeight.w800),
-    );
-  }
-}
-
-class _ResponsiveTwoUp extends StatelessWidget {
-  const _ResponsiveTwoUp({required this.children, required this.stacked});
-
-  final List<Widget> children;
-  final bool stacked;
-
-  @override
-  Widget build(BuildContext context) {
-    if (stacked) {
-      return Column(
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            children[i],
-            if (i != children.length - 1) const SizedBox(height: 12),
-          ]
-        ],
-      );
-    }
-    return Row(
-      children: [
-        for (var i = 0; i < children.length; i++) ...[
-          Expanded(child: children[i]),
-          if (i != children.length - 1) const SizedBox(width: 12),
-        ]
-      ],
-    );
-  }
-}
-
 class _QuickAccessGrid extends StatelessWidget {
   const _QuickAccessGrid({required this.cards, required this.narrow});
 
@@ -625,88 +495,4 @@ class _QuickAccessGrid extends StatelessWidget {
   }
 }
 
-class LiveMatchMiniCard extends StatelessWidget {
-  const LiveMatchMiniCard({
-    super.key,
-    required this.onWatch,
-    required this.onOpen,
-    this.series = 'WEST INDIES TOUR OF NEW ZEALAND',
-    this.title = 'NZ vs WI',
-    this.meta = '1st Test • Day 1 • 158/3 (38.4 OV)',
-    this.accent = AppData.newZealand,
-    this.accent2 = AppData.westIndies,
-  });
 
-  final VoidCallback onWatch;
-  final VoidCallback onOpen;
-  final String series;
-  final String title;
-  final String meta;
-  final TeamInfo accent;
-  final TeamInfo accent2;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      onTap: onOpen,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              StatusBadge(label: 'LIVE', color: c.live, filled: true),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(series,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.cyan,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              TeamBadge(accent, size: 40),
-              const SizedBox(width: 6),
-              TeamBadge(accent2, size: 40),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w900,
-                            fontSize: context.sp(20))),
-                    const SizedBox(height: 4),
-                    Text(meta,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: c.muted, fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: GradientButton(
-              label: 'Watch Live',
-              icon: Icons.play_circle_fill_rounded,
-              height: 46,
-              onTap: onWatch,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

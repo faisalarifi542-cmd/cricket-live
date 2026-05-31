@@ -2,26 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../components.dart';
-import '../../models.dart';
-import 'team_detail_screen.dart';
 
+/// Teams browse is still navigable from More -> Quick Access, but there is no
+/// global `/teams` endpoint on the backend yet. We render a clean empty state
+/// instead of the previous hardcoded list of nine international squads so
+/// teams cannot disappear and reappear depending on Cricbuzz availability.
 class TeamsScreen extends StatelessWidget {
   const TeamsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final teams = [
-      AppData.india,
-      AppData.australia,
-      AppData.england,
-      AppData.newZealand,
-      AppData.pakistan,
-      AppData.southAfrica,
-      AppData.sriLanka,
-      AppData.bangladesh,
-      AppData.westIndies,
-    ];
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),
@@ -36,36 +27,35 @@ class TeamsScreen extends StatelessWidget {
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'Teams',
               ),
-              const SizedBox(height: 18),
-              SegmentedTabs(
-                  items: const [('International', null), ('Franchise', null)],
-                  selected: 0,
-                  onChanged: (_) {}),
-              const SizedBox(height: 18),
-              for (final team in teams)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: PremiumCard(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => TeamDetailScreen(teamId: team.code),
+              const SizedBox(height: 40),
+              PremiumCard(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  children: [
+                    Icon(Icons.shield_outlined, color: c.cyan, size: 56),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Teams directory coming soon',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w900,
+                        fontSize: context.sp(22),
                       ),
                     ),
-                    padding: const EdgeInsets.all(14),
-                    child: Row(
-                      children: [
-                        TeamBadge(team, size: 42),
-                        const SizedBox(width: 14),
-                        Expanded(
-                            child: Text(team.name,
-                                style: TextStyle(
-                                    color: c.text,
-                                    fontWeight: FontWeight.w700))),
-                        Icon(Icons.chevron_right_rounded, color: c.muted),
-                      ],
+                    const SizedBox(height: 10),
+                    Text(
+                      'Until the backend exposes a global teams feed, open any series and switch to the Squads tab to see real teams and players.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: c.muted,
+                        height: 1.5,
+                        fontSize: 14,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
+              ),
             ],
           ),
         ),

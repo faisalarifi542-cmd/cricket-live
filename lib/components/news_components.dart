@@ -207,6 +207,7 @@ class _NewsImage extends StatelessWidget {
       return Image.network(
         src,
         fit: BoxFit.cover,
+        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         loadingBuilder: (context, child, progress) {
           if (progress == null) return child;
           return const EmptyOrErrorImage(label: 'Loading');

@@ -1,0 +1,75 @@
+Resolving dependencies...
+Downloading packages...
+  flutter_lints 4.0.0 (6.0.0 available)
+  lints 4.0.0 (6.1.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  meta 1.17.0 (1.18.2 available)
+  test_api 0.7.10 (0.7.12 available)
+  vector_math 2.2.0 (2.3.0 available)
+  video_player_android 2.9.5 (2.9.6 available)
+Got dependencies!
+7 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+This application is not configured to build on the web.
+To add web support to a project, run `flutter create .`.
+Launching lib\main.dart on Chrome in debug mode...
+Waiting for connection from debug service on Chrome...             24.4s
+
+Flutter run key commands.
+r Hot reload. 
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+Debug service listening on ws://127.0.0.1:62197/_fEGcjNxz0A=/ws
+A Dart VM Service on Chrome is available at: http://127.0.0.1:62197/_fEGcjNxz0A=
+The Flutter DevTools debugger and profiler on Chrome is available at: http://127.0.0.1:62197/_fEGcjNxz0A=/devtools/?uri=ws://127.0.0.1:62197/_fEGcjNxz0A=/ws
+Starting application from main method in: org-dartlang-app:/web_entrypoint.dart.
+DartError: Failed to fetch
+dart-sdk/lib/_internal/js_dev_runtime/private/ddc_runtime/errors.dart 274:3       throw_
+package:cricpro_flutter/core/api/api_client.dart 41:7                             <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 623:19               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 648:23               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 598:5                <fn>
+dart-sdk/lib/async/zone.dart 967:54                                               runBinary
+dart-sdk/lib/async/future_impl.dart 237:22                                        handleError
+dart-sdk/lib/async/future_impl.dart 960:46                                        handleError
+dart-sdk/lib/async/future_impl.dart 981:13                                        _propagateToListeners
+dart-sdk/lib/async/future_impl.dart 738:5                                         [_completeErrorObject]
+dart-sdk/lib/async/future_impl.dart 1070:18                                       <fn>
+dart-sdk/lib/async/zone.dart 967:54                                               runBinary
+dart-sdk/lib/async/future_impl.dart 237:22                                        handleError
+dart-sdk/lib/async/future_impl.dart 960:46                                        handleError
+dart-sdk/lib/async/future_impl.dart 981:13                                        _propagateToListeners
+dart-sdk/lib/async/future_impl.dart 738:5                                         [_completeErrorObject]
+dart-sdk/lib/async/future_impl.dart 742:5                                         [_completeError]
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 511:7                completeError
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 582:12               _asyncRethrow
+package:http/src/base_client.dart 74:20                                           <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 623:19               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 648:23               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 598:5                <fn>
+dart-sdk/lib/async/zone.dart 967:54                                               runBinary
+dart-sdk/lib/async/future_impl.dart 237:22                                        handleError
+dart-sdk/lib/async/future_impl.dart 960:46                                        handleError
+dart-sdk/lib/async/future_impl.dart 981:13                                        _propagateToListeners
+dart-sdk/lib/async/future_impl.dart 738:5                                         [_completeErrorObject]
+dart-sdk/lib/async/future_impl.dart 742:5                                         [_completeError]
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 511:7                completeError
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 582:12               _asyncRethrow
+package:http/src/browser_client.dart 133:3                                        <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 623:19               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 648:23               <fn>
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 598:5                <fn>
+dart-sdk/lib/async/zone.dart 967:54                                               runBinary
+dart-sdk/lib/async/future_impl.dart 237:22                                        handleError
+dart-sdk/lib/async/future_impl.dart 960:46                                        handleError
+dart-sdk/lib/async/future_impl.dart 981:13                                        _propagateToListeners
+dart-sdk/lib/async/future_impl.dart 738:5                                         [_completeErrorObject]
+dart-sdk/lib/async/future_impl.dart 832:7                                         <fn>
+dart-sdk/lib/async/schedule_microtask.dart 40:34                                  _microtaskLoop
+dart-sdk/lib/async/schedule_microtask.dart 49:5                                   _startMicrotaskLoop
+dart-sdk/lib/_internal/js_dev_runtime/private/ddc_runtime/operations.dart 118:77  tear
+dart-sdk/lib/_internal/js_dev_runtime/patch/async_patch.dart 188:69               <fn>

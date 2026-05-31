@@ -241,7 +241,20 @@ class _SeriesApiPanel extends StatelessWidget {
           final matchesResponse = responses != null && responses.length > 1
               ? responses[1] as ApiEnvelope<List<CricketMatch>>
               : null;
-          final teams = teamsResponse?.data ?? const [];
+          final rawTeams = teamsResponse?.data ?? const [];
+          // Defensive filter: drop empty team objects that have neither a
+          // teamId nor a teamName. The deployed backend currently returns
+          // 10 empty placeholders for some series; this guarantees the UI
+          // doesn't render "Team / TEA" placeholder rows even when the
+          // API still returns stale empty entries.
+          final teams = rawTeams.where((entry) {
+            final map = apiMap(entry);
+            final id =
+                apiString(map['teamId'] ?? map['team_id'] ?? map['id']);
+            final name = apiString(
+                map['teamName'] ?? map['team_name'] ?? map['name']);
+            return id.isNotEmpty || name.isNotEmpty;
+          }).toList(growable: false);
           final matches = matchesResponse?.data ?? const <CricketMatch>[];
           final resolvedTeams =
               teams.isNotEmpty ? teams : teamsFromSeriesMatches(matches);
@@ -567,10 +580,20 @@ class _TeamCard extends StatelessWidget {
       players.isNotEmpty ? '${players.length} players' : '',
     ].where((value) => value.isNotEmpty).join(' • ');
     return PremiumCard(
-      onTap: id.isEmpty
-          ? null
-          : () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => TeamDetailScreen(teamId: id))),
+      onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => TeamDetailScreen(
+              teamId: id,
+              initialName: name,
+              initialShortName: short,
+              initialLogoUrl: team.logo,
+              sourceSeriesId: apiString(
+                  data['seriesId'] ??
+                      data['series_id'] ??
+                      data['source_series_id'],
+                  ''),
+            ),
+          )),
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
@@ -891,6 +914,7 @@ class _NetworkAvatar extends StatelessWidget {
           : Image.network(
               imageUrl,
               fit: BoxFit.cover,
+              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
               errorBuilder: (_, __, ___) => _fallback(c),
             ),
     );

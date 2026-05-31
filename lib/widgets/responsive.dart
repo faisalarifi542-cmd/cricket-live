@@ -287,13 +287,13 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return;
-    // Use Scrollable.ensureVisible with `alignment: 0.5` to center the
-    // selected tab in the viewport. This is reliable regardless of viewport
-    // width and avoids the manual offset math (which previously scrolled the
-    // first tab partially off-screen, clipping `Scorecard` to `ecard`).
+    // Keep the selected tab left-aligned rather than centered. Centering can
+    // push the leading/trailing labels partially off-screen on narrow widths
+    // and clip them to "ecard" / "Sq".
     Scrollable.ensureVisible(
       ctx,
-      alignment: 0.5,
+      alignment: 0.0,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
     );
@@ -342,7 +342,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         key: _keys[i],
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        padding: EdgeInsets.symmetric(horizontal: context.w <= 420 ? 10 : 12),
         decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
           borderRadius: BorderRadius.circular(28),
@@ -372,7 +372,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
           style: TextStyle(
             color: selected ? Colors.white : c.text,
             fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            fontSize: context.sp(15),
+            fontSize: context.sp(14.5),
           ),
         ),
       ),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
@@ -5,6 +6,7 @@ import '../../components.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
 import '../../repositories/cricket_repository.dart';
+import '../player/player_detail_screen.dart';
 
 class RankingsScreen extends StatefulWidget {
   const RankingsScreen({super.key});
@@ -38,17 +40,30 @@ class _RankingsScreenState extends State<RankingsScreen> {
     _rankings = _load();
   }
 
-  Future<ApiEnvelope<List<RankingEntry>>> _load({bool forceRefresh = false}) {
-    return _repository.rankings(
+  Future<ApiEnvelope<List<RankingEntry>>> _load(
+      {bool forceRefresh = false}) async {
+    if (kDebugMode) {
+      debugPrint('RANKINGS selectedCategory=$category selectedFormat=$format');
+      debugPrint(
+          'RANKINGS GET /rankings?gender=$gender&category=$category&format=$format');
+    }
+    final response = await _repository.rankings(
       gender: gender,
       category: category,
       format: format,
       forceRefresh: forceRefresh,
     );
+    if (kDebugMode) {
+      final first = response.data.isEmpty ? '' : response.data.first.name;
+      debugPrint('RANKINGS rows=${response.data.length} first=$first');
+    }
+    return response;
   }
 
   void _reload({bool forceRefresh = false}) {
-    setState(() => _rankings = _load(forceRefresh: forceRefresh));
+    setState(() {
+      _rankings = _load(forceRefresh: forceRefresh);
+    });
   }
 
   @override
@@ -101,9 +116,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
                       child: _DropdownPill(
                         icon: currentCategory.icon,
                         label: currentCategory.label.toUpperCase(),
-                        onTap: () => _showPicker(categories, category, (value) {
+                        onTap: () => _pickFilter(categories, category, (value) {
                           category = value;
-                          _reload();
                         }),
                       ),
                     ),
@@ -112,9 +126,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
                       child: _DropdownPill(
                         icon: currentFormat.icon,
                         label: currentFormat.label.toUpperCase(),
-                        onTap: () => _showPicker(formats, format, (value) {
+                        onTap: () => _pickFilter(formats, format, (value) {
                           format = value;
-                          _reload();
                         }),
                       ),
                     ),
@@ -122,6 +135,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                 ),
                 const SizedBox(height: 24),
                 FutureBuilder<ApiEnvelope<List<RankingEntry>>>(
+                  key: ValueKey('rankings:$gender:$category:$format'),
                   future: _rankings,
                   builder: (context, snapshot) {
                     final rows = snapshot.data?.data ?? const <RankingEntry>[];
@@ -135,12 +149,17 @@ class _RankingsScreenState extends State<RankingsScreen> {
                     if (snapshot.hasError) {
                       return _RankingStateCard(
                         title: 'Unable to load rankings',
+                        subtitle:
+                            'The ranking service is temporarily unavailable. Pull to refresh or try again later.',
                         onRetry: () => _reload(forceRefresh: true),
                       );
                     }
                     if (rows.isEmpty) {
                       return _RankingStateCard(
-                        title: 'Rankings are not available yet',
+                        title: 'No ${currentCategory.label.toLowerCase()} '
+                            'ranking available for ${currentFormat.label} yet',
+                        subtitle:
+                            'Try a different category or format. New rankings appear here once the ICC source updates.',
                         onRetry: () => _reload(forceRefresh: true),
                       );
                     }
@@ -149,7 +168,10 @@ class _RankingsScreenState extends State<RankingsScreen> {
                         for (final row in rows)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 16),
-                            child: _PremiumRankingCard(entry: row),
+                            child: _RankingTapTarget(
+                              entry: row,
+                              child: _PremiumRankingCard(entry: row),
+                            ),
                           ),
                       ],
                     );
@@ -163,24 +185,26 @@ class _RankingsScreenState extends State<RankingsScreen> {
     );
   }
 
-  void _showPicker(
+  Future<void> _pickFilter(
     List<_FilterOption> options,
     String selected,
     ValueChanged<String> onSelected,
-  ) {
-    showModalBottomSheet(
+  ) async {
+    final value = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => _PickerSheet(
         options: options,
         selected: selected,
-        onSelected: onSelected,
       ),
     );
+    if (!mounted || value == null || value.isEmpty || value == selected) return;
+    onSelected(value);
+    _reload(forceRefresh: true);
   }
 
   void _showGenderPicker() {
-    _showPicker(
+    _pickFilter(
       const [
         _FilterOption('Men', 'men', Icons.male_rounded),
         _FilterOption('Women', 'women', Icons.female_rounded),
@@ -188,8 +212,42 @@ class _RankingsScreenState extends State<RankingsScreen> {
       gender,
       (value) {
         gender = value;
-        _reload();
       },
+    );
+  }
+}
+
+class _RankingTapTarget extends StatelessWidget {
+  const _RankingTapTarget({required this.entry, required this.child});
+
+  final RankingEntry entry;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = entry.playerId;
+    if (entry.isTeam || id == null || id.isEmpty) return child;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlayerDetailScreen(playerId: id),
+            settings: RouteSettings(
+              arguments: {
+                'playerId': id,
+                'name': entry.name,
+                'rank': entry.rank,
+                'points': entry.points,
+                'imageUrl': entry.imageUrl,
+                'country': entry.country,
+              },
+            ),
+          ),
+        ),
+        child: child,
+      ),
     );
   }
 }
@@ -205,12 +263,10 @@ class _PickerSheet extends StatelessWidget {
   const _PickerSheet({
     required this.options,
     required this.selected,
-    required this.onSelected,
   });
 
   final List<_FilterOption> options;
   final String selected;
-  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -233,8 +289,7 @@ class _PickerSheet extends StatelessWidget {
                   ? Icon(Icons.check, color: context.cric.cyan)
                   : null,
               onTap: () {
-                onSelected(option.value);
-                Navigator.pop(context);
+                Navigator.pop(context, option.value);
               },
             ),
         ],
@@ -386,7 +441,7 @@ class _PremiumRankingCard extends StatelessWidget {
                     _Metric(label: 'RATING', value: '${entry.rating}'),
                     if (entry.points != null)
                       _Metric(label: 'PTS', value: '${entry.points}'),
-                    if (entry.matches != null)
+                    if ((entry.matches ?? 0) > 0)
                       _Metric(label: 'MAT', value: '${entry.matches}'),
                   ],
                 ),
@@ -486,6 +541,7 @@ class _RankingImage extends StatelessWidget {
           : Image.network(
               image,
               fit: BoxFit.cover,
+              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
               errorBuilder: (_, __, ___) => _Initial(entry.name),
             ),
     );
@@ -514,9 +570,14 @@ class _Initial extends StatelessWidget {
 }
 
 class _RankingStateCard extends StatelessWidget {
-  const _RankingStateCard({required this.title, required this.onRetry});
+  const _RankingStateCard({
+    required this.title,
+    required this.onRetry,
+    this.subtitle,
+  });
 
   final String title;
+  final String? subtitle;
   final VoidCallback onRetry;
 
   @override
@@ -532,6 +593,12 @@ class _RankingStateCard extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(subtitle!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.muted, height: 1.4, fontSize: 13)),
+          ],
           const SizedBox(height: 16),
           GradientButton(
               label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
-import '../../core/api/api_config.dart';
 import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
@@ -12,7 +11,6 @@ class MatchesScreen extends StatefulWidget {
   const MatchesScreen({
     super.key,
     required this.onOpenMatch,
-    required this.onOpenSearch,
     required this.onOpenFilters,
     required this.onOpenReminders,
     required this.onOpenSeries,
@@ -22,7 +20,6 @@ class MatchesScreen extends StatefulWidget {
   /// Invoked with the resolved match id (empty string allowed) when a card
   /// is tapped.
   final ValueChanged<String> onOpenMatch;
-  final VoidCallback onOpenSearch;
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
   final VoidCallback onOpenSeries;
@@ -64,8 +61,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
   Widget build(BuildContext context) {
     final c = context.cric;
     final filters = ['All', 'International', 'League', 'Domestic'];
-    final list =
-        topTab == 2 ? AppData.matchesFinished : AppData.matchesUpcoming;
     return Container(
       decoration: BoxDecoration(gradient: c.bgGradient),
       child: SafeArea(
@@ -78,9 +73,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
               AppHeader(
                 showLogo: true,
                 trailing: [
-                  GlowIconButton(
-                      icon: Icons.search_rounded, onTap: widget.onOpenSearch),
-                  const SizedBox(width: 8),
                   GlowIconButton(
                       icon: Icons.filter_alt_outlined,
                       onTap: widget.onOpenFilters),
@@ -114,15 +106,10 @@ class _MatchesScreenState extends State<MatchesScreen> {
                 builder: (context, snapshot) {
                   final apiItems =
                       snapshot.data?.data ?? const <CricketMatch>[];
-                  final useDemo = ApiConfig.allowDemoFallback &&
-                      apiItems.isEmpty &&
-                      snapshot.hasError;
-                  final items = useDemo
-                      ? list
-                      : apiItems
-                          .map((match) =>
-                              match.toCompactFixture(finished: topTab == 2))
-                          .toList();
+                  final items = apiItems
+                      .map((match) =>
+                          match.toCompactFixture(finished: topTab == 2))
+                      .toList();
 
                   if (snapshot.connectionState == ConnectionState.waiting &&
                       apiItems.isEmpty) {
@@ -132,7 +119,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
                     );
                   }
 
-                  if (snapshot.hasError && !useDemo) {
+                  if (snapshot.hasError) {
                     return _StateCard(
                       icon: Icons.cloud_off_rounded,
                       title: 'Unable to load matches',
@@ -165,11 +152,6 @@ class _MatchesScreenState extends State<MatchesScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (useDemo)
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 12),
-                          child: _DemoDataLabel(),
-                        ),
                       if (snapshot.data?.meta.lastUpdated != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
@@ -185,9 +167,8 @@ class _MatchesScreenState extends State<MatchesScreen> {
                         Padding(
                           padding: const EdgeInsets.only(bottom: 18),
                           child: Builder(builder: (_) {
-                            final matchId = (useDemo || i >= apiItems.length)
-                                ? ''
-                                : apiItems[i].id;
+                            final matchId =
+                                i >= apiItems.length ? '' : apiItems[i].id;
                             void onTap() => widget.onOpenMatch(matchId);
                             return topTab == 2
                                 ? FinishedMatchCard(
@@ -286,16 +267,4 @@ class _StateCard extends StatelessWidget {
   }
 }
 
-class _DemoDataLabel extends StatelessWidget {
-  const _DemoDataLabel();
 
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Text(
-      'Demo data shown because the API is unavailable in this debug build.',
-      style: TextStyle(
-          color: c.warning, fontSize: 12, fontWeight: FontWeight.w800),
-    );
-  }
-}

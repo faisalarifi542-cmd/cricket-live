@@ -4,6 +4,8 @@ import { cacheMiddleware } from '../middleware/cache.js';
 import { playerStatsQueue } from '../workers/queues.js';
 
 export default async function playerRoutes(fastify) {
+  const playerCacheKey = (id) => `${KEYS.player(id)}:v2`;
+
   // GET /player/:id
   fastify.get('/player/:id', {
     schema: {
@@ -11,11 +13,11 @@ export default async function playerRoutes(fastify) {
       tags: ['Players'],
       params: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
     },
-    preHandler: cacheMiddleware((req) => KEYS.player(req.params.id), TTL.PLAYER),
+    preHandler: cacheMiddleware((req) => playerCacheKey(req.params.id), TTL.PLAYER),
   }, async (request, reply) => {
     const { id } = request.params;
     const { data } = await cacheGetOrFetch(
-      KEYS.player(id),
+      playerCacheKey(id),
       TTL.PLAYER,
       async () => {
         const result = await providerManager.execute('getPlayerInfo', id);

@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 class ApiConfig {
   const ApiConfig._();
 
@@ -7,9 +5,6 @@ class ApiConfig {
     'CRICKET_API_BASE_URL',
     defaultValue: 'https://api.webcrichd.co',
   );
-
-  static bool get allowDemoFallback =>
-      kDebugMode || const bool.fromEnvironment('CRICPRO_ALLOW_DEMO_DATA');
 
   static Uri uri(String path, [Map<String, dynamic>? query]) {
     final normalizedPath = path.startsWith('/') ? path : '/$path';

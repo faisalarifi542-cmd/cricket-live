@@ -10,12 +10,10 @@ import '../../repositories/cricket_repository.dart';
 class NewsScreen extends StatefulWidget {
   const NewsScreen({
     super.key,
-    required this.onOpenSearch,
     required this.onOpenFilters,
     required this.onOpenArticle,
   });
 
-  final VoidCallback onOpenSearch;
   final VoidCallback onOpenFilters;
   final ValueChanged<NewsArticle> onOpenArticle;
 
@@ -95,9 +93,6 @@ class _NewsScreenState extends State<NewsScreen> {
                 showLogo: true,
                 subtitle: 'NEWS',
                 trailing: [
-                  GlowIconButton(
-                      icon: Icons.search_rounded, onTap: widget.onOpenSearch),
-                  const SizedBox(width: 8),
                   GlowIconButton(
                       icon: Icons.filter_alt_outlined,
                       onTap: widget.onOpenFilters),

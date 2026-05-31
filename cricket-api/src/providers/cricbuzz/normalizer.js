@@ -624,20 +624,38 @@ export function normalizeMatchSquads(raw, matchId) {
 export function normalizePlayerInfo(raw) {
   if (!raw) return null;
   const p = raw.player || raw;
+  const battingStats = Array.isArray(p.battingStats) ? p.battingStats : [];
+  const bowlingStats = Array.isArray(p.bowlingStats) ? p.bowlingStats : [];
+  const careerSummary = Array.isArray(p.careerSummary) ? p.careerSummary : [];
+  const recentForm = Array.isArray(p.recentForm) ? p.recentForm : Array.isArray(p.recent) ? p.recent : [];
+  const achievements = Array.isArray(p.achievements) ? p.achievements : [];
+  const teams = Array.isArray(p.teams) ? p.teams : [];
 
   return {
     player_id: String(p.id || p.playerId || ''),
-    name: p.name || p.longName || '',
-    full_name: p.longName || p.name || '',
-    dob: p.DoB || p.dateOfBirth || null,
+    name: p.name || p.fullName || p.longName || '',
+    full_name: p.fullName || p.longName || p.name || '',
+    country: p.country || p.nationality || '',
+    country_code: p.countryCode || p.country_code || '',
+    dob: p.dateOfBirth || p.DoB || p.dob || null,
+    birth_place: p.birthPlace || p.birth_place || '',
     nationality: p.nationality || p.country || '',
     role: p.role || p.playingRole || '',
-    batting_style: p.bat || p.battingStyle || '',
-    bowling_style: p.bowl || p.bowlingStyle || '',
-    image_url: p.image || p.imageUrl || '',
-    teams: p.teams || [],
+    batting_style: p.battingStyle || p.bat || '',
+    bowling_style: p.bowlingStyle || p.bowl || '',
+    jersey_number: p.jerseyNumber || p.jersey_number || '',
+    image_id: p.imageId || p.image_id || '',
+    image_url: p.imageUrl || p.image || '',
+    rankings: p.rankings || raw.rankings || null,
+    teams,
     bio: p.bio || '',
-    stats: normalizePlayerStats(raw.stats || raw.career || {}),
+    career_summary: careerSummary,
+    batting_stats: battingStats,
+    bowling_stats: bowlingStats,
+    recent_form: recentForm,
+    achievements,
+    stats: normalizePlayerStats(raw.stats || p.stats || raw.career || p.career || {}),
+    career: raw.career || p.career || {},
     last_updated: new Date().toISOString(),
   };
 }

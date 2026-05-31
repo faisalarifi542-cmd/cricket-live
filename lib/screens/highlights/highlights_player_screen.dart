@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../components/highlights_components.dart';
 import '../../models.dart';
-import '../../screens.dart';
 
 class HighlightsPlayerScreen extends StatelessWidget {
   const HighlightsPlayerScreen({super.key, this.video});
@@ -13,7 +13,16 @@ class HighlightsPlayerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final v = video ?? AppData.topMoments.first;
+    final v = video ??
+        (AppData.topMoments.isNotEmpty
+            ? AppData.topMoments.first
+            : const VideoHighlight(
+                title: 'Highlights unavailable',
+                match: 'No highlight clip is available yet.',
+                views: '0 views',
+                duration: '--:--',
+                tag: 'HIGHLIGHTS',
+              ));
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),

@@ -622,6 +622,8 @@ class RankingEntry {
     required this.name,
     required this.country,
     required this.rating,
+    this.playerId,
+    this.teamId,
     this.points,
     this.matches,
     this.movement = 0,
@@ -633,6 +635,8 @@ class RankingEntry {
   final String name;
   final String country;
   final int rating;
+  final String? playerId;
+  final String? teamId;
   final int? points;
   final int? matches;
   final int movement;
@@ -655,6 +659,14 @@ class RankingEntry {
           isTeam ? 'Team' : 'Player'),
       country: apiString(json['country'] ?? json['countryCode'] ?? '', ''),
       rating: apiInt(json['rating']) ?? 0,
+      playerId:
+          apiString(json['playerId'] ?? json['player_id'] ?? json['id'], '')
+                  .isEmpty
+              ? null
+              : apiString(json['playerId'] ?? json['player_id'] ?? json['id']),
+      teamId: apiString(json['teamId'] ?? json['team_id'], '').isEmpty
+          ? null
+          : apiString(json['teamId'] ?? json['team_id']),
       points: apiInt(json['points']),
       matches: apiInt(json['matches'] ?? json['matchCount']),
       movement: apiInt(json['movement'] ?? json['trend']) ?? 0,
@@ -668,40 +680,83 @@ class ApiPlayer {
   const ApiPlayer({
     required this.id,
     required this.name,
+    this.fullName,
     this.role,
     this.country,
+    this.countryCode,
     this.image,
+    this.imageId,
     this.battingStyle,
     this.bowlingStyle,
     this.dateOfBirth,
+    this.birthPlace,
+    this.nationality,
+    this.debut,
+    this.jerseyNumber,
+    this.rankings,
+    this.careerSummary = const [],
+    this.battingStats = const [],
+    this.bowlingStats = const [],
+    this.recentForm = const [],
+    this.achievements = const [],
+    this.teams = const [],
+    this.bio,
     this.stats = const {},
     this.recent = const [],
   });
   final String id;
   final String name;
+  final String? fullName;
   final String? role;
   final String? country;
+  final String? countryCode;
   final String? image;
+  final String? imageId;
   final String? battingStyle;
   final String? bowlingStyle;
   final String? dateOfBirth;
+  final String? birthPlace;
+  final String? nationality;
+  final String? debut;
+  final String? jerseyNumber;
+  final Map<String, dynamic>? rankings;
+  final List<dynamic> careerSummary;
+  final List<dynamic> battingStats;
+  final List<dynamic> bowlingStats;
+  final List<dynamic> recentForm;
+  final List<dynamic> achievements;
+  final List<dynamic> teams;
+  final String? bio;
   final Map<String, dynamic> stats;
   final List<dynamic> recent;
   factory ApiPlayer.fromJson(dynamic value) {
     final json = apiMap(value);
+    final imageId = apiString(json['imageId'] ?? json['image_id'], '').isEmpty
+        ? null
+        : apiString(json['imageId'] ?? json['image_id']);
+    final imageUrl = resolveCricbuzzImageUrl(json) ??
+        (imageId == null
+            ? ''
+            : 'https://static.cricbuzz.com/a/img/v1/i1/c${imageId.startsWith('c') ? imageId.substring(1) : imageId}/i.jpg');
     return ApiPlayer(
-      id: apiString(json['playerId'] ?? json['id']),
+      id: apiString(json['playerId'] ?? json['player_id'] ?? json['id']),
       name: apiString(json['name'], 'Player'),
+      fullName:
+          apiString(json['fullName'] ?? json['full_name'] ?? json['name'], ''),
       role: json['role']?.toString(),
       country: apiString(json['country'] ?? json['nationality'], '').isEmpty
           ? null
           : apiString(json['country'] ?? json['nationality']),
-      image: apiString(
-                  json['image'] ?? json['imageUrl'] ?? json['profileImage'], '')
-              .isEmpty
-          ? null
-          : apiString(
-              json['image'] ?? json['imageUrl'] ?? json['profileImage']),
+      countryCode:
+          apiString(json['countryCode'] ?? json['country_code'], '').isEmpty
+              ? null
+              : apiString(json['countryCode'] ?? json['country_code']),
+      image: imageUrl.isNotEmpty
+          ? imageUrl
+          : (apiString(json['image'] ?? json['profileImage'], '').isEmpty
+              ? null
+              : apiString(json['image'] ?? json['profileImage'])),
+      imageId: imageId,
       battingStyle:
           apiString(json['battingStyle'] ?? json['batting_style'], '').isEmpty
               ? null
@@ -713,6 +768,28 @@ class ApiPlayer {
       dateOfBirth: apiString(json['dateOfBirth'] ?? json['dob'], '').isEmpty
           ? null
           : apiString(json['dateOfBirth'] ?? json['dob']),
+      birthPlace:
+          apiString(json['birthPlace'] ?? json['birth_place'], '').isEmpty
+              ? null
+              : apiString(json['birthPlace'] ?? json['birth_place']),
+      nationality: apiString(json['nationality'] ?? json['country'], '').isEmpty
+          ? null
+          : apiString(json['nationality'] ?? json['country']),
+      debut: apiString(json['debut'], '').isEmpty
+          ? null
+          : apiString(json['debut']),
+      jerseyNumber:
+          apiString(json['jerseyNumber'] ?? json['jersey_number'], '').isEmpty
+              ? null
+              : apiString(json['jerseyNumber'] ?? json['jersey_number']),
+      rankings: apiMap(json['rankings']),
+      careerSummary: apiList(json['careerSummary'] ?? json['career_summary']),
+      battingStats: apiList(json['battingStats'] ?? json['batting_stats']),
+      bowlingStats: apiList(json['bowlingStats'] ?? json['bowling_stats']),
+      recentForm: apiList(json['recentForm'] ?? json['recent_form']),
+      achievements: apiList(json['achievements']),
+      teams: apiList(json['teams']),
+      bio: apiString(json['bio'], '').isEmpty ? null : apiString(json['bio']),
       stats: apiMap(json['stats'] ?? json['careerStats']),
       recent: apiList(json['recent'] ?? json['recentPerformance']),
     );
