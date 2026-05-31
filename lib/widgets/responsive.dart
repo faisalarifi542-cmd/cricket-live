@@ -287,13 +287,17 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return;
-    // Use Scrollable.ensureVisible with `alignment: 0.5` to center the
-    // selected tab in the viewport. This is reliable regardless of viewport
-    // width and avoids the manual offset math (which previously scrolled the
-    // first tab partially off-screen, clipping `Scorecard` to `ecard`).
+    // Use Scrollable.ensureVisible with a small leading alignment instead of
+    // 0.5 (centering). Centering the selected tab caused the first ("Scorecard")
+    // and last ("Squads") tabs to get pushed off the edge and clipped to
+    // "ecard" / "Sq". For index 0 we left-align (alignment 0.0) so the row
+    // starts exactly at the leading edge on first build; for any other index
+    // we use alignment 0.1, which keeps the selected tab fully visible without
+    // over-scrolling past the neighbouring labels.
     Scrollable.ensureVisible(
       ctx,
-      alignment: 0.5,
+      alignment: i == 0 ? 0.0 : 0.1,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
     );

@@ -31,6 +31,9 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
   Future<ApiEnvelope<Map<String, dynamic>>>? _summaryFuture;
   Future<bool>? _streamAvailabilityFuture;
   Timer? _liveTimer;
+  Timer? _matchTimer;
+  Timer? _scorecardTimer;
+  Timer? _commentaryTimer;
 
   String get _matchId {
     final routeArg = ModalRoute.of(context)?.settings.arguments;
@@ -50,12 +53,33 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
           _repository.matchLiveLine(_matchId, forceRefresh: true);
         }
       });
+      _matchTimer ??= Timer.periodic(const Duration(seconds: 10), (_) {
+        if (!mounted || _matchId.isEmpty) return;
+        // Refresh the hero card data in the background.
+        final next = _repository.matchDetail(_matchId, forceRefresh: true);
+        if (mounted) setState(() => _summaryFuture = next);
+      });
+      _scorecardTimer ??= Timer.periodic(const Duration(seconds: 25), (_) {
+        if (!mounted || _matchId.isEmpty) return;
+        if (tab != 0) return;
+        final next = _repository.matchScorecard(_matchId, forceRefresh: true);
+        if (mounted) setState(() => _tabFutures[0] = next);
+      });
+      _commentaryTimer ??= Timer.periodic(const Duration(seconds: 25), (_) {
+        if (!mounted || _matchId.isEmpty) return;
+        if (tab != 1) return;
+        final next = _repository.matchCommentary(_matchId, forceRefresh: true);
+        if (mounted) setState(() => _tabFutures[1] = next);
+      });
     }
   }
 
   @override
   void dispose() {
     _liveTimer?.cancel();
+    _matchTimer?.cancel();
+    _scorecardTimer?.cancel();
+    _commentaryTimer?.cancel();
     super.dispose();
   }
 
@@ -105,8 +129,6 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                       icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                   title: 'Match Details',
                   trailing: const [
-                    GlowIconButton(icon: Icons.search_rounded),
-                    SizedBox(width: 8),
                     GlowIconButton(icon: Icons.filter_alt_outlined),
                   ],
                 ),
@@ -387,11 +409,7 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
           ),
         ),
         const SizedBox(height: 12),
-        _MiniRows(rows: {
-          'Extras': current['extras'],
-          'Total': current['total'] ?? _scoreText(current),
-          'Fall of wickets': current['fall_of_wickets'] ?? current['fow'],
-        }),
+        _ScorecardSummaryCard(innings: current),
         const SizedBox(height: 12),
         _SectionCard(
           title: 'Bowling',
@@ -417,6 +435,17 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
             empty: 'Bowling figures are not available yet.',
           ),
         ),
+        const SizedBox(height: 12),
+        _FallOfWicketsCard(fows: apiList(current['fall_of_wickets'] ?? current['fow'])),
+        const SizedBox(height: 12),
+        _PartnershipsCard(partnerships: apiList(current['partnerships'])),
+        const SizedBox(height: 12),
+        _DidNotBatLine(
+          players: apiList(current['did_not_bat'] ??
+              current['didNotBat'] ??
+              current['yet_to_bat'] ??
+              current['yetToBat']),
+        ),
         if (batting.isEmpty && bowling.isEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -425,6 +454,263 @@ class _ScorecardPanelState extends State<_ScorecardPanel> {
                 style: TextStyle(color: c.muted)),
           ),
       ],
+    );
+  }
+}
+
+String _formatExtrasLine(Map<String, dynamic> extras) {
+  if (extras.isEmpty) return '';
+  final total = str(extras['total'] ?? extras['t'], fallback: '0');
+  final byes = str(extras['byes'] ?? extras['b'], fallback: '0');
+  final legByes = str(extras['leg_byes'] ?? extras['legByes'] ?? extras['lb'], fallback: '0');
+  final wides = str(extras['wides'] ?? extras['w'], fallback: '0');
+  final noBalls = str(extras['no_balls'] ?? extras['noBalls'] ?? extras['nb'], fallback: '0');
+  final penalty = str(extras['penalty'] ?? extras['p'], fallback: '0');
+  return '$total (b $byes, lb $legByes, w $wides, nb $noBalls, p $penalty)';
+}
+
+String _formatTotalLine(Map<String, dynamic> total, Map<String, dynamic> innings) {
+  // Prefer structured backend shape: { runs, wickets, overs }.
+  if (total.isNotEmpty) {
+    final runs = str(total['runs'] ?? total['r'], fallback: '0');
+    final wickets = str(total['wickets'] ?? total['w'], fallback: '0');
+    final oversRaw = str(total['overs'] ?? total['o']);
+    final overs = oversRaw.isEmpty ? '' : normalizeOversText(oversRaw);
+    if (runs == '0' && wickets == '0' && overs.isEmpty) return '';
+    return overs.isEmpty ? '$runs/$wickets' : '$runs/$wickets ($overs ov)';
+  }
+  return _scoreText(innings);
+}
+
+class _ScorecardSummaryCard extends StatelessWidget {
+  const _ScorecardSummaryCard({required this.innings});
+
+  final Map<String, dynamic> innings;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final extrasRaw = innings['extras'];
+    final extrasMap = extrasRaw is Map<String, dynamic> ? extrasRaw : <String, dynamic>{};
+    final extrasText = extrasRaw is String && extrasRaw.trim().isNotEmpty
+        ? extrasRaw.trim()
+        : _formatExtrasLine(extrasMap);
+    final totalRaw = innings['total'];
+    final totalMap = totalRaw is Map<String, dynamic> ? totalRaw : <String, dynamic>{};
+    final totalText = totalRaw is String && totalRaw.trim().isNotEmpty
+        ? totalRaw.trim()
+        : _formatTotalLine(totalMap, innings);
+    final rrRaw = str(innings['run_rate'] ?? innings['runRate']);
+    final rrText = rrRaw.isEmpty ? '' : 'Run rate: $rrRaw';
+    final visible = <MapEntry<String, String>>[];
+    if (extrasText.isNotEmpty) visible.add(MapEntry('Extras', extrasText));
+    if (totalText.isNotEmpty) visible.add(MapEntry('Total', totalText));
+    if (rrText.isNotEmpty) visible.add(MapEntry('Run rate', rrRaw));
+    if (visible.isEmpty) return const SizedBox.shrink();
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final entry in visible)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 96,
+                    child: Text(entry.key,
+                        style: TextStyle(
+                            color: c.muted,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                            letterSpacing: 0.4)),
+                  ),
+                  Expanded(
+                    child: Text(entry.value,
+                        style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w900,
+                            height: 1.3)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FallOfWicketsCard extends StatelessWidget {
+  const _FallOfWicketsCard({required this.fows});
+
+  final List<dynamic> fows;
+
+  @override
+  Widget build(BuildContext context) {
+    if (fows.isEmpty) return const SizedBox.shrink();
+    final c = context.cric;
+    final entries = <String>[];
+    for (final raw in fows) {
+      final row = apiMap(raw);
+      // Backend shape may vary: {wicket_number, score, batsman, overs}
+      // or {wktNbr, score, batsmanName, overNbr}.
+      final wkt = str(row['wicket_number'] ??
+          row['wktNbr'] ??
+          row['wicket'] ??
+          row['wkt']);
+      final score = str(row['score'] ??
+          row['runs'] ??
+          row['wicketScore'] ??
+          row['scoreAtFall']);
+      final batsman = str(row['batsman'] ??
+          row['batsmanName'] ??
+          row['player_name'] ??
+          row['name']);
+      final oversRaw = str(row['overs'] ??
+          row['overNbr'] ??
+          row['over']);
+      final overs = oversRaw.isEmpty ? '' : normalizeOversText(oversRaw);
+      if (wkt.isEmpty && score.isEmpty && batsman.isEmpty) continue;
+      final left = wkt.isEmpty ? score : (score.isEmpty ? wkt : '$wkt-$score');
+      final tail = <String>[
+        if (batsman.isNotEmpty) batsman,
+        if (overs.isNotEmpty) '$overs ov',
+      ].join(', ');
+      entries.add(tail.isEmpty ? left : '$left ($tail)');
+    }
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Fall of wickets',
+              style: TextStyle(
+                  color: c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                  letterSpacing: 0.2)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final text in entries)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: c.card,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: Text(text,
+                      style: TextStyle(
+                          color: c.text,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12)),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PartnershipsCard extends StatelessWidget {
+  const _PartnershipsCard({required this.partnerships});
+
+  final List<dynamic> partnerships;
+
+  @override
+  Widget build(BuildContext context) {
+    if (partnerships.isEmpty) return const SizedBox.shrink();
+    final c = context.cric;
+    final entries = <String>[];
+    for (final raw in partnerships) {
+      final row = apiMap(raw);
+      final runs = str(row['runs'] ?? row['totalRuns'] ?? row['r']);
+      final balls = str(row['balls'] ?? row['totalBalls'] ?? row['b']);
+      final p1 = str(row['bat1Name'] ?? row['player_1'] ?? row['batsman1']);
+      final p2 = str(row['bat2Name'] ?? row['player_2'] ?? row['batsman2']);
+      if (runs.isEmpty && p1.isEmpty && p2.isEmpty) continue;
+      final names = [p1, p2].where((s) => s.isNotEmpty).join(' & ');
+      final figure = balls.isEmpty ? runs : '$runs ($balls)';
+      entries.add(
+          names.isEmpty ? figure : '$names — $figure');
+    }
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Partnerships',
+              style: TextStyle(
+                  color: c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                  letterSpacing: 0.2)),
+          const SizedBox(height: 10),
+          for (final entry in entries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(entry,
+                  style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      height: 1.3)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DidNotBatLine extends StatelessWidget {
+  const _DidNotBatLine({required this.players});
+
+  final List<dynamic> players;
+
+  @override
+  Widget build(BuildContext context) {
+    if (players.isEmpty) return const SizedBox.shrink();
+    final c = context.cric;
+    final names = <String>[];
+    for (final raw in players) {
+      if (raw is String && raw.trim().isNotEmpty) {
+        names.add(raw.trim());
+        continue;
+      }
+      final row = apiMap(raw);
+      final n = str(row['name'] ?? row['player_name'] ?? row['fullName']);
+      if (n.isNotEmpty) names.add(n);
+    }
+    if (names.isEmpty) return const SizedBox.shrink();
+    return PremiumCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Did not bat',
+              style: TextStyle(
+                  color: c.muted,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                  letterSpacing: 0.4)),
+          const SizedBox(height: 6),
+          Text(names.join(', '),
+              style: TextStyle(
+                  color: c.text,
+                  fontWeight: FontWeight.w700,
+                  height: 1.3)),
+        ],
+      ),
     );
   }
 }
@@ -506,7 +792,7 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
             padding: const EdgeInsets.only(bottom: 10),
             child: _CommentaryCard(row: apiMap(item)),
           ),
-        if (apiMap(widget.data['pagination']).isNotEmpty)
+        if (_paginationHasMultiplePages(widget.data['pagination']))
           _PaginationHint(data: apiMap(widget.data['pagination'])),
       ],
     );
@@ -1134,6 +1420,13 @@ bool truthy(dynamic value) =>
     value == 1 ||
     value == '1' ||
     value.toString().toLowerCase() == 'true';
+
+bool _paginationHasMultiplePages(dynamic value) {
+  final map = apiMap(value);
+  if (map.isEmpty) return false;
+  final pages = int.tryParse(str(map['pages'])) ?? 0;
+  return pages > 1;
+}
 
 class _MatchDataStateCard extends StatelessWidget {
   const _MatchDataStateCard({required this.icon, required this.text});
