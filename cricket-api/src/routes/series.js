@@ -634,9 +634,22 @@ export default async function seriesRoutes(fastify) {
       }
 
       const result = await providerManager.execute('getSeriesTeams', id);
-      const teamsData = result?.data || { teams: [] };
+      const rawTeamsData = result?.data || { teams: [] };
 
-      if (teamsData && teamsData.teams && teamsData.teams.length > 0) {
+      // Defensive filter: drop entries with no team name AND no team id.
+      // Older provider/cache payloads can carry blank rows that surface in the
+      // app as repeated "Team / TEA" placeholders.
+      const rawList = Array.isArray(rawTeamsData.teams) ? rawTeamsData.teams : [];
+      const cleanList = rawList.filter((team) => {
+        if (!team || typeof team !== 'object') return false;
+        const name = String(team.team_name || team.teamName || team.name || '').trim();
+        const tid = String(team.team_id || team.teamId || team.id || '').trim();
+        const short = String(team.team_short || team.teamShort || team.shortName || team.short_name || '').trim();
+        return Boolean(name) || Boolean(tid) || Boolean(short);
+      });
+      const teamsData = { ...rawTeamsData, teams: cleanList };
+
+      if (cleanList.length > 0) {
         await cacheSet(KEYS.seriesTeams(id), teamsData, TTL.SERIES);
       }
 
@@ -646,7 +659,7 @@ export default async function seriesRoutes(fastify) {
         data: teamsData,
         updatedAt: new Date().toISOString(),
         fromCache: false,
-        message: (!teamsData.teams || teamsData.teams.length === 0) ? 'No teams data available for this series' : null,
+        message: cleanList.length === 0 ? 'No teams data available for this series' : null,
       };
     } catch (err) {
       logger.warn({ msg: 'Failed to fetch series teams', seriesId: id, error: err.message });
