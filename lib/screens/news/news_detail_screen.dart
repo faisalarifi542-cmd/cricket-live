@@ -110,6 +110,7 @@ class _ArticleImage extends StatelessWidget {
       return Image.network(
         src,
         fit: BoxFit.cover,
+        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         errorBuilder: (_, __, ___) =>
             const EmptyOrErrorImage(label: 'Article image'),
       );

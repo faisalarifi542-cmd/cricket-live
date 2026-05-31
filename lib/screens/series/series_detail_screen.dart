@@ -580,10 +580,20 @@ class _TeamCard extends StatelessWidget {
       players.isNotEmpty ? '${players.length} players' : '',
     ].where((value) => value.isNotEmpty).join(' • ');
     return PremiumCard(
-      onTap: id.isEmpty
-          ? null
-          : () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => TeamDetailScreen(teamId: id))),
+      onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => TeamDetailScreen(
+              teamId: id,
+              initialName: name,
+              initialShortName: short,
+              initialLogoUrl: team.logo,
+              sourceSeriesId: apiString(
+                  data['seriesId'] ??
+                      data['series_id'] ??
+                      data['source_series_id'],
+                  ''),
+            ),
+          )),
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
@@ -904,6 +914,7 @@ class _NetworkAvatar extends StatelessWidget {
           : Image.network(
               imageUrl,
               fit: BoxFit.cover,
+              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
               errorBuilder: (_, __, ___) => _fallback(c),
             ),
     );

@@ -91,6 +91,74 @@ export default async function seriesRoutes(fastify) {
     };
   }
 
+  function text(value) {
+    return String(value ?? '').trim();
+  }
+
+  function cricbuzzImageUrl(imageId) {
+    const id = text(imageId);
+    return id ? `https://static.cricbuzz.com/a/img/v1/i1/c${id}/i.jpg` : '';
+  }
+
+  function normalizeSeriesTeam(team) {
+    if (!team || typeof team !== 'object') return null;
+    const id = text(team.teamId || team.team_id || team.id);
+    const name = text(team.teamName || team.team_name || team.name);
+    const shortName = text(
+      team.teamShortName ||
+        team.teamShort ||
+        team.team_short ||
+        team.shortName ||
+        team.short_name ||
+        team.teamSName
+    );
+    const imageId = text(team.imageId || team.image_id || team.faceImageId);
+    const logoUrl = text(team.logoUrl || team.logo_url || team.logo || team.imageUrl || team.image_url) || cricbuzzImageUrl(imageId);
+
+    if (!name && !id && !shortName) return null;
+    const nameKey = name.toLowerCase();
+    const shortKey = shortName.toLowerCase();
+    if (['team', 'tbc', 'tbd'].includes(nameKey) || ['tea', 'tbc', 'tbd'].includes(shortKey)) return null;
+
+    return {
+      teamId: id,
+      team_id: id,
+      teamName: name,
+      team_name: name,
+      teamShortName: shortName,
+      teamShort: shortName,
+      team_short: shortName,
+      logoUrl,
+      logo_url: logoUrl,
+      imageId,
+      image_id: imageId,
+      players: Array.isArray(team.players) ? team.players : Array.isArray(team.squad) ? team.squad : [],
+    };
+  }
+
+  function cleanSeriesTeams(rawTeams = []) {
+    const teams = [];
+    const seen = new Set();
+    for (const rawTeam of rawTeams) {
+      const team = normalizeSeriesTeam(rawTeam);
+      if (!team) continue;
+      const key = team.teamId || `${team.teamName.toLowerCase()}|${team.teamShortName.toLowerCase()}`;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      teams.push(team);
+    }
+    return teams;
+  }
+
+  function deriveTeamsFromSeriesMatches(matches = []) {
+    const teams = [];
+    for (const match of matches) {
+      if (match?.team1) teams.push(match.team1);
+      if (match?.team2) teams.push(match.team2);
+    }
+    return cleanSeriesTeams(teams);
+  }
+
   function normalizeStatsAlias(type) {
     const t = String(type || '').toLowerCase();
     if (['batting', 'bat', 'oranges', 'orange-cap', 'orange', 'runs', 'most-runs', 'mostruns'].includes(t)) return 'mostRuns';
@@ -623,11 +691,22 @@ export default async function seriesRoutes(fastify) {
     const { id } = request.params;
     try {
       const cached = await cacheGet(KEYS.seriesTeams(id));
-      if (cached) {
+      const cachedTeams = cleanSeriesTeams(
+        Array.isArray(cached?.teams)
+          ? cached.teams
+          : Array.isArray(cached?.data?.teams)
+            ? cached.data.teams
+            : Array.isArray(cached)
+              ? cached
+              : []
+      );
+      if (cachedTeams.length > 0) {
         return {
           success: true,
           seriesId: id,
-          data: cached,
+          data: { ...(cached || {}), teams: cachedTeams },
+          teams: cachedTeams,
+          count: cachedTeams.length,
           updatedAt: new Date().toISOString(),
           fromCache: true,
         };
@@ -635,28 +714,46 @@ export default async function seriesRoutes(fastify) {
 
       const result = await providerManager.execute('getSeriesTeams', id);
       const rawTeamsData = result?.data || { teams: [] };
+      const rawList = Array.isArray(rawTeamsData.teams)
+        ? rawTeamsData.teams
+        : Array.isArray(rawTeamsData.data)
+          ? rawTeamsData.data
+          : Array.isArray(rawTeamsData.items)
+            ? rawTeamsData.items
+            : [];
+      let cleanList = cleanSeriesTeams(rawList);
 
-      // Defensive filter: drop entries with no team name AND no team id.
-      // Older provider/cache payloads can carry blank rows that surface in the
-      // app as repeated "Team / TEA" placeholders.
-      const rawList = Array.isArray(rawTeamsData.teams) ? rawTeamsData.teams : [];
-      const cleanList = rawList.filter((team) => {
-        if (!team || typeof team !== 'object') return false;
-        const name = String(team.team_name || team.teamName || team.name || '').trim();
-        const tid = String(team.team_id || team.teamId || team.id || '').trim();
-        const short = String(team.team_short || team.teamShort || team.shortName || team.short_name || '').trim();
-        return Boolean(name) || Boolean(tid) || Boolean(short);
-      });
-      const teamsData = { ...rawTeamsData, teams: cleanList };
+      if (cleanList.length === 0) {
+        const matchesResult = await fetchSeriesMatches(id);
+        cleanList = deriveTeamsFromSeriesMatches(matchesResult?.matches || []);
+        if (cleanList.length > 0) {
+          logger.info({
+            msg: 'Derived series teams from matches',
+            seriesId: id,
+            teams: cleanList.length,
+            matches: matchesResult?.matches?.length || 0,
+          });
+        }
+      }
+
+      const teamsData = {
+        ...rawTeamsData,
+        seriesId: id,
+        teams: cleanList,
+        count: cleanList.length,
+        source: cleanList.length > 0 && rawList.length === 0 ? 'cricbuzz:matches-derived' : (rawTeamsData.source || 'cricbuzz'),
+      };
 
       if (cleanList.length > 0) {
-        await cacheSet(KEYS.seriesTeams(id), teamsData, TTL.SERIES);
+        await cacheSet(KEYS.seriesTeams(id), teamsData, cleanList.length > 0 ? TTL.SQUADS : 30);
       }
 
       return {
         success: true,
         seriesId: id,
         data: teamsData,
+        teams: cleanList,
+        count: cleanList.length,
         updatedAt: new Date().toISOString(),
         fromCache: false,
         message: cleanList.length === 0 ? 'No teams data available for this series' : null,
@@ -667,6 +764,8 @@ export default async function seriesRoutes(fastify) {
         success: true,
         seriesId: id,
         data: { teams: [] },
+        teams: [],
+        count: 0,
         updatedAt: new Date().toISOString(),
         message: 'Series teams not available',
       };

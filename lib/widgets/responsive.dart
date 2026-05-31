@@ -287,16 +287,12 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return;
-    // Use Scrollable.ensureVisible with a small leading alignment instead of
-    // 0.5 (centering). Centering the selected tab caused the first ("Scorecard")
-    // and last ("Squads") tabs to get pushed off the edge and clipped to
-    // "ecard" / "Sq". For index 0 we left-align (alignment 0.0) so the row
-    // starts exactly at the leading edge on first build; for any other index
-    // we use alignment 0.1, which keeps the selected tab fully visible without
-    // over-scrolling past the neighbouring labels.
+    // Keep the selected tab left-aligned rather than centered. Centering can
+    // push the leading/trailing labels partially off-screen on narrow widths
+    // and clip them to "ecard" / "Sq".
     Scrollable.ensureVisible(
       ctx,
-      alignment: i == 0 ? 0.0 : 0.1,
+      alignment: 0.0,
       alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
@@ -346,7 +342,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         key: _keys[i],
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        padding: EdgeInsets.symmetric(horizontal: context.w <= 420 ? 10 : 12),
         decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
           borderRadius: BorderRadius.circular(28),
@@ -376,7 +372,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
           style: TextStyle(
             color: selected ? Colors.white : c.text,
             fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            fontSize: context.sp(15),
+            fontSize: context.sp(14.5),
           ),
         ),
       ),

@@ -288,6 +288,7 @@ class TeamBadge extends StatelessWidget {
                   team.asset!,
                   fit: BoxFit.cover,
                   gaplessPlayback: true,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                   loadingBuilder: (context, child, progress) {
                     if (progress == null) return child;
                     return _teamLoading(context);
@@ -364,12 +365,38 @@ class PlayerAvatar extends StatelessWidget {
         border: Border.all(color: borderColor ?? c.border, width: 1.2),
       ),
       child: player.asset != null
-          ? Image.asset(
-              player.asset!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _initials(context),
-            )
+          ? (player.asset!.startsWith('http')
+              ? Image.network(
+                  player.asset!,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return _loading(context);
+                  },
+                  errorBuilder: (_, __, ___) => _initials(context),
+                )
+              : Image.asset(
+                  player.asset!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _initials(context),
+                ))
           : _initials(context),
+    );
+  }
+
+  Widget _loading(BuildContext context) {
+    final c = context.cric;
+    return Center(
+      child: SizedBox(
+        width: size * .32,
+        height: size * .32,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.2,
+          valueColor: AlwaysStoppedAnimation<Color>(c.cyan),
+        ),
+      ),
     );
   }
 

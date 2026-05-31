@@ -1298,7 +1298,12 @@ class _PlayerLine extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundColor: c.card,
-              backgroundImage: image == null ? null : NetworkImage(image),
+              backgroundImage: image == null
+                  ? null
+                  : NetworkImage(
+                      image,
+                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                    ),
               child: image == null
                   ? Icon(Icons.person_rounded, color: c.muted)
                   : null,

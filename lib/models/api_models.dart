@@ -696,12 +696,12 @@ class ApiPlayer {
       country: apiString(json['country'] ?? json['nationality'], '').isEmpty
           ? null
           : apiString(json['country'] ?? json['nationality']),
-      image: apiString(
-                  json['image'] ?? json['imageUrl'] ?? json['profileImage'], '')
-              .isEmpty
-          ? null
-          : apiString(
-              json['image'] ?? json['imageUrl'] ?? json['profileImage']),
+      image: (() {
+        final resolved = resolveCricbuzzImageUrl(json) ??
+            apiString(json['image'] ?? json['imageUrl'] ?? json['profileImage'],
+                '');
+        return resolved.isEmpty ? null : resolved;
+      })(),
       battingStyle:
           apiString(json['battingStyle'] ?? json['batting_style'], '').isEmpty
               ? null

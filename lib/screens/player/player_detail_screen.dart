@@ -119,7 +119,13 @@ class _ApiPlayerCard extends StatelessWidget {
                       CircleAvatar(
                         radius: 38,
                         backgroundColor: c.card2,
-                        backgroundImage: player.image == null ? null : NetworkImage(player.image!),
+                        backgroundImage: player.image == null
+                            ? null
+                            : NetworkImage(
+                                player.image!,
+                                webHtmlElementStrategy:
+                                    WebHtmlElementStrategy.prefer,
+                              ),
                         child: player.image == null
                             ? Text(
                                 player.name.isEmpty ? '?' : player.name[0],

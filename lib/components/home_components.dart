@@ -236,11 +236,11 @@ class HomeHeroCard extends StatelessWidget {
     );
 
     if (onTap == null) return card;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(28),
         child: card,
       ),
     );
@@ -470,5 +470,4 @@ class QuickAccessCard extends StatelessWidget {
     );
   }
 }
-
 

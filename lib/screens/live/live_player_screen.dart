@@ -991,6 +991,7 @@ class _TeamColumn extends StatelessWidget {
               ? Image.network(
                   logoUrl!,
                   fit: BoxFit.cover,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                   errorBuilder: (_, __, ___) => _TeamInitial(name: name),
                 )
               : _TeamInitial(name: name),

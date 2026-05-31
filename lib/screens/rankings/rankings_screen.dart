@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../app_theme.dart';
@@ -38,17 +39,29 @@ class _RankingsScreenState extends State<RankingsScreen> {
     _rankings = _load();
   }
 
-  Future<ApiEnvelope<List<RankingEntry>>> _load({bool forceRefresh = false}) {
-    return _repository.rankings(
+  Future<ApiEnvelope<List<RankingEntry>>> _load({bool forceRefresh = false}) async {
+    if (kDebugMode) {
+      debugPrint('RANKINGS selectedCategory=$category selectedFormat=$format');
+      debugPrint(
+          'RANKINGS GET /rankings?gender=$gender&category=$category&format=$format');
+    }
+    final response = await _repository.rankings(
       gender: gender,
       category: category,
       format: format,
       forceRefresh: forceRefresh,
     );
+    if (kDebugMode) {
+      final first = response.data.isEmpty ? '' : response.data.first.name;
+      debugPrint('RANKINGS rows=${response.data.length} first=$first');
+    }
+    return response;
   }
 
   void _reload({bool forceRefresh = false}) {
-    setState(() => _rankings = _load(forceRefresh: forceRefresh));
+    setState(() {
+      _rankings = _load(forceRefresh: forceRefresh);
+    });
   }
 
   @override
@@ -101,9 +114,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
                       child: _DropdownPill(
                         icon: currentCategory.icon,
                         label: currentCategory.label.toUpperCase(),
-                        onTap: () => _showPicker(categories, category, (value) {
+                        onTap: () => _pickFilter(categories, category, (value) {
                           category = value;
-                          _reload();
                         }),
                       ),
                     ),
@@ -112,9 +124,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
                       child: _DropdownPill(
                         icon: currentFormat.icon,
                         label: currentFormat.label.toUpperCase(),
-                        onTap: () => _showPicker(formats, format, (value) {
+                        onTap: () => _pickFilter(formats, format, (value) {
                           format = value;
-                          _reload();
                         }),
                       ),
                     ),
@@ -122,6 +133,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                 ),
                 const SizedBox(height: 24),
                 FutureBuilder<ApiEnvelope<List<RankingEntry>>>(
+                  key: ValueKey('rankings:$gender:$category:$format'),
                   future: _rankings,
                   builder: (context, snapshot) {
                     final rows = snapshot.data?.data ?? const <RankingEntry>[];
@@ -168,24 +180,26 @@ class _RankingsScreenState extends State<RankingsScreen> {
     );
   }
 
-  void _showPicker(
+  Future<void> _pickFilter(
     List<_FilterOption> options,
     String selected,
     ValueChanged<String> onSelected,
-  ) {
-    showModalBottomSheet(
+  ) async {
+    final value = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => _PickerSheet(
         options: options,
         selected: selected,
-        onSelected: onSelected,
       ),
     );
+    if (!mounted || value == null || value.isEmpty || value == selected) return;
+    onSelected(value);
+    _reload(forceRefresh: true);
   }
 
   void _showGenderPicker() {
-    _showPicker(
+    _pickFilter(
       const [
         _FilterOption('Men', 'men', Icons.male_rounded),
         _FilterOption('Women', 'women', Icons.female_rounded),
@@ -193,7 +207,6 @@ class _RankingsScreenState extends State<RankingsScreen> {
       gender,
       (value) {
         gender = value;
-        _reload();
       },
     );
   }
@@ -210,12 +223,10 @@ class _PickerSheet extends StatelessWidget {
   const _PickerSheet({
     required this.options,
     required this.selected,
-    required this.onSelected,
   });
 
   final List<_FilterOption> options;
   final String selected;
-  final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -238,8 +249,7 @@ class _PickerSheet extends StatelessWidget {
                   ? Icon(Icons.check, color: context.cric.cyan)
                   : null,
               onTap: () {
-                onSelected(option.value);
-                Navigator.pop(context);
+                Navigator.pop(context, option.value);
               },
             ),
         ],
@@ -391,7 +401,7 @@ class _PremiumRankingCard extends StatelessWidget {
                     _Metric(label: 'RATING', value: '${entry.rating}'),
                     if (entry.points != null)
                       _Metric(label: 'PTS', value: '${entry.points}'),
-                    if (entry.matches != null)
+                    if ((entry.matches ?? 0) > 0)
                       _Metric(label: 'MAT', value: '${entry.matches}'),
                   ],
                 ),
@@ -491,6 +501,7 @@ class _RankingImage extends StatelessWidget {
           : Image.network(
               image,
               fit: BoxFit.cover,
+              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
               errorBuilder: (_, __, ___) => _Initial(entry.name),
             ),
     );
