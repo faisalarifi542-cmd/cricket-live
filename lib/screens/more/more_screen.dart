@@ -37,10 +37,7 @@ class MoreScreen extends StatelessWidget {
             const AppHeader(
               showLogo: true,
               trailing: [
-                GlowIconButton(icon: Icons.search_rounded),
-                SizedBox(width: 8),
-                GlowIconButton(
-                    icon: Icons.notifications_none_rounded, badge: '3'),
+                GlowIconButton(icon: Icons.notifications_none_rounded),
               ],
             ),
             const SizedBox(height: 22),

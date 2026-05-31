@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
-import '../../core/api/api_config.dart';
 import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
@@ -13,7 +12,6 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.onOpenMatchDetails,
     required this.onOpenSeries,
-    required this.onOpenSearch,
     required this.onOpenNotifications,
     required this.onOpenFilters,
     required this.onOpenReminders,
@@ -25,7 +23,6 @@ class HomeScreen extends StatefulWidget {
   /// taps a section header that doesn't reference a specific match.
   final ValueChanged<String> onOpenMatchDetails;
   final VoidCallback onOpenSeries;
-  final VoidCallback onOpenSearch;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
@@ -94,11 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
         .toHeroFixture(live: topTab == 0, finished: topTab == 2);
   }
 
-  List<CompactFixture> _demoListForTab() {
-    if (topTab == 2) return AppData.matchesFinished;
-    return AppData.matchesUpcoming;
-  }
-
   VoidCallback _heroAction({String matchId = ''}) {
     switch (topTab) {
       case 0:
@@ -131,13 +123,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 showLogo: true,
                 trailing: [
                   GlowIconButton(
-                      icon: Icons.search_rounded, onTap: widget.onOpenSearch),
-                  const SizedBox(width: 8),
-                  GlowIconButton(
                     icon: topTab == 2
                         ? Icons.notifications_none_rounded
                         : Icons.notifications_rounded,
-                    badge: '3',
                     onTap: widget.onOpenNotifications,
                   ),
                 ],
@@ -223,8 +211,6 @@ class _HomeScreenState extends State<HomeScreen> {
               _HomeTabContent(
                 future: _tabMatches,
                 topTab: topTab,
-                demoItems: _demoListForTab(),
-                allowDemoFallback: ApiConfig.allowDemoFallback,
                 onRetry: () => setState(() => _tabMatches =
                     _repository.matchesForTab(topTab, forceRefresh: true)),
                 onSwitchUpcoming: () => _setTopTab(1),
@@ -353,8 +339,6 @@ class _HomeTabContent extends StatelessWidget {
   const _HomeTabContent({
     required this.future,
     required this.topTab,
-    required this.demoItems,
-    required this.allowDemoFallback,
     required this.onRetry,
     required this.onSwitchUpcoming,
     required this.onOpenMatch,
@@ -364,8 +348,6 @@ class _HomeTabContent extends StatelessWidget {
 
   final Future<ApiEnvelope<List<CricketMatch>>> future;
   final int topTab;
-  final List<CompactFixture> demoItems;
-  final bool allowDemoFallback;
   final VoidCallback onRetry;
   final VoidCallback onSwitchUpcoming;
   final ValueChanged<String> onOpenMatch;
@@ -377,24 +359,27 @@ class _HomeTabContent extends StatelessWidget {
     return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
       future: future,
       builder: (context, snapshot) {
-        final matches = snapshot.data?.data ?? const <CricketMatch>[];
-        final useDemo =
-            allowDemoFallback && snapshot.hasError && matches.isEmpty;
-        final items = useDemo
-            ? demoItems
-            : matches
-                .map((match) => match.toCompactFixture(finished: topTab == 2))
-                .toList();
+        final allMatches = snapshot.data?.data ?? const <CricketMatch>[];
+        // Drop the hero match from the list so the same fixture is never
+        // shown twice on the Home screen. The first match in `allMatches` is
+        // promoted to the hero card right above, so we skip(1) here for the
+        // "Live Centre" / "Upcoming Fixtures" / "Recent Results" list.
+        final matches = allMatches.isEmpty
+            ? const <CricketMatch>[]
+            : allMatches.skip(1).toList();
+        final items = matches
+            .map((match) => match.toCompactFixture(finished: topTab == 2))
+            .toList();
 
         if (snapshot.connectionState == ConnectionState.waiting &&
-            matches.isEmpty) {
+            allMatches.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
             child: Center(child: CircularProgressIndicator()),
           );
         }
 
-        if (snapshot.hasError && !useDemo) {
+        if (snapshot.hasError && allMatches.isEmpty) {
           return _HomeStateCard(
             icon: Icons.cloud_off_rounded,
             title: 'Unable to refresh cricket data',
@@ -405,7 +390,7 @@ class _HomeTabContent extends StatelessWidget {
           );
         }
 
-        if (items.isEmpty) {
+        if (allMatches.isEmpty) {
           return _HomeStateCard(
             icon: Icons.sports_cricket_rounded,
             title:
@@ -416,6 +401,13 @@ class _HomeTabContent extends StatelessWidget {
             action: topTab == 0 ? 'View Upcoming' : 'Refresh',
             onAction: topTab == 0 ? onSwitchUpcoming : onRetry,
           );
+        }
+
+        if (items.isEmpty) {
+          // We have a single match — that match is the hero above, so the
+          // list below has no additional fixtures to show. Return an empty
+          // sized box so the home screen stays compact.
+          return const SizedBox.shrink();
         }
 
         final title = topTab == 0
@@ -429,22 +421,15 @@ class _HomeTabContent extends StatelessWidget {
                 ? Icons.emoji_events_outlined
                 : Icons.calendar_month_rounded;
 
-        // When showing real matches we can pair each card with its matchId.
-        final pairs = useDemo
-            ? [for (final item in items) (item, '')]
-            : [
-                for (var i = 0; i < items.length && i < matches.length; i++)
-                  (items[i], matches[i].id),
-              ];
+        // Real matches paired with their matchId.
+        final pairs = <(CompactFixture, String)>[
+          for (var i = 0; i < items.length && i < matches.length; i++)
+            (items[i], matches[i].id),
+        ];
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (useDemo)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: _HomeDemoLabel(),
-              ),
             SectionHeader(title,
                 icon: icon,
                 action: topTab == 0 ? 'Open Match' : 'See All',
@@ -542,20 +527,6 @@ class _HomeStateCard extends StatelessWidget {
               label: action, icon: Icons.refresh_rounded, onTap: onAction),
         ],
       ),
-    );
-  }
-}
-
-class _HomeDemoLabel extends StatelessWidget {
-  const _HomeDemoLabel();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Text(
-      'Demo data shown because the API is unavailable in this debug build.',
-      style:
-          TextStyle(color: c.cyan, fontSize: 12, fontWeight: FontWeight.w800),
     );
   }
 }
