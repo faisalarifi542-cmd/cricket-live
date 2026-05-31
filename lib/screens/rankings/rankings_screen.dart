@@ -135,12 +135,17 @@ class _RankingsScreenState extends State<RankingsScreen> {
                     if (snapshot.hasError) {
                       return _RankingStateCard(
                         title: 'Unable to load rankings',
+                        subtitle:
+                            'The ranking service is temporarily unavailable. Pull to refresh or try again later.',
                         onRetry: () => _reload(forceRefresh: true),
                       );
                     }
                     if (rows.isEmpty) {
                       return _RankingStateCard(
-                        title: 'Rankings are not available yet',
+                        title: 'No ${currentCategory.label.toLowerCase()} '
+                            'ranking available for ${currentFormat.label} yet',
+                        subtitle:
+                            'Try a different category or format. New rankings appear here once the ICC source updates.',
                         onRetry: () => _reload(forceRefresh: true),
                       );
                     }
@@ -514,9 +519,14 @@ class _Initial extends StatelessWidget {
 }
 
 class _RankingStateCard extends StatelessWidget {
-  const _RankingStateCard({required this.title, required this.onRetry});
+  const _RankingStateCard({
+    required this.title,
+    required this.onRetry,
+    this.subtitle,
+  });
 
   final String title;
+  final String? subtitle;
   final VoidCallback onRetry;
 
   @override
@@ -532,6 +542,12 @@ class _RankingStateCard extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
+          if (subtitle != null && subtitle!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(subtitle!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.muted, height: 1.4, fontSize: 13)),
+          ],
           const SizedBox(height: 16),
           GradientButton(
               label: 'Retry', icon: Icons.refresh_rounded, onTap: onRetry),

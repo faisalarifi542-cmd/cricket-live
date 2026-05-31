@@ -1,9 +1,12 @@
 // Central export file for all screen components
-// Components are organized by feature in the components/ directory
+// Components are organized by feature in the components/ directory.
+//
+// `series_components.dart` and `highlights_components.dart` only contained
+// hardcoded India-vs-Australia / fake top-moments storyboards that are not
+// reachable from the production app, so they are intentionally not exported
+// here anymore.
 
 export 'components/home_components.dart';
 export 'components/match_components.dart';
 export 'components/news_components.dart';
-export 'components/highlights_components.dart';
-export 'components/series_components.dart';
 export 'components/match_details_components.dart';

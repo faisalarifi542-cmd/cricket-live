@@ -417,93 +417,6 @@ class RecentResultMiniCard extends StatelessWidget {
   }
 }
 
-class PlayerOfMatchCard extends StatelessWidget {
-  const PlayerOfMatchCard({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final narrow = context.w <= 400;
-    final avatarSize = narrow ? 88.0 : 122.0;
-    final headerSize = narrow ? 36.0 : 44.0;
-    return PremiumCard(
-      padding: EdgeInsets.all(narrow ? 14 : 18),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            children: [
-              PlayerAvatar(
-                  player: AppData.indiaSquadTop.first,
-                  size: avatarSize,
-                  borderColor: Colors.white.withValues(alpha: .42)),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: avatarSize + 6,
-                child: Text(
-                  'Rohit Sharma',
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w800,
-                      fontSize: context.sp(15)),
-                ),
-              ),
-              Text('India', style: TextStyle(color: c.muted, fontSize: 12)),
-            ],
-          ),
-          SizedBox(width: narrow ? 12 : 18),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: StatusBadge(
-                        label: 'PLAYER OF THE MATCH',
-                        color: c.cyan,
-                        filled: true)),
-                const SizedBox(height: 14),
-                Text('121*',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: headerSize,
-                        fontWeight: FontWeight.w900,
-                        height: .9)),
-                const SizedBox(height: 6),
-                Text('(107)',
-                    style:
-                        TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 12),
-                Divider(color: c.border),
-                const SizedBox(height: 12),
-                const Row(
-                  children: [
-                    Expanded(child: _StatValue(title: 'Runs', value: '121')),
-                    Expanded(child: _StatValue(title: 'Balls', value: '107')),
-                    Expanded(child: _StatValue(title: 'SR', value: '113.08')),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                const Row(
-                  children: [
-                    Expanded(child: _StatValue(title: 'Fours', value: '11')),
-                    Expanded(child: _StatValue(title: 'Sixes', value: '6')),
-                    Expanded(child: _StatValue(title: 'Wkts', value: '1')),
-                  ],
-                ),
-              ],
-            ),
-          )
-        ],
-      ),
-    );
-  }
-}
-
 class QuickAccessCard extends StatelessWidget {
   const QuickAccessCard({
     super.key,
@@ -558,24 +471,4 @@ class QuickAccessCard extends StatelessWidget {
   }
 }
 
-class _StatValue extends StatelessWidget {
-  const _StatValue({required this.title, required this.value});
 
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(value,
-            style: TextStyle(
-                color: c.text, fontWeight: FontWeight.w900, fontSize: 28)),
-        const SizedBox(height: 4),
-        Text(title, style: TextStyle(color: c.muted)),
-      ],
-    );
-  }
-}

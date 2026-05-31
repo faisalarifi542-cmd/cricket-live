@@ -241,7 +241,20 @@ class _SeriesApiPanel extends StatelessWidget {
           final matchesResponse = responses != null && responses.length > 1
               ? responses[1] as ApiEnvelope<List<CricketMatch>>
               : null;
-          final teams = teamsResponse?.data ?? const [];
+          final rawTeams = teamsResponse?.data ?? const [];
+          // Defensive filter: drop empty team objects that have neither a
+          // teamId nor a teamName. The deployed backend currently returns
+          // 10 empty placeholders for some series; this guarantees the UI
+          // doesn't render "Team / TEA" placeholder rows even when the
+          // API still returns stale empty entries.
+          final teams = rawTeams.where((entry) {
+            final map = apiMap(entry);
+            final id =
+                apiString(map['teamId'] ?? map['team_id'] ?? map['id']);
+            final name = apiString(
+                map['teamName'] ?? map['team_name'] ?? map['name']);
+            return id.isNotEmpty || name.isNotEmpty;
+          }).toList(growable: false);
           final matches = matchesResponse?.data ?? const <CricketMatch>[];
           final resolvedTeams =
               teams.isNotEmpty ? teams : teamsFromSeriesMatches(matches);

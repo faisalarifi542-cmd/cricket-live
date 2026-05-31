@@ -138,8 +138,24 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                     future: _summaryFuture,
                     builder: (context, snapshot) {
                       final data = snapshot.data?.data;
-                      final match =
-                          data == null ? null : CricketMatch.fromJson(data);
+                      if (data == null) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 32),
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return PremiumCard(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            snapshot.hasError
+                                ? 'Unable to load this match right now. Pull to refresh.'
+                                : 'Match details are not available yet.',
+                            style: TextStyle(color: c.muted, height: 1.5),
+                          ),
+                        );
+                      }
+                      final match = CricketMatch.fromJson(data);
                       return FutureBuilder<bool>(
                         future: _streamAvailabilityFuture,
                         builder: (context, streamSnapshot) =>
@@ -154,11 +170,12 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                     },
                   )
                 else
-                  MatchDetailHeroCard(
-                    showWatchLive: false,
-                    onWatchLive: widget.onWatchLive == null
-                        ? null
-                        : () => widget.onWatchLive!(_matchId),
+                  PremiumCard(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'No match selected. Open a live or upcoming match from the Home or Matches screen.',
+                      style: TextStyle(color: c.muted, height: 1.5),
+                    ),
                   ),
                 const SizedBox(height: 16),
                 // Match Details has 5 tabs which squeeze "Commentary" into
@@ -206,13 +223,13 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                               );
                             },
                           )
-                        : switch (tab) {
-                            0 => const MatchScorecardTab(),
-                            1 => const MatchCommentaryTab(),
-                            2 => const MatchOversTab(),
-                            3 => const MatchInfoTab(),
-                            _ => const MatchSquadsTab(),
-                          },
+                        : PremiumCard(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'No match selected.',
+                              style: TextStyle(color: c.muted, height: 1.5),
+                            ),
+                          ),
                   ),
                 ),
               ],
