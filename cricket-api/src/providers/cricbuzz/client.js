@@ -595,7 +595,7 @@ export const cricbuzzApi = {
   // --- Player/Team (not available via mcenter, return minimal) ---
   async getPlayerInfo(playerId) {
     const html = await request(htmlClient, `/profiles/${playerId}`, { responseType: 'text' });
-    return { player: { id: playerId }, _raw: html };
+    return { player: parsePlayerProfileHtml(html, playerId), source: 'cricbuzz' };
   },
 
   async getTeamInfo(teamId) {
@@ -946,6 +946,176 @@ function parseRankingsHtml(html, { gender, category, format }) {
     }),
     source: 'cricbuzz',
     updatedAt: new Date().toISOString(),
+  };
+}
+
+function stripTags(value = '') {
+  return decodeHtmlEntities(String(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim());
+}
+
+function makePlayerSlug(name = '') {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/&amp;/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function normalizePlayerImageUrl(url = '') {
+  return decodeHtmlEntities(String(url || '').trim())
+    .replace(/\s+\d+x.*$/i, '')
+    .replace(/&amp;/g, '&');
+}
+
+function extractPlayerImage(html = '', playerId = '', slug = '') {
+  const profileSlugMatch = html.match(new RegExp(`/profiles/${playerId}/([^"'<\\s/]+)`, 'i'));
+  const preferredSlug = slug || profileSlugMatch?.[1] || '';
+  if (preferredSlug) {
+    const slugPattern = new RegExp(`https://static\\.cricbuzz\\.com/a/img/v1/i1/c(\\d+)/${preferredSlug}\\.jpg[^"'\\\\<\\s]*`, 'i');
+    const slugMatch = html.match(slugPattern);
+    if (slugMatch) {
+      return { imageId: slugMatch[1], imageUrl: normalizePlayerImageUrl(slugMatch[0]) };
+    }
+  }
+
+  const gthumbMatch = html.match(/https:\/\/static\.cricbuzz\.com\/a\/img\/v1\/i1\/c(\d+)\/[^"'\\<\s]*?\.jpg\?d=low&amp;p=gthumb/i);
+  if (gthumbMatch) {
+    return { imageId: gthumbMatch[1], imageUrl: normalizePlayerImageUrl(gthumbMatch[0]) };
+  }
+  return { imageId: null, imageUrl: '' };
+}
+
+function extractProfileValue(personalText = '', label = '', nextLabels = []) {
+  const labels = [label, ...nextLabels].map((x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const next = labels.slice(1).join('|');
+  const pattern = next
+    ? new RegExp(`${labels[0]}\\s+([\\s\\S]*?)(?=\\s+(?:${next})\\s+|$)`, 'i')
+    : new RegExp(`${labels[0]}\\s+([\\s\\S]*)$`, 'i');
+  const match = personalText.match(pattern);
+  return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+}
+
+function parseCareerTable(html = '', title = '') {
+  const start = html.indexOf(title);
+  if (start < 0) return { formats: [], rows: {}, summary: [] };
+  const segment = html.slice(start, start + 30000);
+  const tableEnd = segment.indexOf('</table>');
+  const table = tableEnd >= 0 ? segment.slice(0, tableEnd) : segment;
+  const trMatches = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const cellRows = trMatches.map((row) => {
+    const cells = [...row[1].matchAll(/<(?:th|td)[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)]
+      .map((cell) => stripTags(cell[1]))
+      .filter(Boolean);
+    return cells;
+  }).filter((row) => row.length > 0);
+
+  const formats = (cellRows[0] || []).filter(Boolean);
+  const rows = {};
+  for (const row of cellRows.slice(1)) {
+    const key = row[0];
+    if (!key) continue;
+    rows[key] = {};
+    formats.forEach((formatName, index) => {
+      rows[key][formatName] = row[index + 1] ?? '';
+    });
+  }
+
+  const summary = formats.map((formatName) => {
+    const entry = { format: formatName };
+    for (const [key, values] of Object.entries(rows)) {
+      entry[key] = values[formatName] ?? '';
+    }
+    return entry;
+  });
+
+  return { formats, rows, summary };
+}
+
+function parseRecentForm(html = '') {
+  const start = html.indexOf('RECENT FORM');
+  if (start < 0) return [];
+  const end = html.indexOf('Batting Career Summary', start);
+  const segment = html.slice(start, end > start ? end : start + 30000);
+  const seen = new Set();
+  return [...segment.matchAll(/<a href="\/live-cricket-scores\/([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    .map((match) => {
+      const spans = [...match[2].matchAll(/<span[^>]*>([\s\S]*?)<\/span>/gi)]
+        .map((span) => stripTags(span[1]))
+        .filter(Boolean);
+      if (spans.length < 4) return null;
+      const item = {
+        matchPath: `/live-cricket-scores/${match[1]}`,
+        score: spans[0],
+        opponent: spans[1],
+        format: spans[2],
+        date: spans[3],
+      };
+      const key = `${item.matchPath}:${item.score}:${item.opponent}:${item.format}:${item.date}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return item;
+    })
+    .filter(Boolean);
+}
+
+function parsePlayerProfileHtml(html = '', playerId = '') {
+  const titleName = decodeHtmlEntities(html.match(/<title>(.*?)Profile/i)?.[1] || '').trim();
+  const name = titleName.replace(/\s+$/, '') || 'Player';
+  const slug = makePlayerSlug(name);
+  const image = extractPlayerImage(html, playerId, slug);
+  const personalStart = html.indexOf('PERSONAL INFORMATION');
+  const recentStart = html.indexOf('RECENT FORM', personalStart);
+  const personalHtml = personalStart >= 0
+    ? html.slice(Math.max(0, personalStart - 1000), recentStart > personalStart ? recentStart : personalStart + 6500)
+    : '';
+  const personalText = stripTags(personalHtml);
+  const countryMatch = personalHtml.match(/src="https:\/\/static\.cricbuzz\.com\/a\/img\/v1\/30x20\/i1\/c\d+\/[^"]+\.jpg"\/><\/div><span[^>]*>([^<]+)<\/span>/i);
+  const country = stripTags(countryMatch?.[1] || '');
+  const labels = ['Birth Place', 'Height', 'Role', 'Batting Style', 'Bowling Style', 'Teams'];
+  const batting = parseCareerTable(html, 'Batting Career Summary');
+  const bowling = parseCareerTable(html, 'Bowling Career Summary');
+  const teamsText = extractProfileValue(personalText, 'Teams', ['RECENT FORM']);
+  const teams = teamsText ? teamsText.split(',').map((team) => team.trim()).filter(Boolean) : [];
+
+  return {
+    id: String(playerId),
+    playerId: String(playerId),
+    name,
+    fullName: name,
+    country,
+    countryCode: country ? country.slice(0, 3).toUpperCase() : '',
+    dateOfBirth: extractProfileValue(personalText, 'Born', labels),
+    birthPlace: extractProfileValue(personalText, 'Birth Place', labels.slice(1)),
+    role: extractProfileValue(personalText, 'Role', labels.slice(3)),
+    battingStyle: extractProfileValue(personalText, 'Batting Style', labels.slice(4)),
+    bowlingStyle: extractProfileValue(personalText, 'Bowling Style', labels.slice(5)),
+    teams,
+    imageId: image.imageId,
+    imageUrl: image.imageUrl,
+    careerSummary: batting.summary.map((row) => ({
+      format: row.format,
+      matches: row.Matches,
+      innings: row.Innings,
+      runs: row.Runs,
+      average: row.Average,
+      strikeRate: row.SR,
+      hundreds: row['100s'],
+      fifties: row['50s'],
+      highest: row.Highest,
+      wickets: bowling.rows.Wickets?.[row.format] || '',
+      economy: bowling.rows.Eco?.[row.format] || '',
+    })),
+    battingStats: batting.summary,
+    bowlingStats: bowling.summary,
+    recentForm: parseRecentForm(html),
+    achievements: [],
+    stats: { batting: batting.rows, bowling: bowling.rows },
+    source: 'cricbuzz',
   };
 }
 

@@ -6,6 +6,7 @@ import '../../components.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
 import '../../repositories/cricket_repository.dart';
+import '../player/player_detail_screen.dart';
 
 class RankingsScreen extends StatefulWidget {
   const RankingsScreen({super.key});
@@ -39,7 +40,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
     _rankings = _load();
   }
 
-  Future<ApiEnvelope<List<RankingEntry>>> _load({bool forceRefresh = false}) async {
+  Future<ApiEnvelope<List<RankingEntry>>> _load(
+      {bool forceRefresh = false}) async {
     if (kDebugMode) {
       debugPrint('RANKINGS selectedCategory=$category selectedFormat=$format');
       debugPrint(
@@ -166,7 +168,10 @@ class _RankingsScreenState extends State<RankingsScreen> {
                         for (final row in rows)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 16),
-                            child: _PremiumRankingCard(entry: row),
+                            child: _RankingTapTarget(
+                              entry: row,
+                              child: _PremiumRankingCard(entry: row),
+                            ),
                           ),
                       ],
                     );
@@ -208,6 +213,41 @@ class _RankingsScreenState extends State<RankingsScreen> {
       (value) {
         gender = value;
       },
+    );
+  }
+}
+
+class _RankingTapTarget extends StatelessWidget {
+  const _RankingTapTarget({required this.entry, required this.child});
+
+  final RankingEntry entry;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = entry.playerId;
+    if (entry.isTeam || id == null || id.isEmpty) return child;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PlayerDetailScreen(playerId: id),
+            settings: RouteSettings(
+              arguments: {
+                'playerId': id,
+                'name': entry.name,
+                'rank': entry.rank,
+                'points': entry.points,
+                'imageUrl': entry.imageUrl,
+                'country': entry.country,
+              },
+            ),
+          ),
+        ),
+        child: child,
+      ),
     );
   }
 }
