@@ -10,6 +10,7 @@ import '../../models/api_response.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 import '../player/player_detail_screen.dart';
+import '../../widgets/squad.dart';
 import '../../screens.dart';
 
 class MatchDetailsScreen extends StatefulWidget {
@@ -971,17 +972,7 @@ class _SquadsPanelState extends State<_SquadsPanel> {
           height: 44,
         ),
         const SizedBox(height: 12),
-        _SectionCard(
-          title: 'Playing XI',
-          child: _PlayerGrid(players: xi),
-        ),
-        const SizedBox(height: 12),
-        _SectionCard(
-          title: 'Bench',
-          child: bench.isEmpty
-              ? const _InlineEmpty(text: 'Bench players are not available.')
-              : _PlayerGrid(players: bench),
-        ),
+        PremiumSquad(playingXi: xi, bench: bench, title: 'Playing XI'),
       ],
     );
   }
@@ -1250,26 +1241,6 @@ class _BallBubble extends StatelessWidget {
       child: Text(label,
           style: TextStyle(
               color: color, fontWeight: FontWeight.w900, fontSize: 12)),
-    );
-  }
-}
-
-class _PlayerGrid extends StatelessWidget {
-  const _PlayerGrid({required this.players});
-
-  final List<dynamic> players;
-
-  @override
-  Widget build(BuildContext context) {
-    if (players.isEmpty) {
-      return const _InlineEmpty(text: 'Players are not available yet.');
-    }
-    return Column(
-      children: [
-        for (final player in players)
-          _PlayerLine(
-              row: apiMap(player), subtitle: str(apiMap(player)['role'])),
-      ],
     );
   }
 }

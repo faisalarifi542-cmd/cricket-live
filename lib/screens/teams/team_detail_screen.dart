@@ -6,7 +6,7 @@ import '../../models.dart';
 import '../../models/api_models.dart';
 import '../../models/api_response.dart';
 import '../../repositories/cricket_repository.dart';
-import '../player/player_detail_screen.dart';
+import '../../widgets/squad.dart';
 
 class TeamDetailScreen extends StatefulWidget {
   const TeamDetailScreen({
@@ -121,12 +121,10 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                       children: [
                         _TeamHero(team: team),
                         const SizedBox(height: 16),
-                        _TeamSection(
+                        PremiumSquad(
+                          playingXi: team.squad,
+                          bench: const [],
                           title: 'Squad',
-                          empty: 'Squad is not available yet.',
-                          items: team.squad,
-                          itemBuilder: (item) =>
-                              _SquadPlayerTile(player: apiMap(item)),
                         ),
                         const SizedBox(height: 16),
                         _TeamSection(
@@ -227,66 +225,6 @@ class _TeamSection extends StatelessWidget {
           else
             for (final item in items.take(20)) itemBuilder(item),
         ],
-      ),
-    );
-  }
-}
-
-class _SquadPlayerTile extends StatelessWidget {
-  const _SquadPlayerTile({required this.player});
-
-  final Map<String, dynamic> player;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final id =
-        apiString(player['playerId'] ?? player['player_id'] ?? player['id']);
-    final name = apiString(player['name'] ?? player['playerName'], 'Player');
-    final image = resolveCricbuzzImageUrl(player);
-    return InkWell(
-      onTap: id.isEmpty
-          ? null
-          : () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => PlayerDetailScreen(playerId: id))),
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: c.card2,
-              backgroundImage: image == null
-                  ? null
-                  : NetworkImage(
-                      image,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                    ),
-              child: image == null
-                  ? Icon(Icons.person_rounded, color: c.muted)
-                  : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name,
-                      style: TextStyle(
-                          color: c.text, fontWeight: FontWeight.w900)),
-                  Text(apiString(player['role'], 'Role unavailable'),
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12)),
-                ],
-              ),
-            ),
-            if (id.isNotEmpty)
-              Icon(Icons.chevron_right_rounded, color: c.muted),
-          ],
-        ),
       ),
     );
   }
