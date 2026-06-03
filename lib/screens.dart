@@ -6,7 +6,6 @@
 // reachable from the production app, so they are intentionally not exported
 // here anymore.
 
-export 'components/home_components.dart';
-export 'components/match_components.dart';
-export 'components/news_components.dart';
-export 'components/match_details_components.dart';
+export 'package:cricpro_flutter/components/home_components.dart';
+export 'package:cricpro_flutter/components/match_components.dart';
+export 'package:cricpro_flutter/components/match_details_components.dart';

@@ -5,6 +5,8 @@ import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
+import '../../models/ad_config.dart';
+import '../../widgets/ads/banner_ad_widget.dart';
 import '../../screens.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -105,6 +107,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<bool> _hasPlayableStreams(String matchId) =>
       _repository.hasPlayableStreams(matchId);
 
+  Future<bool> _shouldShowWatchLive(CricketMatch match) =>
+      _repository.shouldShowWatchLiveForMatch(match);
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
@@ -160,6 +165,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 builder: (context, snapshot) {
                   final matches = snapshot.data?.data ?? const <CricketMatch>[];
                   final heroMatchId = matches.isEmpty ? '' : matches.first.id;
+                  final heroMatch =
+                      matches.isEmpty ? null : matches.first;
                   final heroFixture = _heroFromMatches(matches);
 
                   // Don't show hero card if no matches and it's live tab
@@ -171,17 +178,35 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (topTab == 0 && heroMatchId.isNotEmpty)
-                        FutureBuilder<bool>(
-                          future: _hasPlayableStreams(heroMatchId),
-                          builder: (context, streamSnapshot) => HomeHeroCard(
-                            fixture: heroFixture,
-                            finished: false,
-                            live: true,
-                            onTap: () => widget.onOpenMatchDetails(heroMatchId),
-                            showButton: streamSnapshot.data == true,
-                            onButtonTap: _heroAction(matchId: heroMatchId),
-                          ),
-                        )
+                        heroMatch?.hasStreamInfo == true
+                            ? FutureBuilder<bool>(
+                                future: _shouldShowWatchLive(heroMatch!),
+                                builder: (context, streamSnapshot) =>
+                                    HomeHeroCard(
+                                  fixture: heroFixture,
+                                  finished: false,
+                                  live: true,
+                                  onTap: () =>
+                                      widget.onOpenMatchDetails(heroMatchId),
+                                  showButton: streamSnapshot.data == true,
+                                  onButtonTap:
+                                      _heroAction(matchId: heroMatchId),
+                                ),
+                              )
+                            : FutureBuilder<bool>(
+                                future: _hasPlayableStreams(heroMatchId),
+                                builder: (context, streamSnapshot) =>
+                                    HomeHeroCard(
+                                  fixture: heroFixture,
+                                  finished: false,
+                                  live: true,
+                                  onTap: () =>
+                                      widget.onOpenMatchDetails(heroMatchId),
+                                  showButton: streamSnapshot.data == true,
+                                  onButtonTap:
+                                      _heroAction(matchId: heroMatchId),
+                                ),
+                              )
                       else if (matches.isNotEmpty)
                         HomeHeroCard(
                           fixture: heroFixture,
@@ -348,9 +373,9 @@ class _HomeTabContent extends StatelessWidget {
                 : Icons.calendar_month_rounded;
 
         // Real matches paired with their matchId.
-        final pairs = <(CompactFixture, String)>[
+        final pairs = <(CompactFixture, String, CricketMatch)>[
           for (var i = 0; i < items.length && i < matches.length; i++)
-            (items[i], matches[i].id),
+            (items[i], matches[i].id, matches[i]),
         ];
 
         return Column(
@@ -373,6 +398,7 @@ class _HomeTabContent extends StatelessWidget {
                         ? _StreamAwareLiveMatchCard(
                             match: pair.$1,
                             matchId: pair.$2,
+                            apiMatch: pair.$3,
                             onOpenMatch: onOpenMatch,
                             onWatchLive: onWatchLive,
                           )
@@ -382,6 +408,7 @@ class _HomeTabContent extends StatelessWidget {
                             onReminder: onReminder,
                           ),
               ),
+            const BannerAdWidget(placement: AdPlacement.home),
           ],
         );
       },
@@ -393,12 +420,14 @@ class _StreamAwareLiveMatchCard extends StatelessWidget {
   const _StreamAwareLiveMatchCard({
     required this.match,
     required this.matchId,
+    required this.apiMatch,
     required this.onOpenMatch,
     required this.onWatchLive,
   });
 
   final CompactFixture match;
   final String matchId;
+  final CricketMatch apiMatch;
   final ValueChanged<String> onOpenMatch;
   final ValueChanged<String> onWatchLive;
 
@@ -406,6 +435,16 @@ class _StreamAwareLiveMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (matchId.isEmpty) {
       return UpcomingMatchCard(match: match, onTap: () => onOpenMatch(matchId));
+    }
+    if (apiMatch.hasStreamInfo) {
+      return FutureBuilder<bool>(
+        future: CricketRepository().shouldShowWatchLiveForMatch(apiMatch),
+        builder: (context, snapshot) => UpcomingMatchCard(
+          match: match,
+          onTap: () => onOpenMatch(matchId),
+          onReminder: snapshot.data == true ? () => onWatchLive(matchId) : null,
+        ),
+      );
     }
     return FutureBuilder<bool>(
       future: CricketRepository().hasPlayableStreams(matchId),
@@ -494,5 +533,3 @@ class _QuickAccessGrid extends StatelessWidget {
     );
   }
 }
-
-

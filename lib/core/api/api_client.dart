@@ -79,5 +79,71 @@ class ApiClient {
     return decoded;
   }
 
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowFailure = false,
+  }) =>
+      _send('POST', path, body: body, allowFailure: allowFailure);
+
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowFailure = false,
+  }) =>
+      _send('PUT', path, body: body, allowFailure: allowFailure);
+
+  Future<Map<String, dynamic>> _send(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowFailure = false,
+  }) async {
+    late final http.Response response;
+    const headers = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+    try {
+      final uri = ApiConfig.uri(path);
+      final payload = body == null ? null : jsonEncode(body);
+      response = method == 'PUT'
+          ? await _httpClient.put(uri, headers: headers, body: payload)
+          : await _httpClient.post(uri, headers: headers, body: payload);
+    } on TimeoutException {
+      throw const ApiClientException(
+          'The cricket data service is taking too long to respond.');
+    } on http.ClientException catch (error) {
+      throw ApiClientException(error.message);
+    } catch (_) {
+      throw const ApiClientException(
+          'Unable to connect to the cricket data service.');
+    }
+
+    final dynamic decoded;
+    try {
+      decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+    } on FormatException {
+      throw ApiClientException(
+        'The cricket data service returned invalid JSON.',
+        statusCode: response.statusCode,
+      );
+    }
+    if (decoded is! Map<String, dynamic>) {
+      throw ApiClientException(
+        'The cricket data service returned unexpected data.',
+        statusCode: response.statusCode,
+      );
+    }
+    final success = decoded['success'] != false;
+    if (response.statusCode >= 400 || (!success && !allowFailure)) {
+      throw ApiClientException(
+        decoded['error']?.toString() ?? 'Unable to update cricket data.',
+        statusCode: response.statusCode,
+      );
+    }
+    return decoded;
+  }
+
   void close() => _httpClient.close();
 }

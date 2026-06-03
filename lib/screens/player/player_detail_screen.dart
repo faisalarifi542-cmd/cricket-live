@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 
 class PlayerDetailScreen extends StatefulWidget {
   const PlayerDetailScreen({super.key, this.player, this.playerId = ''});
@@ -81,6 +81,9 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                   trailing: [
                     GlowIconButton(
                         icon: Icons.notifications_none_rounded, onTap: () {}),
+                    const SizedBox(width: 8),
+                    GlowIconButton(
+                        icon: Icons.more_vert_rounded, onTap: () {}),
                   ],
                 ),
                 const SizedBox(height: 18),
@@ -173,187 +176,201 @@ class _PlayerHero extends StatelessWidget {
     final rank = apiMap((player.rankings != null && player.rankings!.isNotEmpty)
         ? player.rankings
         : ranking);
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
-        gradient: LinearGradient(
-          colors: [
-            c.cyan.withValues(alpha: .20),
-            c.card,
-            c.card2,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        border: Border.all(color: c.cyan.withValues(alpha: .55), width: 1.4),
-        boxShadow: [
-          BoxShadow(
-            color: c.cyan.withValues(alpha: .18),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
+    final rankValue = apiString(rank['rank']);
+    final pointsValue = apiString(rank['points']);
+    final country = apiString(player.country ?? player.nationality);
+    final role = apiString(player.role);
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      final compact = width < 380;
+      final portraitSize = compact ? 96.0 : (width < 460 ? 116.0 : 132.0);
+
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          gradient: LinearGradient(
+            colors: [
+              c.cyan.withValues(alpha: .22),
+              c.card,
+              c.card2,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -40,
-              top: -40,
-              child: Icon(
-                Icons.sports_cricket_rounded,
-                size: 180,
-                color: c.cyan.withValues(alpha: .05),
-              ),
+          border: Border.all(color: c.cyan.withValues(alpha: .55), width: 1.4),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .18),
+              blurRadius: 28,
+              offset: const Offset(0, 10),
             ),
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _PlayerPortrait(player: player),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if ((player.country ?? '').isNotEmpty)
-                              _MiniChip(
-                                icon: Icons.flag_rounded,
-                                text: player.country!.toUpperCase(),
-                              ),
-                            const SizedBox(height: 10),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    player.name.toUpperCase(),
-                                    style: TextStyle(
-                                      color: c.text,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: context.sp(28),
-                                      height: 1.0,
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -40,
+                top: -40,
+                child: Icon(
+                  Icons.sports_cricket_rounded,
+                  size: 180,
+                  color: c.cyan.withValues(alpha: .05),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.all(compact ? 14 : 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _PlayerPortrait(player: player, size: portraitSize),
+                        SizedBox(width: compact ? 12 : 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (country.isNotEmpty)
+                                _CountryChip(country: country),
+                              if (country.isNotEmpty)
+                                const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      player.name,
+                                      maxLines: 2,
+                                      softWrap: true,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: c.text,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: compact ? 20 : 24,
+                                        height: 1.1,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                Icon(Icons.verified_rounded,
-                                    color: c.cyan, size: 24),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              apiString(player.role, 'Role unavailable'),
-                              style: TextStyle(
-                                color: c.text.withValues(alpha: .86),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
+                                  const SizedBox(width: 6),
+                                  Icon(Icons.verified_rounded,
+                                      color: c.cyan,
+                                      size: compact ? 18 : 22),
+                                ],
                               ),
-                            ),
-                            const SizedBox(height: 16),
-                            _StyleRow(
-                                icon: Icons.sports_cricket_rounded,
-                                label: 'Batting Style',
-                                value: player.battingStyle),
-                            _StyleRow(
-                                icon: Icons.sports_baseball_rounded,
-                                label: 'Bowling Style',
-                                value: player.bowlingStyle),
-                            if ((player.jerseyNumber ?? '').isNotEmpty)
-                              _StyleRow(
-                                  icon: Icons.checkroom_rounded,
-                                  label: 'Jersey Number',
-                                  value: player.jerseyNumber),
-                          ],
+                              if (role.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  role,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: true,
+                                  style: TextStyle(
+                                    color: c.cyan,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: compact ? 12 : 13,
+                                  ),
+                                ),
+                              ],
+                              if (rankValue.isNotEmpty ||
+                                  pointsValue.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                _RankBadge(
+                                    rank: rankValue, points: pointsValue),
+                              ],
+                            ],
+                          ),
                         ),
-                      ),
-                      if (rank.isNotEmpty) ...[
-                        const SizedBox(width: 10),
-                        _RankCard(rank: rank),
                       ],
+                    ),
+                    if (player.battingStyle != null ||
+                        player.bowlingStyle != null ||
+                        apiString(player.jerseyNumber).isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      _StyleGrid(player: player),
                     ],
-                  ),
-                  if (statItems.isNotEmpty) ...[
-                    const SizedBox(height: 18),
-                    _HeroStatStrip(items: statItems),
+                    if (statItems.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      _HeroStatStrip(items: statItems),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 }
 
 class _PlayerPortrait extends StatelessWidget {
-  const _PlayerPortrait({required this.player});
+  const _PlayerPortrait({required this.player, this.size = 132});
 
   final ApiPlayer player;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final height = size * 178 / 132;
     return Container(
-      width: 132,
-      height: 178,
+      width: size,
+      height: height,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: c.card2,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: c.cyan.withValues(alpha: .45)),
         boxShadow: [
           BoxShadow(color: c.cyan.withValues(alpha: .12), blurRadius: 24),
         ],
       ),
       child: player.image == null
-          ? _Initial(player.name, size: 42)
+          ? _Initial(player.name, size: size * .32)
           : Image.network(
               player.image!,
               fit: BoxFit.cover,
               webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-              errorBuilder: (_, __, ___) => _Initial(player.name, size: 42),
+              errorBuilder: (_, __, ___) =>
+                  _Initial(player.name, size: size * .32),
             ),
     );
   }
 }
 
-class _StyleRow extends StatelessWidget {
-  const _StyleRow(
-      {required this.icon, required this.label, required this.value});
+class _CountryChip extends StatelessWidget {
+  const _CountryChip({required this.country});
 
-  final IconData icon;
-  final String label;
-  final String? value;
+  final String country;
 
   @override
   Widget build(BuildContext context) {
-    if (apiString(value).isEmpty) return const SizedBox.shrink();
     final c = context.cric;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: c.cyan.withValues(alpha: .14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: c.cyan.withValues(alpha: .35)),
+      ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: c.cyan, size: 24),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style: TextStyle(
-                        color: c.muted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700)),
-                Text(value!,
-                    style: TextStyle(
-                        color: c.text,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800)),
-              ],
+          Icon(Icons.public_rounded, color: c.cyan, size: 14),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              country,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.text,
+                fontWeight: FontWeight.w800,
+                fontSize: 11,
+              ),
             ),
           ),
         ],
@@ -362,41 +379,121 @@ class _StyleRow extends StatelessWidget {
   }
 }
 
-class _RankCard extends StatelessWidget {
-  const _RankCard({required this.rank});
+class _RankBadge extends StatelessWidget {
+  const _RankBadge({required this.rank, required this.points});
 
-  final Map<String, dynamic> rank;
+  final String rank;
+  final String points;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final rankValue = apiString(rank['rank']);
-    final points = apiString(rank['points']);
-    if (rankValue.isEmpty && points.isEmpty) return const SizedBox.shrink();
     return Container(
-      width: 104,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: c.cyan.withValues(alpha: .55)),
         color: c.card.withValues(alpha: .65),
       ),
-      child: Column(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.diamond_rounded, color: c.cyan, size: 24),
-          if (rankValue.isNotEmpty)
-            Text(rankValue,
+          Icon(Icons.diamond_rounded, color: c.cyan, size: 16),
+          if (rank.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text('#$rank',
                 style: TextStyle(
-                    color: c.text, fontWeight: FontWeight.w900, fontSize: 24)),
-          Text('RANK',
-              style: TextStyle(
-                  color: c.muted, fontWeight: FontWeight.w800, fontSize: 11)),
-          if (points.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text('$points PTS',
-                style: TextStyle(
-                    color: c.text, fontWeight: FontWeight.w800, fontSize: 12)),
+                    color: c.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14)),
           ],
+          if (points.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Text('$points pts',
+                style: TextStyle(
+                    color: c.muted,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StyleGrid extends StatelessWidget {
+  const _StyleGrid({required this.player});
+
+  final ApiPlayer player;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <_StyleEntry>[];
+    if (apiString(player.battingStyle).isNotEmpty) {
+      rows.add(_StyleEntry(
+          Icons.sports_cricket_rounded, 'Batting', player.battingStyle!));
+    }
+    if (apiString(player.bowlingStyle).isNotEmpty) {
+      rows.add(_StyleEntry(
+          Icons.sports_baseball_rounded, 'Bowling', player.bowlingStyle!));
+    }
+    if (apiString(player.jerseyNumber).isNotEmpty) {
+      rows.add(_StyleEntry(Icons.tag_rounded, 'Jersey',
+          '#${apiString(player.jerseyNumber)}'));
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Column(
+      children: [
+        for (final row in rows) ...[
+          _StyleRow(entry: row),
+          if (row != rows.last) const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _StyleEntry {
+  const _StyleEntry(this.icon, this.label, this.value);
+  final IconData icon;
+  final String label;
+  final String value;
+}
+
+class _StyleRow extends StatelessWidget {
+  const _StyleRow({required this.entry});
+
+  final _StyleEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: c.card2.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: c.border.withValues(alpha: .65)),
+      ),
+      child: Row(
+        children: [
+          Icon(entry.icon, color: c.cyan, size: 18),
+          const SizedBox(width: 10),
+          Text(entry.label,
+              style: TextStyle(
+                  color: c.muted, fontWeight: FontWeight.w800, fontSize: 12)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              entry.value,
+              textAlign: TextAlign.right,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: c.text, fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+          ),
         ],
       ),
     );
@@ -412,34 +509,81 @@ class _HeroStatStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         color: c.card.withValues(alpha: .55),
         border: Border.all(color: c.cyan.withValues(alpha: .38)),
       ),
-      child: Row(
+      child: LayoutBuilder(builder: (context, constraints) {
+        final visible = items.take(5).toList();
+        final perItemMin = constraints.maxWidth / visible.length;
+        if (perItemMin >= 56) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final item in visible)
+                Expanded(child: _StatTile(item: item)),
+            ],
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              for (final item in visible)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: SizedBox(width: 84, child: _StatTile(item: item)),
+                ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({required this.item});
+
+  final _StatItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          for (final item in items.take(5))
-            Expanded(
-              child: Column(
-                children: [
-                  Icon(item.icon, color: c.cyan, size: 22),
-                  const SizedBox(height: 6),
-                  Text(item.label.toUpperCase(),
-                      style: TextStyle(
-                          color: c.muted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 4),
-                  Text(item.value,
-                      style: TextStyle(
-                          color: c.text,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900)),
-                ],
+          Icon(item.icon, color: c.cyan, size: 18),
+          const SizedBox(height: 6),
+          Text(
+            item.label.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: c.muted,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: .4),
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              item.value,
+              maxLines: 1,
+              style: TextStyle(
+                color: c.text,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
               ),
             ),
+          ),
         ],
       ),
     );
@@ -456,48 +600,11 @@ class _PlayerTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Container(
-        padding: const EdgeInsets.all(5),
-        decoration: BoxDecoration(
-          color: c.card,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: c.border),
-        ),
-        child: Row(
-          children: [
-            for (var i = 0; i < tabs.length; i++)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () => onChanged(i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 128,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      gradient: i == selected ? c.primaryGradient : null,
-                    ),
-                    child: Text(
-                      tabs[i],
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: i == selected ? Colors.white : c.muted,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
+    return ScrollableSegmentedTabs(
+      items: tabs,
+      selected: selected,
+      onChanged: onChanged,
+      height: 52,
     );
   }
 }
@@ -528,6 +635,7 @@ class _OverviewTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _BioCard(player: player),
         const SizedBox(height: 12),
@@ -602,6 +710,7 @@ class _StatsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionCard(
           title: 'Batting Stats',
@@ -664,6 +773,7 @@ class _CareerTab extends StatelessWidget {
     final teams =
         player.teams.map(apiString).where((x) => x.isNotEmpty).toList();
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _CareerSummaryCard(player: player),
         const SizedBox(height: 12),
@@ -700,13 +810,18 @@ class _RecentTab extends StatelessWidget {
       icon: Icons.timeline_rounded,
       child: recent.isEmpty
           ? const _InlineEmpty('Recent performance data is not available yet.')
-          : Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final raw in recent.take(compact ? 5 : recent.length))
-                  _RecentChip(item: apiMap(raw)),
-              ],
+          : SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final raw
+                      in recent.take(compact ? 5 : recent.length))
+                    Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: _RecentChip(item: apiMap(raw)),
+                    ),
+                ],
+              ),
             ),
     );
   }
@@ -755,13 +870,18 @@ class _SectionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, color: c.cyan, size: 24),
+              Icon(icon, color: c.cyan, size: 22),
               const SizedBox(width: 10),
-              Text(title.toUpperCase(),
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16)),
+              Expanded(
+                child: Text(title.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .4,
+                        fontSize: 15)),
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -856,7 +976,7 @@ class _RecentChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Container(
-      width: 104,
+      width: 124,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: c.card2,
@@ -867,18 +987,26 @@ class _RecentChip extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(apiString(item['score'], '-'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: c.cyan, fontSize: 20, fontWeight: FontWeight.w900)),
+                  color: c.cyan, fontSize: 18, fontWeight: FontWeight.w900)),
           const SizedBox(height: 6),
           Text('vs ${apiString(item['opponent'], '-')}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: c.text, fontWeight: FontWeight.w800)),
           const SizedBox(height: 3),
           Text(apiString(item['format']),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: c.cyan, fontSize: 12, fontWeight: FontWeight.w800)),
+                  color: c.cyan, fontSize: 11, fontWeight: FontWeight.w800)),
           Text(apiString(item['date']),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: c.muted, fontSize: 11, fontWeight: FontWeight.w600)),
+                  color: c.muted, fontSize: 10, fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -896,13 +1024,16 @@ class _AchievementLine extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.workspace_premium_rounded, color: c.cyan, size: 22),
+          Icon(Icons.workspace_premium_rounded, color: c.cyan, size: 20),
           const SizedBox(width: 10),
           Expanded(
               child: Text(apiString(item['title'] ?? item['name']),
+                  softWrap: true,
                   style:
                       TextStyle(color: c.text, fontWeight: FontWeight.w800))),
+          const SizedBox(width: 8),
           Text(apiString(item['year'] ?? item['date']),
               style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
         ],
@@ -922,8 +1053,10 @@ class _InfoLine extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
+          SizedBox(
+              width: 110,
               child: Text(row.label,
                   style:
                       TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
@@ -932,6 +1065,7 @@ class _InfoLine extends StatelessWidget {
             child: Text(
               row.value,
               textAlign: TextAlign.right,
+              softWrap: true,
               style: TextStyle(color: c.text, fontWeight: FontWeight.w800),
             ),
           ),
@@ -950,11 +1084,13 @@ class _InlineEmpty extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(Icons.info_outline_rounded, color: c.cyan, size: 20),
         const SizedBox(width: 10),
         Expanded(
             child: Text(text,
+                softWrap: true,
                 style: TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
       ],
     );
@@ -980,7 +1116,7 @@ class _MiniChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: c.cyan, size: 16),
+          Icon(icon, color: c.cyan, size: 14),
           const SizedBox(width: 6),
           Text(text,
               style: TextStyle(
@@ -1006,14 +1142,22 @@ class _FallbackPlayerCard extends StatelessWidget {
           PlayerAvatar(player: player, size: 110, borderColor: c.cyan),
           const SizedBox(height: 16),
           Text(player.name,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: c.text, fontSize: 28, fontWeight: FontWeight.w900)),
+                  color: c.text, fontSize: 24, fontWeight: FontWeight.w900)),
           const SizedBox(height: 6),
           Text('${player.team.name} - ${player.role}',
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: c.cyan, fontWeight: FontWeight.w700)),
           if (player.subtitle != null) ...[
             const SizedBox(height: 6),
-            Text(player.subtitle!, style: TextStyle(color: c.muted)),
+            Text(player.subtitle!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.muted)),
           ],
         ],
       ),
@@ -1030,7 +1174,7 @@ class _PlayerLoading extends StatelessWidget {
     return Column(
       children: [
         Container(
-          height: 320,
+          height: 280,
           decoration: BoxDecoration(
             color: c.card,
             borderRadius: BorderRadius.circular(26),
@@ -1057,8 +1201,9 @@ class _PlayerStateCard extends StatelessWidget {
     return PremiumCard(
       padding: const EdgeInsets.all(18),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.person_outline_rounded, color: c.cyan, size: 30),
+          Icon(Icons.person_outline_rounded, color: c.cyan, size: 28),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1071,6 +1216,7 @@ class _PlayerStateCard extends StatelessWidget {
                         fontSize: 16)),
                 const SizedBox(height: 4),
                 Text(text,
+                    softWrap: true,
                     style: TextStyle(
                         color: c.muted,
                         fontWeight: FontWeight.w700,

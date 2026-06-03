@@ -15,9 +15,28 @@ const TOGGLES: Array<{ key: keyof AdsInput; label: string; description?: string 
   { key: 'show_ads', label: 'Show ads', description: 'Master switch. When off, no ads render anywhere.' },
   { key: 'test_mode', label: 'Test mode', description: 'Serve test ads only. Use during QA.' },
   { key: 'banner_enabled', label: 'Banners' },
-  { key: 'native_enabled', label: 'Native ads' },
+  { key: 'native_enabled', label: 'Native ads', description: 'Requires native ad factories; currently kept off until factories are added.' },
   { key: 'interstitial_enabled', label: 'Interstitials' },
   { key: 'rewarded_enabled', label: 'Rewarded ads' },
+  { key: 'admob_enabled', label: 'AdMob enabled' },
+  { key: 'unity_enabled', label: 'Unity mediation enabled' },
+  { key: 'meta_enabled', label: 'Meta mediation enabled' },
+  { key: 'rewarded_required_for_premium_streams', label: 'Rewarded required for premium streams' },
+];
+
+const PLACEMENT_TOGGLES: Array<{ key: keyof AdsInput; label: string }> = [
+  { key: 'home_banner_enabled', label: 'Home banner' },
+  { key: 'home_native_enabled', label: 'Home native' },
+  { key: 'matches_banner_enabled', label: 'Matches banner' },
+  { key: 'matches_native_enabled', label: 'Matches native' },
+  { key: 'match_details_banner_enabled', label: 'Match details banner' },
+  { key: 'match_details_native_enabled', label: 'Match details native' },
+  { key: 'news_banner_enabled', label: 'News banner' },
+  { key: 'news_native_enabled', label: 'News native' },
+  { key: 'series_banner_enabled', label: 'Series banner' },
+  { key: 'series_native_enabled', label: 'Series native' },
+  { key: 'more_banner_enabled', label: 'More banner' },
+  { key: 'live_player_banner_enabled', label: 'Live player banner' },
 ];
 
 const UNIT_FIELDS: Array<{ key: keyof AdsInput; label: string }> = [
@@ -43,6 +62,10 @@ export function AdsSettingsForm({ canWrite }: { canWrite: boolean }) {
       let v: unknown = row.setting_value;
       if (typeof v === 'string') {
         try { v = JSON.parse(v); } catch { /* keep as string */ }
+      }
+      if (row.setting_key === 'ads_config' && v && typeof v === 'object' && !Array.isArray(v)) {
+        Object.assign(flat, v);
+        continue;
       }
       flat[row.setting_key] = v;
     }
@@ -98,6 +121,41 @@ export function AdsSettingsForm({ canWrite }: { canWrite: boolean }) {
             onChange={(e) => update('frequency_minutes', Number(e.target.value))}
           />
         </Field>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Field label="Interstitial frequency cap">
+            <Input
+              type="number"
+              min={0}
+              value={form.interstitial_frequency_cap ?? 1}
+              disabled={!canWrite}
+              onChange={(e) => update('interstitial_frequency_cap', Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Minimum seconds between interstitials">
+            <Input
+              type="number"
+              min={0}
+              value={form.minimum_seconds_between_interstitials ?? 300}
+              disabled={!canWrite}
+              onChange={(e) => update('minimum_seconds_between_interstitials', Number(e.target.value))}
+            />
+          </Field>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-panel/40 p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-100">Placements</h2>
+        <div className="grid gap-3 md:grid-cols-2">
+          {PLACEMENT_TOGGLES.map((t) => (
+            <Switch
+              key={String(t.key)}
+              checked={Boolean(form[t.key])}
+              onChange={(v) => update(t.key, v)}
+              label={t.label}
+              disabled={!canWrite}
+            />
+          ))}
+        </div>
       </section>
 
       <section className="rounded-2xl border border-line bg-panel/40 p-4">

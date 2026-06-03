@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
+import '../../models/ad_config.dart';
+import '../../widgets/ads/banner_ad_widget.dart';
 
 class MoreScreen extends StatelessWidget {
   const MoreScreen({
@@ -101,6 +103,8 @@ class MoreScreen extends StatelessWidget {
               ],
               footer: _AppearanceRow(isDark: isDark, onChanged: onThemeChanged),
             ),
+            const SizedBox(height: 16),
+            const BannerAdWidget(placement: AdPlacement.more),
           ],
         ),
       ),

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../repositories/cricket_repository.dart';
-import 'series_detail_screen.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models/ad_config.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/screens/series/series_detail_screen.dart';
+import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
+import 'package:cricpro_flutter/widgets/ads/native_ad_card.dart';
 
 class SeriesListScreen extends StatefulWidget {
   const SeriesListScreen({super.key, required this.onOpenSeries});
@@ -82,20 +85,20 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                     }
                     return Column(
                       children: [
-                        for (final item in items)
+                        for (final entry in items.indexed) ...[
                           Padding(
                             padding: const EdgeInsets.only(bottom: 12),
                             child: _SeriesCard(
-                              series: item,
+                              series: entry.$2,
                               onTap: () {
                                 if (kDebugMode) {
                                   debugPrint(
-                                      'SERIES_TAP id=${item.id} name=${item.name} raw=${item.id}/${item.name}');
+                                      'SERIES_TAP id=${entry.$2.id} name=${entry.$2.name} raw=${entry.$2.id}/${entry.$2.name}');
                                 }
                                 Navigator.of(context).push(MaterialPageRoute(
                                   builder: (_) => SeriesDetailScreen(
-                                    seriesId: item.id,
-                                    initialSeries: item,
+                                    seriesId: entry.$2.id,
+                                    initialSeries: entry.$2,
                                     onOpenReminders: () {},
                                     onOpenCalendar: () {},
                                     onOpenPlayer: () {},
@@ -104,6 +107,13 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                               },
                             ),
                           ),
+                          if ((entry.$1 + 1) % 6 == 0)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 12),
+                              child: NativeAdCard(placement: AdPlacement.series),
+                            ),
+                        ],
+                        const BannerAdWidget(placement: AdPlacement.series),
                       ],
                     );
                   },

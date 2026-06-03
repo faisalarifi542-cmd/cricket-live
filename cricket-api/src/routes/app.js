@@ -1,24 +1,18 @@
 import { query } from '../lib/db.js';
 import { controlledFetch, providerFetch, sendAppResponse } from '../lib/data-control.js';
 import providerManager from '../providers/provider-manager.js';
-
-async function appSettings() {
-  const rows = await query(`SELECT setting_key, setting_value FROM app_settings WHERE is_public = 1 OR is_public IS NULL`).catch(() => []);
-  const config = {
-    liveMatchesRefreshSeconds: 10,
-    liveLineRefreshSeconds: 5,
-    scorecardRefreshSeconds: 30,
-    commentaryRefreshSeconds: 30,
-    oversRefreshSeconds: 20,
-    scheduleRefreshMinutes: 5,
-    newsRefreshMinutes: 5,
-    homeRefreshSeconds: 30,
-  };
-  for (const row of rows) {
-    try { config[row.setting_key] = JSON.parse(row.setting_value); } catch { config[row.setting_key] = row.setting_value; }
-  }
-  return config;
-}
+import {
+  buildPublicAppConfig,
+  enrichMatchListWithStreams,
+  fetchActiveStreamsForMatch,
+  isLiveStreamingFeatureEnabled,
+  publicStreamDto,
+} from '../lib/public-app-state.js';
+import {
+  fetchManualMatchById,
+  manualMatchToDetail,
+  mergeManualMatches,
+} from '../lib/manual-matches.js';
 
 async function homeConfig() {
   const [sections, banners, featuredMatches, featuredSeries, featuredNews] = await Promise.all([
@@ -35,7 +29,97 @@ function appResponse(data, meta) {
   return { success: true, data, meta };
 }
 
+async function streamSummary(matchId, config = null) {
+  const liveStreamsEnabled = isLiveStreamingFeatureEnabled(config || await buildPublicAppConfig());
+  if (!liveStreamsEnabled) {
+    return {
+      hasStreams: false,
+      hasStream: false,
+      hasLiveStream: false,
+      watchLiveEnabled: false,
+      streamCount: 0,
+      isPremiumStreamAvailable: false,
+      defaultStreamId: null,
+      streams: [],
+      message: 'Live streams are currently unavailable.',
+    };
+  }
+  const streams = await fetchActiveStreamsForMatch(matchId);
+  const publicStreams = streams.map(publicStreamDto).filter(Boolean);
+  return {
+    hasStreams: publicStreams.length > 0,
+    hasStream: publicStreams.length > 0,
+    hasLiveStream: publicStreams.length > 0,
+    watchLiveEnabled: publicStreams.length > 0,
+    streamCount: publicStreams.length,
+    isPremiumStreamAvailable: publicStreams.some((stream) => stream.isPremium),
+    defaultStreamId: publicStreams[0]?.id || null,
+    streams: publicStreams,
+  };
+}
+
 export default async function appRoutes(fastify) {
+  fastify.get('/app/config', async (_request, reply) => {
+    const config = await buildPublicAppConfig();
+    return sendAppResponse(reply, appResponse(config, { provider: 'admin' }));
+  });
+
+  fastify.post('/app/device/register', async (request, reply) => {
+    const body = request.body || {};
+    const subscriptionId = String(body.subscriptionId || body.subscription_id || '').trim();
+    if (!subscriptionId) {
+      return reply.code(400).send({ success: false, error: 'subscriptionId required' });
+    }
+    await query(
+      `INSERT INTO app_devices
+        (subscription_id, push_token, platform, app_version, build_number, language, permission_status, metadata, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+        push_token = VALUES(push_token),
+        platform = VALUES(platform),
+        app_version = VALUES(app_version),
+        build_number = VALUES(build_number),
+        language = VALUES(language),
+        permission_status = VALUES(permission_status),
+        metadata = VALUES(metadata),
+        last_seen_at = NOW()`,
+      [
+        subscriptionId,
+        body.pushToken || body.push_token || null,
+        body.platform || 'unknown',
+        body.appVersion || body.app_version || null,
+        body.buildNumber || body.build_number || null,
+        body.language || null,
+        body.permissionStatus || body.permission_status || 'unknown',
+        body.metadata ? JSON.stringify(body.metadata) : null,
+      ],
+    );
+    return { success: true };
+  });
+
+  fastify.put('/app/device/update', async (request, reply) => {
+    const body = request.body || {};
+    const subscriptionId = String(body.subscriptionId || body.subscription_id || '').trim();
+    if (!subscriptionId) {
+      return reply.code(400).send({ success: false, error: 'subscriptionId required' });
+    }
+    await query(
+      `UPDATE app_devices SET
+        push_token = COALESCE(?, push_token),
+        permission_status = COALESCE(?, permission_status),
+        metadata = COALESCE(?, metadata),
+        last_seen_at = NOW()
+       WHERE subscription_id = ?`,
+      [
+        body.pushToken || body.push_token || null,
+        body.permissionStatus || body.permission_status || null,
+        body.metadata ? JSON.stringify(body.metadata) : null,
+        subscriptionId,
+      ],
+    );
+    return { success: true };
+  });
+
   fastify.get('/app/home', async (_request, reply) => {
     const result = await controlledFetch({
       dataType: 'homeData',
@@ -48,12 +132,18 @@ export default async function appRoutes(fastify) {
           providerFetch('recentMatches', 'getRecentMatches').catch(() => ({ data: [] })),
           providerFetch('news', 'getNewsStories').catch(() => ({ data: { stories: [] } })),
           homeConfig(),
-          appSettings(),
+          buildPublicAppConfig(),
+        ]);
+        const mergedLive = await mergeManualMatches(live.data || [], { status: 'live' });
+        const [liveMatches, upcomingMatches, recentMatches] = await Promise.all([
+          enrichMatchListWithStreams(mergedLive, { allowReplay: false }).catch(() => mergedLive),
+          enrichMatchListWithStreams(upcoming.data || [], { allowReplay: false }).catch(() => upcoming.data || []),
+          enrichMatchListWithStreams(recent.data || [], { allowReplay: false }).catch(() => recent.data || []),
         ]);
         const payload = {
-          liveMatches: live.data || [],
-          upcomingMatches: (upcoming.data || []).slice(0, 10),
-          recentMatches: (recent.data || []).slice(0, 10),
+          liveMatches,
+          upcomingMatches: upcomingMatches.slice(0, 10),
+          recentMatches: recentMatches.slice(0, 10),
           featuredMatch: home.featuredMatches?.[0] || null,
           featuredSeries: home.featuredSeries?.[0] || null,
           featuredNews: (news.data?.stories || []).slice(0, 5),
@@ -74,22 +164,43 @@ export default async function appRoutes(fastify) {
       targetId: id,
       requiredId: true,
       fetcher: async () => {
-        const [detail, streams, config] = await Promise.all([
-          providerManager.execute('getMatchInfo', id),
-          query(`SELECT COUNT(*) count FROM match_streams WHERE match_external_id = ? AND is_active = 1`, [id]).catch(() => [{ count: 0 }]),
-          appSettings(),
-        ]);
+        let detail;
+        let provider = 'cricbuzz';
+        try {
+          detail = await providerManager.execute('getMatchInfo', id);
+          provider = detail.provider || provider;
+        } catch {
+          detail = null;
+        }
+
+        // Fallback to admin-controlled manual match
+        if (!detail?.data) {
+          const manual = await fetchManualMatchById(id);
+          if (manual) {
+            detail = { data: manualMatchToDetail(manual), provider: 'admin' };
+            provider = 'admin';
+          }
+        }
+
+        const config = await buildPublicAppConfig();
+        const streams = await streamSummary(id, config).catch(() => ({ hasStreams: false, hasLiveStream: false, watchLiveEnabled: false, streamCount: 0, isPremiumStreamAvailable: false, defaultStreamId: null, streams: [] }));
         return {
           data: {
-            match: detail.data,
-            liveLineAvailable: ['live', 'in_progress'].includes(String(detail.data?.status || '').toLowerCase()),
-            streamsAvailable: Number(streams[0]?.count || 0) > 0,
+            match: detail?.data || null,
+            liveLineAvailable: ['live', 'in_progress'].includes(String(detail?.data?.status || '').toLowerCase()),
+            streamsAvailable: streams.hasStreams,
+            hasLiveStream: streams.hasStreams,
+            watchLiveEnabled: streams.watchLiveEnabled,
+            streamCount: streams.streamCount,
+            isPremiumStreamAvailable: streams.isPremiumStreamAvailable,
+            streamBadgeText: streams.hasStreams ? (streams.isPremiumStreamAvailable ? 'Premium' : 'LIVE STREAM') : null,
             scorecardAvailable: true,
             commentaryAvailable: true,
-            tabs: { scorecard: true, commentary: true, overs: true, squads: true, streams: Number(streams[0]?.count || 0) > 0 },
+            tabs: { scorecard: true, commentary: true, overs: true, squads: true, streams: streams.hasStreams },
             config,
+            streams: streams.streams,
           },
-          provider: detail.provider,
+          provider,
         };
       },
     });
@@ -113,6 +224,20 @@ export default async function appRoutes(fastify) {
           },
           provider: detail.provider,
         };
+      },
+    });
+    return sendAppResponse(reply, appResponse(result.data, result.meta));
+  });
+
+  fastify.get('/app/match/:id/streams', async (request, reply) => {
+    const result = await controlledFetch({
+      dataType: 'matchStreams',
+      targetId: request.params.id,
+      allowEmpty: true,
+      fetcher: async () => {
+        const config = await buildPublicAppConfig();
+        const streams = await streamSummary(request.params.id, config);
+        return { data: { matchId: request.params.id, ...streams }, provider: 'admin' };
       },
     });
     return sendAppResponse(reply, appResponse(result.data, result.meta));

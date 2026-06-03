@@ -3,14 +3,18 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../models/cricket_match.dart';
-import '../../repositories/cricket_repository.dart';
-import '../player/player_detail_screen.dart';
-import '../../screens.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models/ad_config.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/models/cricket_match.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/screens/player/player_detail_screen.dart';
+import 'package:cricpro_flutter/widgets/squad.dart';
+import 'package:cricpro_flutter/screens.dart';
+import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
+import 'package:cricpro_flutter/widgets/ads/native_ad_card.dart';
 
 class MatchDetailsScreen extends StatefulWidget {
   const MatchDetailsScreen({super.key, this.onWatchLive, this.matchId = ''});
@@ -156,6 +160,19 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                         );
                       }
                       final match = CricketMatch.fromJson(data);
+                      if (match.hasStreamInfo) {
+                        return FutureBuilder<bool>(
+                          future: _repository.shouldShowWatchLiveForMatch(match),
+                          builder: (context, streamSnapshot) =>
+                              MatchDetailHeroCard(
+                            match: match,
+                            showWatchLive: streamSnapshot.data == true,
+                            onWatchLive: widget.onWatchLive == null
+                                ? null
+                                : () => widget.onWatchLive!(_matchId),
+                          ),
+                        );
+                      }
                       return FutureBuilder<bool>(
                         future: _streamAvailabilityFuture,
                         builder: (context, streamSnapshot) =>
@@ -177,6 +194,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                       style: TextStyle(color: c.muted, height: 1.5),
                     ),
                   ),
+                const SizedBox(height: 16),
+                const NativeAdCard(placement: AdPlacement.matchDetails),
                 const SizedBox(height: 16),
                 // Match Details has 5 tabs which squeeze "Commentary" into
                 // "Comment…" on narrow widths. Use the scrollable variant so
@@ -232,6 +251,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                           ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                const BannerAdWidget(placement: AdPlacement.matchDetails),
               ],
             ),
           ),
@@ -971,17 +992,7 @@ class _SquadsPanelState extends State<_SquadsPanel> {
           height: 44,
         ),
         const SizedBox(height: 12),
-        _SectionCard(
-          title: 'Playing XI',
-          child: _PlayerGrid(players: xi),
-        ),
-        const SizedBox(height: 12),
-        _SectionCard(
-          title: 'Bench',
-          child: bench.isEmpty
-              ? const _InlineEmpty(text: 'Bench players are not available.')
-              : _PlayerGrid(players: bench),
-        ),
+        PremiumSquad(playingXi: xi, bench: bench, title: 'Playing XI'),
       ],
     );
   }
@@ -1250,26 +1261,6 @@ class _BallBubble extends StatelessWidget {
       child: Text(label,
           style: TextStyle(
               color: color, fontWeight: FontWeight.w900, fontSize: 12)),
-    );
-  }
-}
-
-class _PlayerGrid extends StatelessWidget {
-  const _PlayerGrid({required this.players});
-
-  final List<dynamic> players;
-
-  @override
-  Widget build(BuildContext context) {
-    if (players.isEmpty) {
-      return const _InlineEmpty(text: 'Players are not available yet.');
-    }
-    return Column(
-      children: [
-        for (final player in players)
-          _PlayerLine(
-              row: apiMap(player), subtitle: str(apiMap(player)['role'])),
-      ],
     );
   }
 }

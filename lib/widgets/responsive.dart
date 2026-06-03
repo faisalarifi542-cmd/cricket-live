@@ -292,7 +292,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     // and clip them to "ecard" / "Sq".
     Scrollable.ensureVisible(
       ctx,
-      alignment: 0.0,
+      alignment: 0.12,
       alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
@@ -320,6 +320,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         controller: _controller,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
           children: [
             for (var i = 0; i < widget.items.length; i++) ...[

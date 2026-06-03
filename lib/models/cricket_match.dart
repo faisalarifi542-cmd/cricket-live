@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:cricpro_flutter/api_models.dart';
 
 import '../models.dart';
-import 'api_models.dart';
 
 /// A normalized cricket match parsed from any of the supported API shapes.
 ///
@@ -28,13 +28,20 @@ class CricketMatch {
     required this.teamBShort,
     required this.teamALogo,
     required this.teamBLogo,
-    required this.teamAScoreText,
-    required this.teamBScoreText,
-    required this.isLive,
-    required this.isUpcoming,
-    required this.isFinished,
-    this.score,
-  });
+      required this.teamAScoreText,
+      required this.teamBScoreText,
+      required this.isLive,
+      required this.isUpcoming,
+      required this.isFinished,
+      required this.hasLiveStream,
+      required this.watchLiveEnabled,
+      required this.streamCount,
+      required this.isPremiumStreamAvailable,
+      required this.streamBadgeText,
+      required this.hasStreamInfo,
+      required this.defaultStreamId,
+      this.score,
+    });
 
   final String id;
   final String title;
@@ -57,6 +64,13 @@ class CricketMatch {
   final bool isLive;
   final bool isUpcoming;
   final bool isFinished;
+  final bool hasLiveStream;
+  final bool watchLiveEnabled;
+  final int streamCount;
+  final bool isPremiumStreamAvailable;
+  final String? streamBadgeText;
+  final bool hasStreamInfo;
+  final String? defaultStreamId;
   final String? score;
 
   factory CricketMatch.fromJson(dynamic value) {
@@ -102,6 +116,32 @@ class CricketMatch {
         status == 'result' ||
         status == 'abandoned';
     final isUpcoming = !isLive && !isFinished;
+    final hasStreamInfo = json.containsKey('hasLiveStream') ||
+        json.containsKey('watchLiveEnabled') ||
+        json.containsKey('hasStream') ||
+        json.containsKey('hasStreams') ||
+        json.containsKey('streamCount') ||
+        json.containsKey('isPremiumStreamAvailable') ||
+        json.containsKey('streamBadgeText') ||
+        json.containsKey('defaultStreamId');
+    final streamCount = apiInt(json['streamCount']) ?? apiInt(json['stream_count']) ?? 0;
+    final hasLiveStream =
+        apiBool(json['hasLiveStream']) ||
+        apiBool(json['hasStream']) ||
+        apiBool(json['hasStreams']) ||
+        streamCount > 0;
+    final watchLiveEnabled =
+        apiBool(json['watchLiveEnabled'], hasLiveStream);
+    final premiumStreamAvailable =
+        apiBool(json['isPremiumStreamAvailable']) ||
+        apiBool(json['premiumStreamAvailable']);
+    final streamBadgeText = apiString(json['streamBadgeText'], '').isEmpty
+        ? null
+        : apiString(json['streamBadgeText']);
+    final defaultStreamId =
+        apiString(json['defaultStreamId'], '').isEmpty
+            ? null
+            : apiString(json['defaultStreamId']);
 
     // Build title from actual team names, never use hardcoded title if it doesn't match teams
     final rawTitle =
@@ -161,6 +201,13 @@ class CricketMatch {
       isLive: isLive,
       isUpcoming: isUpcoming,
       isFinished: isFinished,
+      hasLiveStream: hasLiveStream,
+      watchLiveEnabled: watchLiveEnabled,
+      streamCount: streamCount,
+      isPremiumStreamAvailable: premiumStreamAvailable,
+      streamBadgeText: streamBadgeText,
+      hasStreamInfo: hasStreamInfo,
+      defaultStreamId: defaultStreamId,
       score: t1Score.isEmpty && t2Score.isEmpty ? null : '$t1Score vs $t2Score',
     );
   }
@@ -380,8 +427,86 @@ class CricketMatch {
 
   static Map<String, dynamic>? _scoreMap(Map<String, dynamic> json) {
     final value = json['score'];
-    if (value is Map<String, dynamic>) return value;
-    return null;
+    if (value is Map<String, dynamic> && value.isNotEmpty) return value;
+
+    final team1 = _scoreEntries(
+      json,
+      const ['team1Score', 'team1_score', 'teamAScore', 'team_a_score'],
+    );
+    final team2 = _scoreEntries(
+      json,
+      const ['team2Score', 'team2_score', 'teamBScore', 'team_b_score'],
+    );
+    if (team1.isEmpty && team2.isEmpty) return null;
+    return {
+      if (team1.isNotEmpty) 'team1': team1,
+      if (team2.isNotEmpty) 'team2': team2,
+    };
+  }
+
+  static List<Map<String, dynamic>> _scoreEntries(
+      Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value is Map<String, dynamic>) {
+        return _innsFromScoreMap(value);
+      }
+      if (value is List) {
+        final list = <Map<String, dynamic>>[];
+        for (final item in value) {
+          if (item is Map<String, dynamic>) {
+            list.add({
+              'runs': item['runs'] ?? item['score'] ?? item['r'],
+              'wickets': item['wickets'] ?? item['w'],
+              'overs': item['overs'] ?? item['o'],
+              'declared': item['isDeclared'] ?? item['declared'] == true,
+            });
+          }
+        }
+        if (list.isNotEmpty) return list;
+      }
+      if (value != null && value.toString().trim().isNotEmpty) {
+        final text = value.toString().trim();
+        final runs = RegExp(r'^(\d+)').firstMatch(text)?.group(1);
+        if (runs != null) {
+          return [
+            {
+              'runs': int.tryParse(runs) ?? runs,
+              'wickets': null,
+              'overs': null,
+            }
+          ];
+        }
+      }
+    }
+    return const [];
+  }
+
+  static List<Map<String, dynamic>> _innsFromScoreMap(
+      Map<String, dynamic> map) {
+    final innings = map['inngs'] ?? map['innings'] ?? map['scorecard'];
+    if (innings is List) {
+      return innings
+          .whereType<Map<String, dynamic>>()
+          .map((i) => {
+                'runs': i['runs'] ?? i['score'] ?? i['r'],
+                'wickets': i['wickets'] ?? i['w'],
+                'overs': i['overs'] ?? i['o'],
+                'declared': i['isDeclared'] ?? i['declared'] == true,
+              })
+          .toList();
+    }
+    if (map['runs'] != null) {
+      return [
+        {
+          'runs': map['runs'] ?? map['score'] ?? map['r'],
+          'wickets': map['wickets'] ?? map['w'],
+          'overs': map['overs'] ?? map['o'],
+          'declared': map['isDeclared'] ?? map['declared'] == true,
+        }
+      ];
+    }
+    return const [];
   }
 
   static String _formatTeamScore(dynamic innings) {

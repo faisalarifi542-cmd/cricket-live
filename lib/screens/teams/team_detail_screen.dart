@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../repositories/cricket_repository.dart';
-import '../player/player_detail_screen.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/widgets/squad.dart';
 
 class TeamDetailScreen extends StatefulWidget {
   const TeamDetailScreen({
@@ -98,6 +98,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                       );
                     }
                     if (snapshot.hasError) {
+                      final fallback = _fallbackTeam();
+                      if (fallback != null) {
+                        return _TeamProfileView(
+                          team: fallback,
+                          sourceSeriesId: widget.sourceSeriesId,
+                        );
+                      }
                       return _TeamStateCard(
                         text: 'Unable to load team profile. Pull to retry.',
                         onRetry: widget.teamId.isEmpty
@@ -108,6 +115,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     }
                     final team = snapshot.data?.data;
                     if (team == null || team.id.isEmpty) {
+                      final fallback = _fallbackTeam();
+                      if (fallback != null) {
+                        return _TeamProfileView(
+                          team: fallback,
+                          sourceSeriesId: widget.sourceSeriesId,
+                        );
+                      }
                       return _TeamStateCard(
                         text: 'Team profile is not available yet.',
                         onRetry: widget.teamId.isEmpty
@@ -116,27 +130,9 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                                 .team(widget.teamId, forceRefresh: true)),
                       );
                     }
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _TeamHero(team: team),
-                        const SizedBox(height: 16),
-                        _TeamSection(
-                          title: 'Squad',
-                          empty: 'Squad is not available yet.',
-                          items: team.squad,
-                          itemBuilder: (item) =>
-                              _SquadPlayerTile(player: apiMap(item)),
-                        ),
-                        const SizedBox(height: 16),
-                        _TeamSection(
-                          title: 'Recent matches',
-                          empty: 'Recent matches are not available yet.',
-                          items: team.recentMatches,
-                          itemBuilder: (item) =>
-                              _SimpleTeamRow(data: apiMap(item)),
-                        ),
-                      ],
+                    return _TeamProfileView(
+                      team: team,
+                      sourceSeriesId: widget.sourceSeriesId,
                     );
                   },
                 ),
@@ -145,6 +141,63 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  ApiTeamProfile? _fallbackTeam() {
+    final name = widget.initialName?.trim() ?? '';
+    final shortName = widget.initialShortName?.trim() ?? '';
+    final logo = widget.initialLogoUrl?.trim() ?? '';
+    if (name.isEmpty && shortName.isEmpty && logo.isEmpty) return null;
+    return ApiTeamProfile(
+      id: widget.teamId,
+      name: name.isNotEmpty ? name : (shortName.isNotEmpty ? shortName : 'Team'),
+      shortName: shortName.isNotEmpty ? shortName : null,
+      logo: logo.isNotEmpty ? logo : null,
+      squad: const [],
+      recentMatches: const [],
+      series: widget.sourceSeriesId == null
+          ? const []
+          : [
+              {'seriesId': widget.sourceSeriesId},
+            ],
+    );
+  }
+}
+
+class _TeamProfileView extends StatelessWidget {
+  const _TeamProfileView({required this.team, this.sourceSeriesId});
+
+  final ApiTeamProfile team;
+  final String? sourceSeriesId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TeamHero(team: team),
+        const SizedBox(height: 16),
+        PremiumSquad(
+          playingXi: team.squad,
+          bench: const [],
+          title: 'Squad',
+        ),
+        const SizedBox(height: 16),
+        _TeamSection(
+          title: 'Recent matches',
+          empty: 'Recent matches are not available yet.',
+          items: team.recentMatches,
+          itemBuilder: (item) => _SimpleTeamRow(data: apiMap(item)),
+        ),
+        if (sourceSeriesId != null) ...[
+          const SizedBox(height: 16),
+          const _TeamStateCard(
+            text: 'Team profile loaded from series context. Full team stats are not available yet.',
+            onRetry: null,
+          ),
+        ],
+      ],
     );
   }
 }
@@ -227,66 +280,6 @@ class _TeamSection extends StatelessWidget {
           else
             for (final item in items.take(20)) itemBuilder(item),
         ],
-      ),
-    );
-  }
-}
-
-class _SquadPlayerTile extends StatelessWidget {
-  const _SquadPlayerTile({required this.player});
-
-  final Map<String, dynamic> player;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final id =
-        apiString(player['playerId'] ?? player['player_id'] ?? player['id']);
-    final name = apiString(player['name'] ?? player['playerName'], 'Player');
-    final image = resolveCricbuzzImageUrl(player);
-    return InkWell(
-      onTap: id.isEmpty
-          ? null
-          : () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => PlayerDetailScreen(playerId: id))),
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: c.card2,
-              backgroundImage: image == null
-                  ? null
-                  : NetworkImage(
-                      image,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                    ),
-              child: image == null
-                  ? Icon(Icons.person_rounded, color: c.muted)
-                  : null,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name,
-                      style: TextStyle(
-                          color: c.text, fontWeight: FontWeight.w900)),
-                  Text(apiString(player['role'], 'Role unavailable'),
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12)),
-                ],
-              ),
-            ),
-            if (id.isNotEmpty)
-              Icon(Icons.chevron_right_rounded, color: c.muted),
-          ],
-        ),
       ),
     );
   }

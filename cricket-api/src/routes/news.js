@@ -1,6 +1,5 @@
-import { cacheGetOrFetch, KEYS, TTL } from '../lib/redis.js';
+import { cacheGetOrFetch, cacheSet, KEYS, TTL } from '../lib/redis.js';
 import providerManager from '../providers/provider-manager.js';
-import { cacheMiddleware } from '../middleware/cache.js';
 
 export default async function newsRoutes(fastify) {
   function storyToVideo(story) {
@@ -52,11 +51,12 @@ export default async function newsRoutes(fastify) {
     },
   }, async (request, reply) => {
     const { cursor, limit = 10, context, storyType } = request.query;
-    const effectiveCursor = cursor || 'default';
+    const effectiveCursor = cursor ? String(cursor).trim() : '';
+    const cacheKey = KEYS.newsList(`v3:${effectiveCursor || 'latest'}:${context || 'all'}:${storyType || 'all'}:${limit}`);
 
     try {
       const { data } = await cacheGetOrFetch(
-        KEYS.newsList(effectiveCursor),
+        cacheKey,
         TTL.NEWS_LIST,
         async () => {
           const result = await providerManager.execute('getNewsStories', cursor || undefined);
@@ -102,7 +102,7 @@ export default async function newsRoutes(fastify) {
   // GET /news/:id
   fastify.get('/news/:id', {
     schema: {
-      description: 'Get news story detail by ID. Returns summary from list (full body not available from Cricbuzz JSON API).',
+      description: 'Get news story detail by ID.',
       tags: ['News'],
       params: {
         type: 'object',
@@ -114,7 +114,32 @@ export default async function newsRoutes(fastify) {
           type: 'object',
           properties: {
             success: { type: 'boolean' },
-            data: { type: 'object', nullable: true },
+            data: {
+              type: 'object',
+              nullable: true,
+              additionalProperties: true,
+              properties: {
+                id: { type: 'string' },
+                headline: { type: 'string' },
+                intro: { type: 'string' },
+                body: { type: 'string', nullable: true },
+                paragraphs: { type: 'array', items: { type: 'string' } },
+                source: { type: 'string' },
+                context: { type: 'string' },
+                publishedTime: { type: 'string' },
+                imageUrl: { type: 'string' },
+                imageId: { type: 'string', nullable: true },
+                storyType: { type: 'string' },
+                storyUrl: { type: 'string' },
+                relatedStories: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: true,
+                  },
+                },
+              },
+            },
             message: { type: 'string', nullable: true },
           },
         },
@@ -122,31 +147,68 @@ export default async function newsRoutes(fastify) {
     },
   }, async (request, reply) => {
     const { id } = request.params;
+    const normalize = (value) => String(value || '').trim();
+    const matchesId = (story) =>
+      normalize(story?.id) === normalize(id) ||
+      normalize(story?.newsId) === normalize(id);
+    const resolveStory = async () => {
+      const result = await providerManager.execute('getNewsStories');
+      const stories = result.data?.stories || [];
+      let story = stories.find(matchesId);
+      if (!story) {
+        story = stories.find((s) =>
+          normalize(s.headline)
+            .toLowerCase()
+            .includes(normalize(id).toLowerCase())
+        );
+      }
+      if (!story) return null;
+
+      const detailResult = await providerManager.execute('getNewsDetail', id, story).catch(() => null);
+      const detail = detailResult?.data || null;
+      const relatedStories = stories
+        .filter((s) => normalize(s.id) !== normalize(id) && s.context === story.context)
+        .slice(0, 3)
+        .map((s) => ({
+          id: s.id,
+          headline: s.headline,
+          context: s.context,
+          publishedTime: s.publishedTime,
+          imageUrl: s.imageUrl,
+        }));
+
+      if (detail) {
+        return {
+          ...story,
+          ...detail,
+          relatedStories: detail.relatedStories?.length ? detail.relatedStories : relatedStories,
+        };
+      }
+
+      return {
+        ...story,
+        body: story.body || story.intro || story.summary || '',
+        paragraphs: story.body ? String(story.body).split(/\n{2,}/).filter(Boolean) : [],
+        relatedStories,
+      };
+    };
 
     try {
-      // Try to find the story from cached news lists
-      const { data } = await cacheGetOrFetch(
-        KEYS.newsDetail(id),
+      // Try cached detail first, but fall back to a live lookup if the cache
+      // only contains an empty placeholder from an older deploy.
+      const detailCacheKey = KEYS.newsDetail(`v2:${id}`);
+      const cached = await cacheGetOrFetch(
+        detailCacheKey,
         TTL.NEWS_DETAIL,
-        async () => {
-          // Fetch recent stories and find the one with matching ID
-          const result = await providerManager.execute('getNewsStories');
-          const stories = result.data?.stories || [];
-          const story = stories.find((s) => s.id === id);
-          if (story) {
-            return {
-              ...story,
-              content: null, // Full body not available from Cricbuzz JSON API
-              author: null,
-              relatedStories: stories
-                .filter((s) => s.id !== id && s.context === story.context)
-                .slice(0, 3)
-                .map((s) => ({ id: s.id, headline: s.headline, context: s.context, publishedTime: s.publishedTime, imageUrl: s.imageUrl })),
-            };
-          }
-          return null;
-        }
+        resolveStory
       );
+      let data = cached.data;
+      if (!data || !data.headline) {
+        data = await resolveStory();
+        if (data) {
+          await cacheSet(detailCacheKey, data, TTL.NEWS_DETAIL);
+        }
+      }
 
       if (!data) {
         return reply.code(404).send({
@@ -159,7 +221,7 @@ export default async function newsRoutes(fastify) {
       return {
         success: true,
         data,
-        message: data.content === null ? 'Full article body not available from Cricbuzz JSON API. Showing summary.' : null,
+        message: data.body ? null : 'Full article body not available from provider.',
       };
     } catch {
       return reply.code(404).send({
@@ -187,7 +249,7 @@ export default async function newsRoutes(fastify) {
     const { limit = 10 } = request.query;
     try {
       const { data } = await cacheGetOrFetch(
-        KEYS.newsList('videos-default'),
+        KEYS.newsList('v2:videos-default'),
         TTL.NEWS_LIST,
         async () => (await providerManager.execute('getNewsStories')).data
       );
@@ -214,7 +276,7 @@ export default async function newsRoutes(fastify) {
     const { id } = request.params;
     try {
       const { data } = await cacheGetOrFetch(
-        KEYS.newsList('videos-default'),
+        KEYS.newsList('v2:videos-default'),
         TTL.NEWS_LIST,
         async () => (await providerManager.execute('getNewsStories')).data
       );

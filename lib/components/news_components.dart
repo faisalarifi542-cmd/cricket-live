@@ -17,106 +17,150 @@ class FeaturedNewsCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(24),
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: c.border)),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: c.border),
+        ),
         clipBehavior: Clip.antiAlias,
-        child: Stack(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Positioned.fill(
-              child: _NewsImage(
-                source: article.asset,
-                fallbackLabel: 'Featured',
-              ),
-            ),
-            Positioned.fill(
-                child: DecoratedBox(
-                    decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                  Colors.black.withValues(alpha: .12),
-                  Colors.black.withValues(alpha: .74)
-                ])))),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+            AspectRatio(
+              aspectRatio: 1.24,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    StatusBadge(
-                        label: article.breaking ? 'BREAKING' : 'FEATURED',
-                        color: article.breaking ? c.live : c.cyan,
-                        filled: true,
-                        icon: article.breaking
-                            ? Icons.bolt_rounded
-                            : Icons.star_rounded),
-                    const Spacer(),
-                    if (article.timeAgo != null)
-                      Text(article.timeAgo!,
-                          style: const TextStyle(
+                    _NewsImage(source: article.asset, fallbackLabel: 'Featured'),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Color(0xCC000000),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              StatusBadge(
+                                label: article.breaking
+                                    ? 'BREAKING'
+                                    : 'FEATURED',
+                                color: article.breaking ? c.live : c.cyan,
+                                filled: true,
+                                icon: article.breaking
+                                    ? Icons.bolt_rounded
+                                    : Icons.star_rounded,
+                              ),
+                              const Spacer(),
+                              if (article.timeAgo != null)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: .22),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(color: c.border),
+                                  ),
+                                  child: Text(
+                                    article.timeAgo!,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const Spacer(),
+                          Text(
+                            article.title,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 16)),
+                              fontSize: context.sp(21.5),
+                              fontWeight: FontWeight.w900,
+                              height: 1.08,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            article.subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .88),
+                              fontSize: 14.5,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 160),
-                Text(article.title,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  'CricPro',
+                  style: TextStyle(
+                    color: c.cyan,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14.5,
+                  ),
+                ),
+                Text('•',
+                    style: TextStyle(color: Colors.white.withValues(alpha: .6))),
+                Text(
+                  article.date,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: .75),
+                    fontSize: 14,
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: Text(
+                    article.tag,
                     style: TextStyle(
-                        color: Colors.white,
-                        fontSize: context.sp(26),
-                        fontWeight: FontWeight.w900,
-                        height: 1.15)),
-                const SizedBox(height: 12),
-                Text(article.subtitle,
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: .84),
-                        fontSize: 16,
-                        height: 1.45)),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Text(article.source,
-                        style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16)),
-                    const SizedBox(width: 12),
-                    Text('â€¢',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .75))),
-                    const SizedBox(width: 12),
-                    Text(article.date,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .75),
-                            fontSize: 16)),
-                    const SizedBox(width: 12),
-                    Text('â€¢',
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: .75))),
-                    const SizedBox(width: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: .22),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: c.border)),
-                      child: Text(article.tag,
-                          style: TextStyle(
-                              color: c.cyan, fontWeight: FontWeight.w700)),
+                      color: c.cyan,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const Spacer(),
-                    GradientButton(
-                        label: 'Read More',
-                        outlined: true,
-                        onTap: onTap,
-                        height: 48),
-                  ],
-                )
+                  ),
+                ),
+                GradientButton(
+                  label: 'Read More',
+                  outlined: true,
+                  onTap: onTap,
+                  height: 42,
+                ),
               ],
-            )
+            ),
           ],
         ),
       ),
@@ -125,8 +169,12 @@ class FeaturedNewsCard extends StatelessWidget {
 }
 
 class NewsListCard extends StatelessWidget {
-  const NewsListCard(
-      {super.key, required this.article, this.onTap, this.compact = false});
+  const NewsListCard({
+    super.key,
+    required this.article,
+    this.onTap,
+    this.compact = false,
+  });
 
   final NewsArticle article;
   final VoidCallback? onTap;
@@ -154,32 +202,35 @@ class NewsListCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(article.title,
-                    maxLines: compact ? 2 : 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: compact ? 16 : 17.5,
-                        height: 1.25)),
+                Text(
+                  article.title,
+                  maxLines: compact ? 2 : 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.text,
+                    fontWeight: FontWeight.w800,
+                    fontSize: compact ? 16 : 17.5,
+                    height: 1.25,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                Text(article.subtitle,
-                    maxLines: compact ? 2 : 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: c.muted, height: 1.45)),
+                Text(
+                  article.subtitle,
+                  maxLines: compact ? 2 : 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.muted, height: 1.45),
+                ),
                 const SizedBox(height: 10),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 6,
                   children: [
-                    Text(article.source,
+                    Text('CricPro',
                         style: TextStyle(
                             color: c.cyan, fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 12),
-                    Text('â€¢', style: TextStyle(color: c.muted)),
-                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: c.muted)),
                     Text(article.date, style: TextStyle(color: c.muted)),
-                    const SizedBox(width: 12),
-                    Text('â€¢', style: TextStyle(color: c.muted)),
-                    const SizedBox(width: 12),
+                    Text('•', style: TextStyle(color: c.muted)),
                     Text(article.tag, style: TextStyle(color: c.cyan)),
                   ],
                 ),
@@ -207,6 +258,7 @@ class _NewsImage extends StatelessWidget {
       return Image.network(
         src,
         fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
         webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
         loadingBuilder: (context, child, progress) {
           if (progress == null) return child;
@@ -218,7 +270,9 @@ class _NewsImage extends StatelessWidget {
     return Image.asset(
       src.isEmpty ? 'assets/images/stadium_live.png' : src,
       fit: BoxFit.cover,
+      filterQuality: FilterQuality.high,
       errorBuilder: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
     );
   }
 }
+

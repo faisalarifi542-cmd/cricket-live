@@ -15,6 +15,8 @@ import { query } from '../lib/db.js';
 import { getRedis } from '../lib/redis.js';
 import { getCacheStats } from '../lib/data-control.js';
 import providerManager from '../providers/provider-manager.js';
+import { buildPublicAppConfig, fetchActiveStreamsForMatch, isLiveStreamingFeatureEnabled, publicStreamDto } from '../lib/public-app-state.js';
+import { recordNotificationHistory, sendOneSignalNotification } from '../lib/onesignal.js';
 
 const DEFAULT_SETTINGS = {
   appName: 'CricPro',
@@ -253,10 +255,58 @@ export default async function adminPanelRoutes(fastify) {
   fastify.get('/admin/news', { preHandler: [adminAuth, requirePermissions('news.view')] }, () => simpleList('custom_news'));
   fastify.get('/admin/notifications', { preHandler: [adminAuth, requirePermissions('notifications.view')] }, () => simpleList('push_notifications'));
   fastify.post('/admin/notifications', { preHandler: [adminAuth, requirePermissions('notifications.write')] }, async (request, reply) => {
-    const { title, body, target_type = 'all', scheduled_at = null } = request.body || {};
+    const { title, body, target_type = 'all', target_value = null, image_url = null, deep_link_type = null, deep_link_value = null, scheduled_at = null, payload = null } = request.body || {};
     if (!title || !body) return reply.code(400).send({ success: false, error: 'title and body required' });
-    const result = await withAudit(request, { action: 'notification.create', entityType: 'push_notification', newValue: request.body }, async () => query(`INSERT INTO push_notifications (title, body, target_type, scheduled_at, status, created_by) VALUES (?, ?, ?, ?, 'draft', ?)`, [title, body, target_type, scheduled_at, request.adminUser.id]));
+    const result = await withAudit(request, { action: 'notification.create', entityType: 'push_notification', newValue: request.body }, async () => query(
+      `INSERT INTO push_notifications
+        (title, body, image_url, target_type, target_value, deep_link_type, deep_link_value, scheduled_at, status, payload, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      [title, body, image_url, target_type, target_value, deep_link_type, deep_link_value, scheduled_at, payload ? safeJson(payload) : null, request.adminUser.id],
+    ));
     return reply.code(201).send({ success: true, id: result.insertId });
+  });
+
+  fastify.post('/admin/notifications/send', { preHandler: [adminAuth, requirePermissions('notifications.write')] }, async (request, reply) => {
+    const notification = request.body || {};
+    if (!notification.title || !notification.body) return reply.code(400).send({ success: false, error: 'title and body required' });
+    try {
+      const result = await withAudit(
+        request,
+        { action: 'notification.sendDirect', entityType: 'push_notification', newValue: { ...notification, restApiKey: undefined } },
+        () => sendOneSignalNotification(notification),
+      );
+      await recordNotificationHistory({ notification, payload: result.payload, providerResponse: result.response, status: 'sent' });
+      return { success: true, data: result.response };
+    } catch (err) {
+      await recordNotificationHistory({ notification, status: 'failed', errorMessage: err.message, providerResponse: err.providerResponse || null });
+      return reply.code(502).send({ success: false, error: err.message });
+    }
+  });
+
+  fastify.post('/admin/notifications/test', { preHandler: [adminAuth, requirePermissions('notifications.write')] }, async (request, reply) => {
+    const notification = {
+      title: request.body?.title || 'CricPro test notification',
+      body: request.body?.body || 'This is a test push from CricPro Admin.',
+      target_type: request.body?.subscriptionId ? 'subscription' : (request.body?.target_type || 'all'),
+      target_value: request.body?.subscriptionId || request.body?.target_value || null,
+      deep_link_type: request.body?.deep_link_type || 'home',
+      deep_link_value: request.body?.deep_link_value || null,
+      payload: request.body?.payload || { type: 'home' },
+    };
+    try {
+      const result = await sendOneSignalNotification(notification);
+      await recordNotificationHistory({ notification, payload: result.payload, providerResponse: result.response, status: 'sent' });
+      return { success: true, data: result.response };
+    } catch (err) {
+      await recordNotificationHistory({ notification, status: 'failed', errorMessage: err.message, providerResponse: err.providerResponse || null });
+      return reply.code(502).send({ success: false, error: err.message });
+    }
+  });
+
+  fastify.get('/admin/notifications/history', { preHandler: [adminAuth, requirePermissions('notifications.view')] }, async (request) => {
+    const limit = Math.min(Number(request.query?.limit || 100), 500);
+    const rows = await query(`SELECT * FROM notification_history ORDER BY created_at DESC LIMIT ?`, [limit]).catch(() => []);
+    return { success: true, data: rows };
   });
   fastify.get('/admin/ads', { preHandler: [adminAuth, requirePermissions('ads.view')] }, () => simpleList('ad_settings'));
   fastify.put('/admin/ads', { preHandler: [adminAuth, requirePermissions('ads.write')] }, async (request) => {
@@ -264,7 +314,73 @@ export default async function adminPanelRoutes(fastify) {
     return { success: true };
   });
 
-  fastify.get('/app-config', async () => ({ success: true, data: await getSettingsMap(true) }));
+  fastify.get('/app-config', async () => ({ success: true, data: await buildPublicAppConfig() }));
+
+  // Admin-controlled manual / test matches
+  fastify.get('/admin/manual-matches', { preHandler: [adminAuth, requirePermissions('matches.view')] }, async () => {
+    const rows = await query(`SELECT * FROM manual_matches ORDER BY sort_order ASC, created_at DESC`).catch(() => []);
+    return { success: true, data: rows };
+  });
+
+  fastify.get('/admin/manual-matches/:id', { preHandler: [adminAuth, requirePermissions('matches.view')] }, async (request, reply) => {
+    const rows = await query(`SELECT * FROM manual_matches WHERE id = ?`, [request.params.id]);
+    if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    return { success: true, data: rows[0] };
+  });
+
+  fastify.post('/admin/manual-matches', { preHandler: [adminAuth, requirePermissions('matches.write')] }, async (request, reply) => {
+    const body = request.body || {};
+    const cols = [];
+    const vals = [];
+    const allowed = ['match_external_id', 'title', 'team1_name', 'team2_name', 'team1_short', 'team2_short', 'team1_logo_url', 'team2_logo_url', 'status', 'match_state', 'venue', 'start_time', 'is_live', 'is_test', 'is_enabled', 'sort_order'];
+    for (const k of allowed) {
+      if (body[k] !== undefined) { cols.push(k); vals.push(body[k]); }
+    }
+    if (!cols.includes('match_external_id')) return reply.code(400).send({ success: false, error: 'match_external_id required' });
+    const result = await withAudit(request, { action: 'manual_match.create', entityType: 'manual_match', newValue: body }, async () =>
+      query(`INSERT INTO manual_matches (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals)
+    );
+    const row = await query(`SELECT * FROM manual_matches WHERE id = ?`, [result.insertId]);
+    return reply.code(201).send({ success: true, data: row[0] });
+  });
+
+  fastify.put('/admin/manual-matches/:id', { preHandler: [adminAuth, requirePermissions('matches.write')] }, async (request, reply) => {
+    const id = request.params.id;
+    const old = await query(`SELECT * FROM manual_matches WHERE id = ?`, [id]);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const body = request.body || {};
+    const set = [];
+    const vals = [];
+    const allowed = ['match_external_id', 'title', 'team1_name', 'team2_name', 'team1_short', 'team2_short', 'team1_logo_url', 'team2_logo_url', 'status', 'match_state', 'venue', 'start_time', 'is_live', 'is_test', 'is_enabled', 'sort_order'];
+    for (const k of allowed) {
+      if (body[k] !== undefined) { set.push(`${k} = ?`); vals.push(body[k]); }
+    }
+    if (!set.length) return reply.code(400).send({ success: false, error: 'No fields to update' });
+    await withAudit(request, { action: 'manual_match.update', entityType: 'manual_match', entityId: id, oldValue: old[0], newValue: body }, async () =>
+      query(`UPDATE manual_matches SET ${set.join(', ')} WHERE id = ?`, [...vals, id])
+    );
+    const row = await query(`SELECT * FROM manual_matches WHERE id = ?`, [id]);
+    return { success: true, data: row[0] };
+  });
+
+  fastify.post('/admin/manual-matches/:id/toggle', { preHandler: [adminAuth, requirePermissions('matches.write')] }, async (request, reply) => {
+    const rows = await query(`SELECT id, is_enabled FROM manual_matches WHERE id = ?`, [request.params.id]);
+    if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const next = rows[0].is_enabled ? 0 : 1;
+    await withAudit(request, { action: 'manual_match.toggle', entityType: 'manual_match', entityId: request.params.id, oldValue: rows[0], newValue: { is_enabled: next } }, async () =>
+      query(`UPDATE manual_matches SET is_enabled = ? WHERE id = ?`, [next, request.params.id])
+    );
+    return { success: true, is_enabled: !!next };
+  });
+
+  fastify.delete('/admin/manual-matches/:id', { preHandler: [adminAuth, requirePermissions('matches.write')] }, async (request, reply) => {
+    const old = await query(`SELECT * FROM manual_matches WHERE id = ?`, [request.params.id]);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    await withAudit(request, { action: 'manual_match.delete', entityType: 'manual_match', entityId: request.params.id, oldValue: old[0] }, async () =>
+      query(`DELETE FROM manual_matches WHERE id = ?`, [request.params.id])
+    );
+    return { success: true };
+  });
 
   fastify.get('/home-config', async () => {
     const [sections, banners, featuredMatches, featuredSeries, featuredNews] = await Promise.all([
@@ -278,33 +394,39 @@ export default async function adminPanelRoutes(fastify) {
   });
 
   fastify.get('/match/:id/streams', async (request) => {
-    const rows = await query(
-      `SELECT id, match_external_id, quality, label, language, server_name, stream_type,
-              stream_url, is_premium, priority, status
-         FROM match_streams
-        WHERE match_external_id = ? AND is_active = 1
-          AND (starts_at IS NULL OR starts_at <= NOW())
-          AND (ends_at IS NULL OR ends_at >= NOW())
-        ORDER BY priority ASC, id ASC`,
-      [request.params.id],
-    ).catch(() => []);
+    const config = await buildPublicAppConfig();
+    if (!isLiveStreamingFeatureEnabled(config)) {
+      return {
+        success: true,
+        data: {
+          matchId: request.params.id,
+          hasStream: false,
+          hasStreams: false,
+          hasLiveStream: false,
+          watchLiveEnabled: false,
+          defaultStreamId: null,
+          streamCount: 0,
+          isPremiumStreamAvailable: false,
+          streams: [],
+          message: config.player?.streamUnavailableMessage || 'Live streams are currently unavailable.',
+        },
+      };
+    }
+    const rows = await fetchActiveStreamsForMatch(request.params.id);
+    const streams = rows.map(publicStreamDto).filter(Boolean);
+    const first = streams[0] || null;
     return {
       success: true,
       data: {
         matchId: request.params.id,
-        hasStreams: rows.length > 0,
-        streams: rows.map((s) => ({
-          id: String(s.id),
-          quality: s.quality,
-          label: s.label || s.quality,
-          language: s.language || 'English',
-          serverName: s.server_name || 'Server',
-          streamType: s.stream_type,
-          url: s.stream_url,
-          isPremium: !!s.is_premium,
-          priority: s.priority,
-          status: s.status || 'unknown',
-        })),
+        hasStream: streams.length > 0,
+        hasStreams: streams.length > 0,
+        hasLiveStream: streams.length > 0,
+        watchLiveEnabled: streams.length > 0,
+        defaultStreamId: first?.id || null,
+        streamCount: streams.length,
+        isPremiumStreamAvailable: streams.some((stream) => stream.isPremium),
+        streams,
       },
     };
   });

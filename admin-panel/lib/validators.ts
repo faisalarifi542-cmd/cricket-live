@@ -6,24 +6,52 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+const optionalJsonString = z
+  .string()
+  .optional()
+  .nullable()
+  .refine((value) => {
+    if (!value || !value.trim()) return true;
+    try {
+      JSON.parse(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'Must be valid JSON');
+
 export const streamSchema = z.object({
   match_external_id: z.string().min(1, 'Match ID required'),
+  match_title: z.string().optional().nullable(),
   title: z.string().optional().nullable(),
+  team_a: z.string().optional().nullable(),
+  team_b: z.string().optional().nullable(),
   label: z.string().optional().nullable(),
   language: z.string().optional().nullable(),
   server_name: z.string().optional().nullable(),
   server_id: z.coerce.number().int().optional().nullable(),
   quality: z.enum(['AUTO', 'FHD', 'HD', 'SD']).default('AUTO'),
-  stream_type: z.enum(['hls', 'dash', 'iframe', 'external']).default('hls'),
+  stream_type: z.enum(['hls', 'dash', 'mpd', 'iframe', 'external']).default('hls'),
   stream_url: z.string().url('Must be a valid URL'),
+  backup_stream_url: z.string().url().optional().or(z.literal('')),
+  status: z.enum(['unknown', 'working', 'slow', 'down']).default('unknown'),
   is_active: z.boolean().default(true),
   is_premium: z.boolean().default(false),
+  requires_reward_ad: z.boolean().default(false),
+  requires_login: z.boolean().default(false),
   priority: z.coerce.number().int().min(0).default(100),
   starts_at: z.string().optional().nullable(),
   ends_at: z.string().optional().nullable(),
+  headers_json: optionalJsonString,
   user_agent_header: z.string().optional().nullable(),
   referer_header: z.string().optional().nullable(),
+  origin_header: z.string().optional().nullable(),
   drm_enabled: z.boolean().default(false),
+  drm_type: z.enum(['none', 'clearkey', 'widevine', 'fairplay', 'aes128']).default('none'),
+  drm_license_url: z.string().url().optional().or(z.literal('')),
+  drm_headers: optionalJsonString,
+  clear_key_key_id: z.string().optional().nullable(),
+  clear_key_key: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 });
 export type StreamInput = z.infer<typeof streamSchema>;
@@ -150,7 +178,25 @@ export const adsSchema = z.object({
   native_enabled: z.boolean().default(true),
   interstitial_enabled: z.boolean().default(true),
   rewarded_enabled: z.boolean().default(false),
+  admob_enabled: z.boolean().default(true),
+  unity_enabled: z.boolean().default(false),
+  meta_enabled: z.boolean().default(false),
+  rewarded_required_for_premium_streams: z.boolean().default(false),
   frequency_minutes: z.coerce.number().int().min(0).default(5),
+  interstitial_frequency_cap: z.coerce.number().int().min(0).default(1),
+  minimum_seconds_between_interstitials: z.coerce.number().int().min(0).default(300),
+  home_banner_enabled: z.boolean().default(true),
+  home_native_enabled: z.boolean().default(false),
+  matches_banner_enabled: z.boolean().default(true),
+  matches_native_enabled: z.boolean().default(false),
+  match_details_banner_enabled: z.boolean().default(true),
+  match_details_native_enabled: z.boolean().default(false),
+  news_banner_enabled: z.boolean().default(true),
+  news_native_enabled: z.boolean().default(false),
+  series_banner_enabled: z.boolean().default(true),
+  series_native_enabled: z.boolean().default(false),
+  more_banner_enabled: z.boolean().default(true),
+  live_player_banner_enabled: z.boolean().default(false),
   android_banner_id: z.string().optional().nullable(),
   android_interstitial_id: z.string().optional().nullable(),
   android_native_id: z.string().optional().nullable(),

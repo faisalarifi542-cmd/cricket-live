@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { notificationsApi } from '@/lib/api';
 import { notificationSchema, type NotificationInput } from '@/lib/validators';
@@ -36,6 +36,22 @@ export function NotificationForm({
   }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      title: initial?.title ?? '',
+      body: initial?.body ?? '',
+      image_url: initial?.image_url ?? '',
+      target_type: initial?.target_type ?? 'all',
+      target_value: initial?.target_value ?? '',
+      deep_link_type: initial?.deep_link_type ?? '',
+      deep_link_value: initial?.deep_link_value ?? '',
+      scheduled_at: initial?.scheduled_at ?? '',
+      status: initial?.status ?? 'draft',
+    });
+    setErrors({});
+  }, [initial, open]);
 
   function update<K extends keyof NotificationInput>(k: K, v: unknown) {
     setForm((p) => ({ ...p, [k]: v as NotificationInput[K] }));
