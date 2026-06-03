@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 
@@ -13,6 +15,33 @@ import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 import 'package:cricpro_flutter/services/ad_service.dart';
 import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
 import 'package:cricpro_flutter/widgets/ads/rewarded_ad_manager.dart';
+
+/// Fixed quality model. The player only ever exposes SD / HD / FHD.
+class StreamQuality {
+  const StreamQuality({
+    required this.code,
+    required this.label,
+    required this.resolution,
+    required this.url,
+  });
+
+  final String code; // SD | HD | FHD
+  final String label; // SD | HD | FHD
+  final String resolution; // 480p | 720p | 1080p
+  final String url; // resolved playback url (falls back to the master url)
+
+  bool get hasUrl => url.isNotEmpty;
+}
+
+/// Snapshot of the active playback shared with the fullscreen route so it can
+/// follow controller swaps (e.g. quality changes) without holding a disposed
+/// controller reference.
+class _Playback {
+  const _Playback({this.controller, required this.qualityCode});
+
+  final VideoPlayerController? controller;
+  final String qualityCode;
+}
 
 class LivePlayerScreen extends StatefulWidget {
   const LivePlayerScreen({super.key, this.matchId = ''});
@@ -30,13 +59,21 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   Future<ApiEnvelope<Map<String, dynamic>>>? _liveLineFuture;
   Future<ApiEnvelope<Map<String, dynamic>>>? _appConfigFuture;
   Timer? _liveTimer;
-  StreamSource? _selectedStream;
+
   VideoPlayerController? _videoController;
   Future<void>? _videoInitFuture;
   String? _playerError;
-  List<HlsQuality> _hlsQualities = [];
-  HlsQuality? _selectedQuality;
   bool _isMuted = false;
+  bool _switchingQuality = false;
+
+  StreamSource? _primaryStream;
+  List<StreamQuality> _qualities = const [];
+  StreamQuality? _selectedQuality;
+  String? _currentUrl;
+  String _matchTitle = 'Live Stream';
+
+  final ValueNotifier<_Playback> _playback =
+      ValueNotifier<_Playback>(const _Playback(qualityCode: 'HD'));
   final Set<String> _rewardUnlockedStreamIds = <String>{};
 
   bool get _hasMatchId => widget.matchId.isNotEmpty;
@@ -49,6 +86,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       _detailFuture = _repository.matchDetail(widget.matchId);
       _liveLineFuture = _repository.matchLiveLine(widget.matchId);
       _streamsFuture = _repository.matchStreams(widget.matchId);
+      _detailFuture!.then(_onDetailLoaded).catchError((_) {});
+      _streamsFuture!.then(_onStreamsLoaded).catchError((_) {});
       _liveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
         if (mounted) {
           setState(() {
@@ -64,22 +103,280 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   void dispose() {
     _liveTimer?.cancel();
     _videoController?.dispose();
+    _playback.dispose();
+    // Defensive restore so the app never gets stuck in landscape / immersive
+    // after leaving the player screen.
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
-  Future<void> _selectStream(StreamSource stream) async {
-    if (await _requiresRewardedUnlock(stream)) {
-      final allowed = await _showRewardedUnlock(stream);
+  void _publishPlayback() {
+    _playback.value = _Playback(
+      controller: _videoController,
+      qualityCode: _selectedQuality?.code ?? 'HD',
+    );
+  }
+
+  void _onDetailLoaded(ApiEnvelope<Map<String, dynamic>> env) {
+    if (!mounted) return;
+    final detail = apiMap(env.data);
+    final team1 = apiMap(detail['team1']);
+    final team2 = apiMap(detail['team2']);
+    String teamName(Map<String, dynamic> team) => apiString(
+          team['short_name'] ?? team['shortName'] ?? team['name'],
+          '',
+        );
+    final t1 = teamName(team1);
+    final t2 = teamName(team2);
+    final title = (t1.isNotEmpty && t2.isNotEmpty) ? '$t1 vs $t2' : 'Live Stream';
+    if (title != _matchTitle) {
+      setState(() => _matchTitle = title);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stream loading + quality mapping
+  // ---------------------------------------------------------------------------
+
+  void _onStreamsLoaded(ApiEnvelope<Map<String, dynamic>> env) {
+    if (!mounted) return;
+    final data = apiMap(env.data);
+    final streams = apiList(data['streams'])
+        .map(StreamSource.fromJson)
+        .where((s) => s.isPlayable && s.url.isNotEmpty)
+        .toList();
+    streams.sort((a, b) {
+      final priority = (a.priority ?? 100).compareTo(b.priority ?? 100);
+      if (priority != 0) return priority;
+      return a.qualityRank.compareTo(b.qualityRank);
+    });
+
+    if (streams.isEmpty) {
+      setState(() {
+        _primaryStream = null;
+        _qualities = const [];
+        _selectedQuality = null;
+      });
+      _publishPlayback();
+      return;
+    }
+
+    final primary = streams.first;
+    final qualities = _buildQualities(streams, primary, const {});
+    final keepCode = _selectedQuality?.code;
+    StreamQuality pickDefault() => qualities.firstWhere(
+          (q) => q.code == 'HD' && q.hasUrl,
+          orElse: () => qualities.firstWhere(
+            (q) => q.hasUrl,
+            orElse: () => qualities.first,
+          ),
+        );
+    final selected = keepCode == null
+        ? pickDefault()
+        : qualities.firstWhere(
+            (q) => q.code == keepCode && q.hasUrl,
+            orElse: pickDefault,
+          );
+
+    setState(() {
+      _primaryStream = primary;
+      _qualities = qualities;
+      _selectedQuality = selected;
+    });
+
+    if (selected.url != _currentUrl) {
+      _initialLoad(primary, selected);
+    } else {
+      _publishPlayback();
+    }
+
+    if (primary.isHls) {
+      _refineQualitiesFromHls(primary, streams);
+    }
+  }
+
+  Future<void> _initialLoad(StreamSource primary, StreamQuality quality) async {
+    if (await _requiresRewardedUnlock(primary)) {
+      final allowed = await _showRewardedUnlock(primary);
       if (!allowed) return;
     }
-    setState(() {
-      _selectedStream = stream;
-      _playerError = null;
-      _hlsQualities = [];
-      _selectedQuality = null;
-    });
-    await _loadStream(stream);
+    await _loadUrl(quality.url);
   }
+
+  /// Builds the fixed SD / HD / FHD list. For each quality we look for, in
+  /// order: a backend stream tagged with that quality code, a parsed HLS
+  /// variant, then finally the primary (master) url so playback never breaks
+  /// even when the backend only exposes a single HLS url.
+  List<StreamQuality> _buildQualities(
+    List<StreamSource> streams,
+    StreamSource primary,
+    Map<String, String> hlsVariants,
+  ) {
+    String resolve(String code) {
+      final tagged = streams.where(
+        (s) => s.qualityCode == code && s.url.isNotEmpty,
+      );
+      if (tagged.isNotEmpty) return tagged.first.url;
+      final variant = hlsVariants[code];
+      if (variant != null && variant.isNotEmpty) return variant;
+      return primary.url;
+    }
+
+    return [
+      StreamQuality(
+          code: 'SD', label: 'SD', resolution: '480p', url: resolve('SD')),
+      StreamQuality(
+          code: 'HD', label: 'HD', resolution: '720p', url: resolve('HD')),
+      StreamQuality(
+          code: 'FHD', label: 'FHD', resolution: '1080p', url: resolve('FHD')),
+    ];
+  }
+
+  Future<void> _refineQualitiesFromHls(
+    StreamSource primary,
+    List<StreamSource> streams,
+  ) async {
+    final variants = await _parseHlsVariants(primary.url);
+    if (!mounted || variants.isEmpty) return;
+    final refined = _buildQualities(streams, primary, variants);
+    setState(() {
+      _qualities = refined;
+      if (_selectedQuality != null) {
+        _selectedQuality = refined.firstWhere(
+          (q) => q.code == _selectedQuality!.code,
+          orElse: () => _selectedQuality!,
+        );
+      }
+    });
+  }
+
+  Future<Map<String, String>> _parseHlsVariants(String masterUrl) async {
+    try {
+      final response = await http
+          .get(Uri.parse(masterUrl))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return const {};
+      final lines = response.body.split('\n');
+      final urls = <String, String>{};
+      final heights = <String, int>{};
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
+        final resMatch = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(line);
+        if (resMatch == null) continue;
+        final height = int.tryParse(resMatch.group(2)!) ?? 0;
+        String? code;
+        if (height >= 1080) {
+          code = 'FHD';
+        } else if (height >= 720) {
+          code = 'HD';
+        } else if (height >= 480) {
+          code = 'SD';
+        }
+        if (code == null || i + 1 >= lines.length) continue;
+        final variantLine = lines[i + 1].trim();
+        if (variantLine.isEmpty || variantLine.startsWith('#')) continue;
+        final abs = _resolveUrl(masterUrl, variantLine);
+        if (!heights.containsKey(code) || height > heights[code]!) {
+          heights[code] = height;
+          urls[code] = abs;
+        }
+      }
+      return urls;
+    } catch (e) {
+      debugPrint('HLS parsing failed: $e');
+      return const {};
+    }
+  }
+
+  String _resolveUrl(String baseUrl, String relativePath) {
+    if (relativePath.startsWith('http://') ||
+        relativePath.startsWith('https://')) {
+      return relativePath;
+    }
+    final baseUri = Uri.parse(baseUrl);
+    final basePath =
+        baseUri.path.substring(0, baseUri.path.lastIndexOf('/') + 1);
+    return Uri(
+      scheme: baseUri.scheme,
+      host: baseUri.host,
+      port: baseUri.port,
+      path: basePath + relativePath,
+    ).toString();
+  }
+
+  Future<void> _loadUrl(String url) async {
+    final oldController = _videoController;
+    _videoController = null;
+    _videoInitFuture = null;
+    if (mounted) {
+      setState(() {
+        _switchingQuality = true;
+        _playerError = null;
+      });
+    }
+    _publishPlayback();
+    await oldController?.dispose();
+
+    if (url.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _switchingQuality = false;
+          _playerError = 'This stream URL is missing. Please try again.';
+        });
+      }
+      return;
+    }
+
+    final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+    controller.addListener(_onControllerUpdate);
+    final initFuture = controller.initialize().then((_) {
+      controller.setLooping(false);
+      controller.setVolume(_isMuted ? 0.0 : 1.0);
+      controller.play();
+    });
+
+    if (!mounted) {
+      await controller.dispose();
+      return;
+    }
+    setState(() {
+      _videoController = controller;
+      _videoInitFuture = initFuture;
+      _currentUrl = url;
+    });
+    _publishPlayback();
+
+    try {
+      await initFuture;
+      if (mounted) setState(() => _switchingQuality = false);
+      _publishPlayback();
+    } catch (_) {
+      await controller.dispose();
+      if (mounted) {
+        setState(() {
+          _videoController = null;
+          _videoInitFuture = null;
+          _switchingQuality = false;
+          _playerError =
+              'Unable to play this stream. Please retry or refresh.';
+        });
+      }
+      _publishPlayback();
+    }
+  }
+
+  void _onControllerUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rewarded unlock (premium streams) – unchanged behaviour
+  // ---------------------------------------------------------------------------
 
   Future<bool> _requiresRewardedUnlock(StreamSource stream) async {
     if (!stream.isPremium || !stream.requiresRewardAd) return false;
@@ -129,256 +426,31 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     return false;
   }
 
-  Future<void> _loadStream(StreamSource stream, {HlsQuality? quality}) async {
-    final oldController = _videoController;
-    _videoController = null;
-    _videoInitFuture = null;
-    await oldController?.dispose();
+  // ---------------------------------------------------------------------------
+  // Player controls
+  // ---------------------------------------------------------------------------
 
-    if (stream.url.isEmpty) {
-      if (mounted) {
-        setState(() => _playerError =
-            'This stream URL is missing. Please try another server.');
-      }
+  Future<void> _selectQuality(StreamQuality quality) async {
+    if (_selectedQuality?.code == quality.code && _playerError == null) {
+      setState(() => _selectedQuality = quality);
+      _publishPlayback();
       return;
     }
-    if (stream.isDash || stream.isExternal) {
-      if (mounted) {
-        setState(() {
-          _playerError =
-              'This stream type is not supported on this device. Please try another server.';
-        });
-      }
+    setState(() {
+      _selectedQuality = quality;
+      _playerError = null;
+    });
+    _publishPlayback();
+    if (!quality.hasUrl) {
+      setState(() =>
+          _playerError = 'This quality is not available. Please try another.');
       return;
     }
-
-    // TODO: Add a player backend that supports DASH/MPD, DRM, and request
-    // headers. The current video_player path keeps HLS playback stable.
-    // Parse HLS qualities if this is an HLS stream and no quality selected yet
-    if (stream.isHls && quality == null && _hlsQualities.isEmpty) {
-      await _parseHlsQualities(stream.url);
+    if (quality.url == _currentUrl &&
+        _videoController?.value.isInitialized == true) {
+      return; // same source – just update the UI selection.
     }
-
-    // Determine the URL to play
-    String playUrl = stream.url;
-    if (quality != null && quality.url.isNotEmpty) {
-      playUrl = quality.url;
-    }
-
-    final controller = VideoPlayerController.networkUrl(Uri.parse(playUrl));
-    controller.addListener(() {
-      if (mounted) setState(() {});
-    });
-    final initFuture = controller.initialize().then((_) {
-      controller.play();
-      controller.setLooping(false);
-    });
-    if (mounted) {
-      setState(() {
-        _videoController = controller;
-        _videoInitFuture = initFuture;
-        if (quality != null) {
-          _selectedQuality = quality;
-        }
-      });
-    }
-    try {
-      await initFuture;
-      if (mounted) setState(() {});
-    } catch (_) {
-      await controller.dispose();
-      if (mounted) {
-        setState(() {
-          _videoController = null;
-          _videoInitFuture = null;
-          _playerError =
-              'Unable to play this stream. Please retry or choose another server.';
-        });
-      }
-    }
-  }
-
-  Future<void> _parseHlsQualities(String masterUrl) async {
-    try {
-      final response = await http.get(Uri.parse(masterUrl)).timeout(
-        const Duration(seconds: 5),
-      );
-      if (response.statusCode != 200) return;
-
-      final content = response.body;
-      final lines = content.split('\n');
-      final qualities = <HlsQuality>[];
-      
-      String? currentResolution;
-      int? currentBandwidth;
-      
-      for (var i = 0; i < lines.length; i++) {
-        final line = lines[i].trim();
-        
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-          // Parse resolution and bandwidth
-          final resMatch = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(line);
-          final bandMatch = RegExp(r'BANDWIDTH=(\d+)').firstMatch(line);
-          
-          if (resMatch != null) {
-            final width = int.parse(resMatch.group(1)!);
-            final height = int.parse(resMatch.group(2)!);
-            currentResolution = '${width}x$height';
-            currentBandwidth = bandMatch != null ? int.parse(bandMatch.group(1)!) : null;
-            
-            // Get the variant URL from next line
-            if (i + 1 < lines.length) {
-              final variantLine = lines[i + 1].trim();
-              if (variantLine.isNotEmpty && !variantLine.startsWith('#')) {
-                final variantUrl = _resolveUrl(masterUrl, variantLine);
-                final quality = _createQualityFromResolution(
-                  currentResolution,
-                  variantUrl,
-                  currentBandwidth,
-                );
-                if (quality != null) {
-                  qualities.add(quality);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (qualities.isNotEmpty) {
-        // Sort by quality rank
-        qualities.sort((a, b) => a.rank.compareTo(b.rank));
-        
-        // Add AUTO option at the beginning
-        qualities.insert(
-          0,
-          HlsQuality(
-            label: 'Auto',
-            code: 'AUTO',
-            resolution: 'Adaptive',
-            url: masterUrl,
-            rank: 0,
-          ),
-        );
-
-        if (mounted) {
-          setState(() {
-            _hlsQualities = qualities;
-            _selectedQuality = qualities.first; // Auto by default
-          });
-        }
-      }
-    } catch (e) {
-      // Silently fail - we'll use fallback quality buttons
-      debugPrint('HLS parsing failed: $e');
-    }
-  }
-
-  HlsQuality? _createQualityFromResolution(
-    String resolution,
-    String url,
-    int? bandwidth,
-  ) {
-    final parts = resolution.split('x');
-    if (parts.length != 2) return null;
-    
-    final height = int.tryParse(parts[1]);
-    if (height == null) return null;
-
-    if (height >= 1080) {
-      return HlsQuality(
-        label: 'Full HD',
-        code: 'FHD',
-        resolution: '1080p',
-        url: url,
-        rank: 1,
-        bandwidth: bandwidth,
-      );
-    } else if (height >= 720) {
-      return HlsQuality(
-        label: 'HD',
-        code: 'HD',
-        resolution: '720p',
-        url: url,
-        rank: 2,
-        bandwidth: bandwidth,
-      );
-    } else if (height >= 480) {
-      return HlsQuality(
-        label: 'SD',
-        code: 'SD',
-        resolution: '480p',
-        url: url,
-        rank: 3,
-        bandwidth: bandwidth,
-      );
-    } else if (height >= 240) {
-      return HlsQuality(
-        label: 'Low',
-        code: 'LOW',
-        resolution: '240p',
-        url: url,
-        rank: 4,
-        bandwidth: bandwidth,
-      );
-    } else {
-      return HlsQuality(
-        label: 'Low',
-        code: 'LOW',
-        resolution: '${height}p',
-        url: url,
-        rank: 5,
-        bandwidth: bandwidth,
-      );
-    }
-  }
-
-  String _resolveUrl(String baseUrl, String relativePath) {
-    if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) {
-      return relativePath;
-    }
-    
-    final baseUri = Uri.parse(baseUrl);
-    final basePath = baseUri.path.substring(0, baseUri.path.lastIndexOf('/') + 1);
-    final resolvedPath = basePath + relativePath;
-    
-    return Uri(
-      scheme: baseUri.scheme,
-      host: baseUri.host,
-      port: baseUri.port,
-      path: resolvedPath,
-    ).toString();
-  }
-
-  void _openSettings() {
-    if (_selectedStream == null) return;
-    
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => _SettingsBottomSheet(
-        selectedStream: _selectedStream!,
-        hlsQualities: _hlsQualities,
-        selectedQuality: _selectedQuality,
-        onQualitySelected: (quality) {
-          Navigator.pop(context);
-          if (_selectedStream != null) {
-            _loadStream(_selectedStream!, quality: quality);
-          }
-        },
-      ),
-    );
-  }
-
-  void _openFullscreen() {
-    final controller = _videoController;
-    if (controller == null || !controller.value.isInitialized) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _FullscreenVideoPage(controller: controller),
-      ),
-    );
+    await _loadUrl(quality.url);
   }
 
   void _toggleMute() {
@@ -390,28 +462,61 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     });
   }
 
-  void _showCommentNotAvailable() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Live chat is coming soon'),
-        behavior: SnackBarBehavior.floating,
+  void _retry() {
+    final url = _selectedQuality?.url ?? _primaryStream?.url;
+    if (url != null && url.isNotEmpty) {
+      _loadUrl(url);
+    }
+  }
+
+  void _openSettings() {
+    if (_qualities.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => _QualitySheet(
+        qualities: _qualities,
+        selectedCode: _selectedQuality?.code,
+        onSelected: (quality) {
+          Navigator.pop(sheetContext);
+          _selectQuality(quality);
+        },
       ),
     );
   }
 
-  void _showStatsNotAvailable() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Stats will be available here soon'),
-        behavior: SnackBarBehavior.floating,
+  Future<void> _openFullscreen() async {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _FullscreenPlayerPage(
+          playback: _playback,
+          matchTitle: _matchTitle,
+          onToggleMute: _toggleMute,
+          onOpenSettings: _openSettings,
+        ),
       ),
     );
+    // Ensure portrait + system UI is restored on return.
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    if (mounted) setState(() {});
   }
 
-  void _shareStream() {
+  Future<void> _shareStream() async {
+    final title = _matchTitle == 'Live Stream' ? 'Live cricket' : _matchTitle;
+    final link = _currentUrl ?? _primaryStream?.url ?? '';
+    final payload = link.isEmpty ? title : '$title\n$link';
+    await Clipboard.setData(ClipboardData(text: payload));
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Share match ${widget.matchId}'),
+      const SnackBar(
+        content: Text('Match link copied to clipboard'),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -427,6 +532,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       _streamsFuture =
           _repository.matchStreams(widget.matchId, forceRefresh: true);
     });
+    _detailFuture!.then(_onDetailLoaded).catchError((_) {});
+    _streamsFuture!.then(_onStreamsLoaded).catchError((_) {});
     await Future.wait<dynamic>([
       _detailFuture!,
       _liveLineFuture!,
@@ -446,43 +553,43 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
             child: ListView(
               padding: EdgeInsets.fromLTRB(
                 context.horizontalPadding,
-                18,
+                14,
                 context.horizontalPadding,
                 context.detailBottomPadding,
               ),
               children: [
-                _LivePlayerHeader(matchId: widget.matchId),
-                const SizedBox(height: 24),
+                _LivePlayerHeader(
+                  onShare: _shareStream,
+                  onRefresh: _refresh,
+                ),
+                const SizedBox(height: 16),
                 _MatchInfoSection(
                   matchId: widget.matchId,
                   detailFuture: _detailFuture,
                   liveLineFuture: _liveLineFuture,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 _PlayerSurface(
-                  stream: _selectedStream,
                   controller: _videoController,
                   initFuture: _videoInitFuture,
                   error: _playerError,
-                  selectedQuality: _selectedQuality,
-                  isMuted: _isMuted,
-                  onRetry: _selectedStream == null
-                      ? null
-                      : () => _loadStream(_selectedStream!),
-                  onFullscreen: _openFullscreen,
-                  onSettings: _openSettings,
+                  switching: _switchingQuality,
+                  hasStream: _primaryStream != null,
+                  qualityCode: _selectedQuality?.code ?? 'HD',
+                  matchTitle: _matchTitle,
+                  onRetry: _retry,
                   onToggleMute: _toggleMute,
-                  onComment: _showCommentNotAvailable,
-                  onStats: _showStatsNotAvailable,
-                  onShare: _shareStream,
+                  onSettings: _openSettings,
+                  onFullscreen: _openFullscreen,
                 ),
-                const SizedBox(height: 24),
-                _StreamsSection(
+                const SizedBox(height: 22),
+                _StreamQualitySection(
                   matchId: widget.matchId,
                   streamsFuture: _streamsFuture,
                   appConfigFuture: _appConfigFuture,
-                  selectedId: _selectedStream?.id,
-                  onSelect: _selectStream,
+                  qualities: _qualities,
+                  selectedCode: _selectedQuality?.code,
+                  onSelect: _selectQuality,
                 ),
                 const SizedBox(height: 16),
                 const BannerAdWidget(placement: AdPlacement.livePlayer),
@@ -495,25 +602,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   }
 }
 
-class _LivePlayerHeader extends StatelessWidget {
-  const _LivePlayerHeader({required this.matchId});
+// =============================================================================
+// Header
+// =============================================================================
 
-  final String matchId;
+class _LivePlayerHeader extends StatelessWidget {
+  const _LivePlayerHeader({required this.onShare, required this.onRefresh});
+
+  final VoidCallback onShare;
+  final Future<void> Function() onRefresh;
 
   void _showCastNotAvailable(BuildContext context) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Cast support is coming soon'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: context.cric.card,
-      ),
-    );
-  }
-
-  void _shareMatch(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Share match $matchId'),
+        content: const Text('Casting is not available yet'),
         behavior: SnackBarBehavior.floating,
         backgroundColor: context.cric.card,
       ),
@@ -521,10 +623,19 @@ class _LivePlayerHeader extends StatelessWidget {
   }
 
   void _showMoreOptions(BuildContext context) {
-    showModalBottomSheet(
+    showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => _MoreOptionsSheet(matchId: matchId),
+      builder: (sheetContext) => _MoreOptionsSheet(
+        onRefresh: () {
+          Navigator.pop(sheetContext);
+          onRefresh();
+        },
+        onShare: () {
+          Navigator.pop(sheetContext);
+          onShare();
+        },
+      ),
     );
   }
 
@@ -545,11 +656,11 @@ class _LivePlayerHeader extends StatelessWidget {
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: c.cyan,
+                  color: c.live,
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: c.cyan.withValues(alpha: .7),
+                      color: c.live.withValues(alpha: .7),
                       blurRadius: 12,
                       spreadRadius: 2,
                     ),
@@ -562,20 +673,23 @@ class _LivePlayerHeader extends StatelessWidget {
                 style: TextStyle(
                   color: c.text,
                   fontWeight: FontWeight.w900,
-                  fontSize: context.sp(22),
+                  fontSize: context.sp(20),
                 ),
               ),
             ],
           ),
         ),
+        // Cast is not implemented yet – shown as a disabled state so the UI
+        // stays consistent without crashing.
         _HeaderActionButton(
           icon: Icons.cast_rounded,
+          enabled: false,
           onTap: () => _showCastNotAvailable(context),
         ),
         const SizedBox(width: 8),
         _HeaderActionButton(
           icon: Icons.share_rounded,
-          onTap: () => _shareMatch(context),
+          onTap: onShare,
         ),
         const SizedBox(width: 8),
         _HeaderActionButton(
@@ -588,10 +702,15 @@ class _LivePlayerHeader extends StatelessWidget {
 }
 
 class _HeaderActionButton extends StatelessWidget {
-  const _HeaderActionButton({required this.icon, this.onTap});
+  const _HeaderActionButton({
+    required this.icon,
+    this.onTap,
+    this.enabled = true,
+  });
 
   final IconData icon;
   final VoidCallback? onTap;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -603,22 +722,34 @@ class _HeaderActionButton extends StatelessWidget {
         width: 42,
         height: 42,
         decoration: BoxDecoration(
-          color: c.card.withValues(alpha: .7),
+          color: c.card.withValues(alpha: enabled ? .7 : .35),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: c.border.withValues(alpha: .75)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .22),
-              blurRadius: 16,
-              offset: const Offset(0, 8),
-            ),
-          ],
+          border: Border.all(
+            color: c.border.withValues(alpha: enabled ? .75 : .35),
+          ),
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .22),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+              : null,
         ),
-        child: Icon(icon, color: c.text, size: 24),
+        child: Icon(
+          icon,
+          color: enabled ? c.text : c.muted.withValues(alpha: .6),
+          size: 22,
+        ),
       ),
     );
   }
 }
+
+// =============================================================================
+// Match info (compact) – preserved layout
+// =============================================================================
 
 class _MatchInfoSection extends StatelessWidget {
   const _MatchInfoSection({
@@ -754,9 +885,9 @@ class _MatchInfoCard extends StatelessWidget {
     ];
 
     return Container(
-      padding: EdgeInsets.all(narrow ? 16 : 20),
+      padding: EdgeInsets.all(narrow ? 14 : 16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -785,7 +916,7 @@ class _MatchInfoCard extends StatelessWidget {
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(22),
                 gradient: RadialGradient(
                   center: Alignment.topCenter,
                   radius: 1.1,
@@ -820,7 +951,7 @@ class _MatchInfoCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.visibility_rounded,
-                            color: c.text.withValues(alpha: .86), size: 17),
+                            color: c.text.withValues(alpha: .86), size: 16),
                         const SizedBox(width: 4),
                         Text(
                           'Live',
@@ -836,7 +967,7 @@ class _MatchInfoCard extends StatelessWidget {
                     const SizedBox(width: 42),
                 ],
               ),
-              SizedBox(height: narrow ? 18 : 24),
+              SizedBox(height: narrow ? 12 : 16),
               Row(
                 children: [
                   Expanded(
@@ -864,7 +995,7 @@ class _MatchInfoCard extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 12),
               Text(
                 contextText,
                 textAlign: TextAlign.center,
@@ -873,8 +1004,8 @@ class _MatchInfoCard extends StatelessWidget {
                 style: TextStyle(
                   color: c.cyan,
                   fontWeight: FontWeight.w900,
-                  fontSize: narrow ? 13 : 15,
-                  height: 1.35,
+                  fontSize: narrow ? 12 : 14,
+                  height: 1.3,
                 ),
               ),
             ],
@@ -956,13 +1087,13 @@ class _VsMedallion extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return SizedBox(
-      width: narrow ? 58 : 76,
+      width: narrow ? 52 : 66,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Container(
             width: 1,
-            height: 96,
+            height: 80,
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
@@ -976,8 +1107,8 @@ class _VsMedallion extends StatelessWidget {
             ),
           ),
           Container(
-            width: narrow ? 50 : 58,
-            height: narrow ? 50 : 58,
+            width: narrow ? 44 : 50,
+            height: narrow ? 44 : 50,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: c.primaryGradient,
@@ -995,7 +1126,7 @@ class _VsMedallion extends StatelessWidget {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: 17,
+                fontSize: 16,
               ),
             ),
           ),
@@ -1027,8 +1158,8 @@ class _TeamColumn extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 72,
-          height: 72,
+          width: 60,
+          height: 60,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: const Color(0xff102341),
@@ -1057,7 +1188,7 @@ class _TeamColumn extends StatelessWidget {
                 )
               : _TeamInitial(name: name),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Text(
           name,
           maxLines: 1,
@@ -1065,7 +1196,7 @@ class _TeamColumn extends StatelessWidget {
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w900,
-            fontSize: 18,
+            fontSize: 16,
           ),
         ),
         Text(
@@ -1087,7 +1218,7 @@ class _TeamColumn extends StatelessWidget {
             style: TextStyle(
               color: isStriker ? c.cyan : Colors.white.withValues(alpha: .92),
               fontWeight: FontWeight.w900,
-              fontSize: 22,
+              fontSize: 20,
             ),
           )
         else
@@ -1134,7 +1265,7 @@ class _TeamInitial extends StatelessWidget {
         style: const TextStyle(
           color: Colors.white,
           fontWeight: FontWeight.w900,
-          fontSize: 24,
+          fontSize: 22,
         ),
       ),
     );
@@ -1217,344 +1348,521 @@ class _MatchInfoUnavailable extends StatelessWidget {
   }
 }
 
+// =============================================================================
+// Player surface (portrait, 16:9)
+// =============================================================================
+
 class _PlayerSurface extends StatelessWidget {
   const _PlayerSurface({
-    required this.stream,
     required this.controller,
     required this.initFuture,
     required this.error,
-    required this.selectedQuality,
-    required this.isMuted,
+    required this.switching,
+    required this.hasStream,
+    required this.qualityCode,
+    required this.matchTitle,
     required this.onRetry,
-    required this.onFullscreen,
-    required this.onSettings,
     required this.onToggleMute,
-    required this.onComment,
-    required this.onStats,
-    required this.onShare,
+    required this.onSettings,
+    required this.onFullscreen,
   });
 
-  final StreamSource? stream;
   final VideoPlayerController? controller;
   final Future<void>? initFuture;
   final String? error;
-  final HlsQuality? selectedQuality;
-  final bool isMuted;
-  final VoidCallback? onRetry;
-  final VoidCallback onFullscreen;
-  final VoidCallback onSettings;
+  final bool switching;
+  final bool hasStream;
+  final String qualityCode;
+  final String matchTitle;
+  final VoidCallback onRetry;
   final VoidCallback onToggleMute;
-  final VoidCallback onComment;
-  final VoidCallback onStats;
-  final VoidCallback onShare;
+  final VoidCallback onSettings;
+  final VoidCallback onFullscreen;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final hasStream = stream != null && stream!.url.isNotEmpty;
     final initialized = controller?.value.isInitialized == true;
-    final playing = controller?.value.isPlaying == true;
+
+    Widget content;
+    if (error != null) {
+      content = _PlayerMessage(
+        icon: Icons.error_outline_rounded,
+        color: c.warning,
+        message: error!,
+        onRetry: onRetry,
+      );
+    } else if (initialized && controller != null) {
+      content = _VideoStage(
+        controller: controller!,
+        fullscreen: false,
+        qualityCode: qualityCode,
+        matchTitle: matchTitle,
+        onToggleMute: onToggleMute,
+        onSettings: onSettings,
+        onFullscreen: onFullscreen,
+        onExitFullscreen: () {},
+      );
+    } else {
+      content = _PlayerLoading(
+        hasStream: hasStream,
+        showSpinner: switching || (initFuture != null && hasStream),
+      );
+    }
+
     return PremiumCard(
       padding: EdgeInsets.zero,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(26),
         child: AspectRatio(
           aspectRatio: 16 / 9,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (initialized)
-                VideoPlayer(controller!)
-              else
-                Image.asset(
-                  'assets/images/stadium_live.png',
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(color: Colors.black),
-                ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withValues(alpha: initialized ? .08 : .25),
-                      Colors.black.withValues(alpha: initialized ? .25 : .72),
-                    ],
-                  ),
-                ),
-              ),
-              if (initFuture != null && !initialized && error == null)
-                FutureBuilder<void>(
-                  future: initFuture,
-                  builder: (context, snapshot) => Center(
-                    child: snapshot.hasError
-                        ? const SizedBox.shrink()
-                        : SizedBox(
-                            width: 46,
-                            height: 46,
-                            child: CircularProgressIndicator(
-                              color: c.cyan,
-                              strokeWidth: 3,
-                            ),
-                          ),
-                  ),
-                ),
-              if (!initialized && error == null)
-                Center(
-                  child: Container(
-                    width: 82,
-                    height: 82,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: hasStream ? c.primaryGradient : null,
-                      color: hasStream ? null : c.card2,
-                      boxShadow: hasStream
-                          ? [
-                              BoxShadow(
-                                color: c.cyan.withValues(alpha: .42),
-                                blurRadius: 26,
-                                spreadRadius: 4,
-                              )
-                            ]
-                          : null,
-                    ),
-                    child: Icon(
-                      hasStream
-                          ? Icons.play_arrow_rounded
-                          : Icons.live_tv_rounded,
-                      color:
-                          Colors.white.withValues(alpha: hasStream ? 1 : .65),
-                      size: 50,
-                    ),
-                  ),
-                ),
-              if (error != null)
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.error_outline_rounded,
-                            color: c.warning, size: 34),
-                        const SizedBox(height: 10),
-                        Text(
-                          error!,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: c.text,
-                              fontWeight: FontWeight.w800,
-                              height: 1.35),
-                        ),
-                        if (onRetry != null) ...[
-                          const SizedBox(height: 14),
-                          GradientButton(
-                            label: 'Retry',
-                            icon: Icons.refresh_rounded,
-                            onTap: onRetry,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              Positioned(
-                left: 14,
-                top: 14,
-                child: _PlayerPill(
-                  label: playing ? 'LIVE' : 'STANDBY',
-                  color: playing ? c.live : c.card2,
-                  icon: Icons.circle,
-                ),
-              ),
-              if (stream != null)
-                Positioned(
-                  right: 14,
-                  top: 14,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _PlayerPill(
-                        label: selectedQuality?.code ?? stream!.qualityLabel,
-                        color: Colors.black.withValues(alpha: .55),
-                        textColor: c.cyan,
-                        icon: Icons.hd_rounded,
-                      ),
-                      const SizedBox(width: 8),
-                      _PlayerMiniIcon(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        onTap: onComment,
-                      ),
-                      const SizedBox(width: 8),
-                      _PlayerMiniIcon(
-                        icon: Icons.bar_chart_rounded,
-                        onTap: onStats,
-                      ),
-                      const SizedBox(width: 8),
-                      _PlayerMiniIcon(
-                        icon: Icons.share_rounded,
-                        onTap: onShare,
-                      ),
-                    ],
-                  ),
-                ),
-              if (initialized && !playing)
-                Positioned.fill(
-                  child: Center(
-                    child: GestureDetector(
-                      onTap: controller!.play,
-                      child: Container(
-                        width: 92,
-                        height: 92,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: c.primaryGradient,
-                          boxShadow: [
-                            BoxShadow(
-                              color: c.cyan.withValues(alpha: .42),
-                              blurRadius: 30,
-                              spreadRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow_rounded,
-                          color: Colors.white,
-                          size: 60,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              if (initialized)
-                Positioned(
-                  left: 12,
-                  right: 12,
-                  bottom: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .48),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: .08),
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(99),
-                          child: VideoProgressIndicator(
-                            controller!,
-                            allowScrubbing: true,
-                            colors: VideoProgressColors(
-                              playedColor: c.cyan,
-                              bufferedColor: Colors.white24,
-                              backgroundColor:
-                                  Colors.white.withValues(alpha: .12),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            _PlayerMiniIcon(
-                              icon: playing
-                                  ? Icons.pause_rounded
-                                  : Icons.play_arrow_rounded,
-                              onTap: () {
-                                playing
-                                    ? controller!.pause()
-                                    : controller!.play();
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _PlayerMiniIcon(
-                              icon: Icons.replay_10_rounded,
-                              onTap: () {
-                                if (controller!.value.duration == Duration.zero) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Seek is not available on this live stream'),
-                                      behavior: SnackBarBehavior.floating,
-                                      duration: Duration(seconds: 2),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                final target = controller!.value.position -
-                                    const Duration(seconds: 10);
-                                controller!.seekTo(
-                                  target.isNegative ? Duration.zero : target,
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 8),
-                            _PlayerMiniIcon(
-                              icon: Icons.forward_10_rounded,
-                              onTap: () {
-                                if (controller!.value.duration == Duration.zero) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Seek is not available on this live stream'),
-                                      behavior: SnackBarBehavior.floating,
-                                      duration: Duration(seconds: 2),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                final target = controller!.value.position +
-                                    const Duration(seconds: 10);
-                                final duration = controller!.value.duration;
-                                controller!.seekTo(
-                                  target > duration ? duration : target,
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                _timeLabel(controller!.value.position,
-                                    controller!.value.duration),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: c.text,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            _PlayerMiniIcon(
-                              icon: isMuted
-                                  ? Icons.volume_off_rounded
-                                  : Icons.volume_up_rounded,
-                              onTap: onToggleMute,
-                            ),
-                            const SizedBox(width: 8),
-                            _PlayerMiniIcon(
-                              icon: Icons.settings_rounded,
-                              onTap: onSettings,
-                            ),
-                            const SizedBox(width: 8),
-                            _PlayerMiniIcon(
-                              icon: Icons.fullscreen_rounded,
-                              onTap: onFullscreen,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
+          child: ColoredBox(
+            color: Colors.black,
+            child: content,
           ),
         ),
       ),
+    );
+  }
+}
+
+class _PlayerLoading extends StatelessWidget {
+  const _PlayerLoading({required this.hasStream, required this.showSpinner});
+
+  final bool hasStream;
+  final bool showSpinner;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          'assets/images/stadium_live.png',
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(color: Colors.black),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withValues(alpha: .25),
+                Colors.black.withValues(alpha: .72),
+              ],
+            ),
+          ),
+        ),
+        Center(
+          child: showSpinner
+              ? SizedBox(
+                  width: 46,
+                  height: 46,
+                  child: CircularProgressIndicator(
+                    color: c.cyan,
+                    strokeWidth: 3,
+                  ),
+                )
+              : Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: c.card2,
+                  ),
+                  child: Icon(
+                    Icons.live_tv_rounded,
+                    color: Colors.white.withValues(alpha: .65),
+                    size: 44,
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlayerMessage extends StatelessWidget {
+  const _PlayerMessage({
+    required this.icon,
+    required this.color,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 34),
+            const SizedBox(height: 10),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: c.text,
+                fontWeight: FontWeight.w800,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 14),
+            GradientButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              onTap: onRetry,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Renders the video + auto-hiding overlay controls. Shared between the inline
+/// (portrait) player and the fullscreen route.
+class _VideoStage extends StatefulWidget {
+  const _VideoStage({
+    super.key,
+    required this.controller,
+    required this.fullscreen,
+    required this.qualityCode,
+    required this.matchTitle,
+    required this.onToggleMute,
+    required this.onSettings,
+    required this.onFullscreen,
+    required this.onExitFullscreen,
+  });
+
+  final VideoPlayerController controller;
+  final bool fullscreen;
+  final String qualityCode;
+  final String matchTitle;
+  final VoidCallback onToggleMute;
+  final VoidCallback onSettings;
+  final VoidCallback onFullscreen;
+  final VoidCallback onExitFullscreen;
+
+  @override
+  State<_VideoStage> createState() => _VideoStageState();
+}
+
+class _VideoStageState extends State<_VideoStage> {
+  bool _showControls = true;
+  bool _lastPlaying = false;
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onUpdate);
+    _lastPlaying = widget.controller.value.isPlaying;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleHide());
+  }
+
+  @override
+  void didUpdateWidget(_VideoStage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onUpdate);
+      widget.controller.addListener(_onUpdate);
+      _lastPlaying = widget.controller.value.isPlaying;
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    widget.controller.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (!mounted) return;
+    final playing = widget.controller.value.isPlaying;
+    if (playing != _lastPlaying) {
+      _lastPlaying = playing;
+      if (playing) {
+        _scheduleHide();
+      } else {
+        _hideTimer?.cancel();
+        if (!_showControls) {
+          setState(() => _showControls = true);
+          return;
+        }
+      }
+    }
+    setState(() {});
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    if (widget.controller.value.isPlaying) {
+      _hideTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted && widget.controller.value.isPlaying) {
+          setState(() => _showControls = false);
+        }
+      });
+    }
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _scheduleHide();
+  }
+
+  void _bump(VoidCallback action) {
+    action();
+    setState(() => _showControls = true);
+    _scheduleHide();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final aspect = controller.value.aspectRatio > 0
+        ? controller.value.aspectRatio
+        : 16 / 9;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleControls,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const ColoredBox(color: Colors.black),
+          Center(
+            child: AspectRatio(
+              aspectRatio: aspect,
+              child: VideoPlayer(controller),
+            ),
+          ),
+          _ControlsOverlay(
+            controller: controller,
+            visible: _showControls,
+            fullscreen: widget.fullscreen,
+            qualityCode: widget.qualityCode,
+            matchTitle: widget.matchTitle,
+            onTogglePlay: () => _bump(() {
+              controller.value.isPlaying
+                  ? controller.pause()
+                  : controller.play();
+            }),
+            onToggleMute: () => _bump(widget.onToggleMute),
+            onSettings: () => _bump(widget.onSettings),
+            onFullscreen: () => _bump(widget.onFullscreen),
+            onExitFullscreen: () => _bump(widget.onExitFullscreen),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ControlsOverlay extends StatelessWidget {
+  const _ControlsOverlay({
+    required this.controller,
+    required this.visible,
+    required this.fullscreen,
+    required this.qualityCode,
+    required this.matchTitle,
+    required this.onTogglePlay,
+    required this.onToggleMute,
+    required this.onSettings,
+    required this.onFullscreen,
+    required this.onExitFullscreen,
+  });
+
+  final VideoPlayerController controller;
+  final bool visible;
+  final bool fullscreen;
+  final String qualityCode;
+  final String matchTitle;
+  final VoidCallback onTogglePlay;
+  final VoidCallback onToggleMute;
+  final VoidCallback onSettings;
+  final VoidCallback onFullscreen;
+  final VoidCallback onExitFullscreen;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final value = controller.value;
+    final playing = value.isPlaying;
+    final muted = value.volume == 0;
+    final pad = fullscreen ? 18.0 : 12.0;
+
+    return AnimatedOpacity(
+      opacity: visible ? 1 : 0,
+      duration: const Duration(milliseconds: 200),
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: .45),
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: .55),
+                  ],
+                  stops: const [0, .45, 1],
+                ),
+              ),
+            ),
+            // Top row
+            Positioned(
+              left: pad,
+              right: pad,
+              top: pad,
+              child: Row(
+                children: [
+                  if (fullscreen) ...[
+                    _PlayerMiniIcon(
+                      icon: Icons.arrow_back_rounded,
+                      onTap: onExitFullscreen,
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  const _LivePill(),
+                  if (fullscreen) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        matchTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ] else
+                    const Spacer(),
+                  const SizedBox(width: 8),
+                  _PlayerPill(
+                    label: qualityCode,
+                    color: Colors.black.withValues(alpha: .55),
+                    textColor: c.cyan,
+                    icon: Icons.hd_rounded,
+                  ),
+                ],
+              ),
+            ),
+            // Center play / pause
+            Center(
+              child: GestureDetector(
+                onTap: onTogglePlay,
+                child: Container(
+                  width: fullscreen ? 84 : 72,
+                  height: fullscreen ? 84 : 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: c.primaryGradient,
+                    boxShadow: [
+                      BoxShadow(
+                        color: c.cyan.withValues(alpha: .42),
+                        blurRadius: 26,
+                        spreadRadius: 3,
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: fullscreen ? 50 : 42,
+                  ),
+                ),
+              ),
+            ),
+            // Bottom row
+            Positioned(
+              left: pad,
+              right: pad,
+              bottom: pad,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: VideoProgressIndicator(
+                      controller,
+                      allowScrubbing: true,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      colors: VideoProgressColors(
+                        playedColor: c.cyan,
+                        bufferedColor: Colors.white24,
+                        backgroundColor: Colors.white.withValues(alpha: .12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Text(
+                        _timeLabel(value.position, value.duration),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const Spacer(),
+                      _PlayerMiniIcon(
+                        icon: muted
+                            ? Icons.volume_off_rounded
+                            : Icons.volume_up_rounded,
+                        onTap: onToggleMute,
+                      ),
+                      const SizedBox(width: 8),
+                      _PlayerMiniIcon(
+                        icon: Icons.settings_rounded,
+                        onTap: onSettings,
+                      ),
+                      const SizedBox(width: 8),
+                      _PlayerMiniIcon(
+                        icon: fullscreen
+                            ? Icons.fullscreen_exit_rounded
+                            : Icons.fullscreen_rounded,
+                        onTap: fullscreen ? onExitFullscreen : onFullscreen,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LivePill extends StatelessWidget {
+  const _LivePill();
+
+  @override
+  Widget build(BuildContext context) {
+    return _PlayerPill(
+      label: 'LIVE',
+      color: context.cric.live,
+      icon: Icons.circle,
     );
   }
 }
@@ -1615,9 +1923,9 @@ class _PlayerMiniIcon extends StatelessWidget {
         width: 38,
         height: 38,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .06),
+          color: Colors.black.withValues(alpha: .4),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white.withValues(alpha: .08)),
+          border: Border.all(color: Colors.white.withValues(alpha: .12)),
         ),
         child: Icon(icon, color: Colors.white, size: 20),
       ),
@@ -1638,20 +1946,105 @@ String _timeLabel(Duration position, Duration duration) {
   return '${format(position)} / ${format(duration)}';
 }
 
-class _StreamsSection extends StatelessWidget {
-  const _StreamsSection({
+// =============================================================================
+// Fullscreen route
+// =============================================================================
+
+class _FullscreenPlayerPage extends StatefulWidget {
+  const _FullscreenPlayerPage({
+    required this.playback,
+    required this.matchTitle,
+    required this.onToggleMute,
+    required this.onOpenSettings,
+  });
+
+  final ValueListenable<_Playback> playback;
+  final String matchTitle;
+  final VoidCallback onToggleMute;
+  final VoidCallback onOpenSettings;
+
+  @override
+  State<_FullscreenPlayerPage> createState() => _FullscreenPlayerPageState();
+}
+
+class _FullscreenPlayerPageState extends State<_FullscreenPlayerPage> {
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: ValueListenableBuilder<_Playback>(
+        valueListenable: widget.playback,
+        builder: (context, playback, _) {
+          final controller = playback.controller;
+          if (controller == null || !controller.value.isInitialized) {
+            return const Center(
+              child: SizedBox(
+                width: 46,
+                height: 46,
+                child: CircularProgressIndicator(
+                  color: Color(0xff22d3ee),
+                  strokeWidth: 3,
+                ),
+              ),
+            );
+          }
+          return _VideoStage(
+            key: ValueKey<VideoPlayerController>(controller),
+            controller: controller,
+            fullscreen: true,
+            qualityCode: playback.qualityCode,
+            matchTitle: widget.matchTitle,
+            onToggleMute: widget.onToggleMute,
+            onSettings: widget.onOpenSettings,
+            onFullscreen: () {},
+            onExitFullscreen: () => Navigator.of(context).maybePop(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Quality selector (SD / HD / FHD only)
+// =============================================================================
+
+class _StreamQualitySection extends StatelessWidget {
+  const _StreamQualitySection({
     required this.matchId,
     required this.streamsFuture,
     required this.appConfigFuture,
-    required this.selectedId,
+    required this.qualities,
+    required this.selectedCode,
     required this.onSelect,
   });
 
   final String matchId;
   final Future<ApiEnvelope<Map<String, dynamic>>>? streamsFuture;
   final Future<ApiEnvelope<Map<String, dynamic>>>? appConfigFuture;
-  final String? selectedId;
-  final ValueChanged<StreamSource> onSelect;
+  final List<StreamQuality> qualities;
+  final String? selectedCode;
+  final ValueChanged<StreamQuality> onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -1683,99 +2076,21 @@ class _StreamsSection extends StatelessWidget {
           return const _StreamsSkeleton();
         }
         final data = apiMap(snapshot.data?.data);
-        final streams = apiList(data['streams'])
+        final hasPlayable = apiList(data['streams'])
             .map(StreamSource.fromJson)
-            .where((stream) => stream.url.isNotEmpty)
-            .toList();
-        streams.sort((a, b) {
-          final priority = (a.priority ?? 100).compareTo(b.priority ?? 100);
-          if (priority != 0) return priority;
-          return a.qualityRank.compareTo(b.qualityRank);
-        });
-        if (streams.isEmpty) {
+            .any((s) => s.isPlayable && s.url.isNotEmpty);
+        if (!hasPlayable) {
           return _StreamsUnavailable(appConfigFuture: appConfigFuture);
         }
-        final selected = streams.where((s) => s.id == selectedId).firstOrNull ??
-            streams.first;
-        
-        // Create all standard quality options
-        final allQualities = <String, StreamSource>{
-          'AUTO': StreamSource(
-            id: 'auto',
-            name: selected.name,
-            url: selected.url,
-            quality: 'AUTO',
-            label: 'Auto',
-            streamType: selected.streamType,
-            isPremium: selected.isPremium,
-            priority: 0,
-          ),
-          'FHD': StreamSource(
-            id: 'fhd',
-            name: selected.name,
-            url: selected.url,
-            quality: 'FHD',
-            label: 'Full HD',
-            streamType: selected.streamType,
-            isPremium: selected.isPremium,
-            priority: 1,
-          ),
-          'HD': StreamSource(
-            id: 'hd',
-            name: selected.name,
-            url: selected.url,
-            quality: 'HD',
-            label: 'HD',
-            streamType: selected.streamType,
-            isPremium: selected.isPremium,
-            priority: 2,
-          ),
-          'SD': StreamSource(
-            id: 'sd',
-            name: selected.name,
-            url: selected.url,
-            quality: 'SD',
-            label: 'SD',
-            streamType: selected.streamType,
-            isPremium: selected.isPremium,
-            priority: 3,
-          ),
-          'LOW': StreamSource(
-            id: 'low',
-            name: selected.name,
-            url: selected.url,
-            quality: 'LOW',
-            label: 'Low',
-            streamType: selected.streamType,
-            isPremium: selected.isPremium,
-            priority: 4,
-          ),
-        };
-        
-        // Override with actual streams if they exist
-        for (final stream in streams) {
-          final code = stream.qualityCode;
-          if (allQualities.containsKey(code)) {
-            allQualities[code] = stream;
-          }
-        }
-        
-        final selectedQuality = selected.qualityCode;
-        final serverStreams =
-            streams.where((s) => s.qualityCode == selectedQuality).toList();
-        final hasMultipleServers = serverStreams.length > 1;
-        
-        // Auto-select highest priority stream once available
-        if (selectedId == null) {
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => onSelect(selected));
+        if (qualities.isEmpty) {
+          return const _StreamsSkeleton();
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(Icons.wifi_tethering_rounded, color: c.cyan),
+                Icon(Icons.hd_rounded, color: c.cyan),
                 const SizedBox(width: 8),
                 Text(
                   'Stream Quality',
@@ -1788,60 +2103,14 @@ class _StreamsSection extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final narrow = constraints.maxWidth < 430;
-                final cards = allQualities.values
-                    .map((stream) => _QualityCard(
-                          stream: stream,
-                          selected: stream.qualityCode == selectedQuality,
-                          onTap: () => onSelect(stream),
-                        ))
-                    .toList();
-                if (narrow) {
-                  return Column(
-                    children: [
-                      for (final card in cards) ...[
-                        card,
-                        const SizedBox(height: 10),
-                      ],
-                    ],
-                  );
-                }
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 10,
-                  children: cards,
-                );
-              },
-            ),
-            if (hasMultipleServers) ...[
-              const SizedBox(height: 22),
-              Text(
-                'Server',
-                style: TextStyle(
-                  color: c.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 17,
-                ),
+            for (final quality in qualities) ...[
+              _QualityCard(
+                quality: quality,
+                selected: quality.code == selectedCode,
+                onTap: () => onSelect(quality),
               ),
-              const SizedBox(height: 14),
-              for (final stream in serverStreams) ...[
-                _StreamOption(
-                  stream: stream,
-                  selected: stream.id == selectedId,
-                  onTap: () => onSelect(stream),
-                ),
-                const SizedBox(height: 12),
-              ],
-            ] else if (serverStreams.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _CompactServerCard(stream: serverStreams.first),
+              const SizedBox(height: 10),
             ],
-            const SizedBox(height: 10),
-            const _StreamInfoRow(),
-            const SizedBox(height: 16),
-            const _SecureStreamCard(),
           ],
         );
       },
@@ -1849,36 +2118,16 @@ class _StreamsSection extends StatelessWidget {
   }
 }
 
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}
-
 class _QualityCard extends StatelessWidget {
   const _QualityCard({
-    required this.stream,
+    required this.quality,
     required this.selected,
     required this.onTap,
   });
 
-  final StreamSource stream;
+  final StreamQuality quality;
   final bool selected;
   final VoidCallback onTap;
-
-  String get _headline => switch (stream.qualityCode) {
-        'FHD' => 'Full HD',
-        'HD' => 'HD',
-        'SD' => 'SD',
-        'LOW' => 'Low',
-        _ => 'Auto',
-      };
-
-  String get _detail => switch (stream.qualityCode) {
-        'FHD' => '1080p',
-        'HD' => '720p',
-        'SD' => '480p',
-        'LOW' => '240p',
-        _ => 'Adaptive',
-      };
 
   @override
   Widget build(BuildContext context) {
@@ -1890,14 +2139,16 @@ class _QualityCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            width: 50,
+            height: 44,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
               color: selected ? c.cyan : c.card2,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(color: selected ? c.cyan : c.border),
             ),
             child: Text(
-              stream.qualityCode,
+              quality.code,
               style: TextStyle(
                 color: selected ? Colors.black : c.text,
                 fontWeight: FontWeight.w900,
@@ -1905,21 +2156,28 @@ class _QualityCard extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(_headline,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16)),
+                Text(
+                  quality.label,
+                  style: TextStyle(
+                    color: c.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(_detail,
-                    style: TextStyle(
-                        color: selected ? c.cyan : c.muted,
-                        fontWeight: FontWeight.w800)),
+                Text(
+                  quality.resolution,
+                  style: TextStyle(
+                    color: selected ? c.cyan : c.muted,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1928,316 +2186,8 @@ class _QualityCard extends StatelessWidget {
                 ? Icons.check_circle_rounded
                 : Icons.radio_button_unchecked_rounded,
             color: selected ? c.cyan : c.muted,
+            size: 24,
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreamInfoRow extends StatelessWidget {
-  const _StreamInfoRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 380) {
-          return const Column(
-            children: [
-              _InfoPill(
-                icon: Icons.speed_rounded,
-                title: 'Low Latency',
-                subtitle: 'Live at real speed',
-              ),
-              SizedBox(height: 8),
-              _InfoPill(
-                icon: Icons.hd_rounded,
-                title: 'Adaptive Streaming',
-                subtitle: 'Smooth on any network',
-              ),
-              SizedBox(height: 8),
-              _InfoPill(
-                icon: Icons.lock_rounded,
-                title: 'Secure Stream',
-                subtitle: 'Protected and encrypted',
-              ),
-            ],
-          );
-        }
-        return const Row(
-          children: [
-            Expanded(
-                child: _InfoPill(
-              icon: Icons.speed_rounded,
-              title: 'Low Latency',
-              subtitle: 'Live at real speed',
-            )),
-            SizedBox(width: 8),
-            Expanded(
-                child: _InfoPill(
-              icon: Icons.hd_rounded,
-              title: 'Adaptive Streaming',
-              subtitle: 'Smooth on any network',
-            )),
-            SizedBox(width: 8),
-            Expanded(
-                child: _InfoPill(
-              icon: Icons.lock_rounded,
-              title: 'Secure Stream',
-              subtitle: 'Protected and encrypted',
-            )),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _InfoPill extends StatelessWidget {
-  const _InfoPill(
-      {required this.icon, required this.title, required this.subtitle});
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          Icon(icon, color: c.cyan, size: 22),
-          const SizedBox(height: 8),
-          Text(title,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: c.text, fontWeight: FontWeight.w900, fontSize: 12)),
-          const SizedBox(height: 3),
-          Text(subtitle,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: c.muted, fontSize: 10)),
-        ],
-      ),
-    );
-  }
-}
-
-class _SecureStreamCard extends StatelessWidget {
-  const _SecureStreamCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(16),
-      borderColor: c.cyan.withValues(alpha: .45),
-      child: Row(
-        children: [
-          Icon(Icons.verified_user_rounded, color: c.cyan, size: 34),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Secure stream',
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16)),
-                const SizedBox(height: 4),
-                Text('Your connection is protected while playback is active.',
-                    style: TextStyle(color: c.muted, height: 1.35)),
-              ],
-            ),
-          ),
-          Icon(Icons.lock_rounded, color: c.cyan),
-        ],
-      ),
-    );
-  }
-}
-
-class _CompactServerCard extends StatelessWidget {
-  const _CompactServerCard({required this.stream});
-
-  final StreamSource stream;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: c.card2.withValues(alpha: .5),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: c.border.withValues(alpha: .3)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              gradient: c.primaryGradient,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.dns_rounded, color: Colors.white, size: 18),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Server',
-                  style: TextStyle(
-                    color: c.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  stream.name,
-                  style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 15,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Icon(Icons.check_circle_rounded, color: c.cyan, size: 20),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreamOption extends StatelessWidget {
-  const _StreamOption({
-    required this.stream,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final StreamSource stream;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final subtitleParts = <String>[
-      stream.qualityLabel,
-      if (apiString(stream.language).isNotEmpty) stream.language!,
-      if (apiString(stream.streamType).isNotEmpty)
-        stream.streamType!.toUpperCase(),
-    ];
-    return PremiumCard(
-      onTap: onTap,
-      padding: const EdgeInsets.all(18),
-      borderColor: selected ? c.cyan : null,
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: selected ? c.primaryGradient : null,
-              color: selected ? null : c.card2,
-              border: Border.all(color: c.border),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              Icons.dns_rounded,
-              color: selected ? Colors.white : c.muted,
-              size: 22,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        stream.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                    if (stream.isPremium) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: c.cyan.withValues(alpha: .15),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'PRO',
-                          style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 10,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitleParts.join(' - '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.muted,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          if (selected)
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                gradient: c.primaryGradient,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check_rounded,
-                  color: Colors.white, size: 18),
-            )
-          else
-            Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: c.border, width: 2),
-              ),
-            ),
         ],
       ),
     );
@@ -2337,82 +2287,15 @@ class _StreamsUnavailable extends StatelessWidget {
   }
 }
 
-class _FullscreenVideoPage extends StatelessWidget {
-  const _FullscreenVideoPage({required this.controller});
+// =============================================================================
+// Bottom sheets
+// =============================================================================
 
-  final VideoPlayerController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Center(
-              child: AspectRatio(
-                aspectRatio: controller.value.aspectRatio == 0
-                    ? 16 / 9
-                    : controller.value.aspectRatio,
-                child: VideoPlayer(controller),
-              ),
-            ),
-            Positioned(
-              left: 12,
-              top: 12,
-              child: IconButton(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close_rounded,
-                    color: Colors.white, size: 30),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () {
-                      controller.value.isPlaying
-                          ? controller.pause()
-                          : controller.play();
-                    },
-                    icon: Icon(
-                      controller.value.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 34,
-                    ),
-                  ),
-                  Expanded(
-                    child: VideoProgressIndicator(
-                      controller,
-                      allowScrubbing: true,
-                      colors: const VideoProgressColors(
-                        playedColor: Color(0xff22d3ee),
-                        bufferedColor: Colors.white38,
-                        backgroundColor: Colors.white24,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// More Options Bottom Sheet
 class _MoreOptionsSheet extends StatelessWidget {
-  const _MoreOptionsSheet({required this.matchId});
+  const _MoreOptionsSheet({required this.onRefresh, required this.onShare});
 
-  final String matchId;
+  final VoidCallback onRefresh;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -2441,99 +2324,25 @@ class _MoreOptionsSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: c.border.withValues(alpha: .4)),
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    gradient: c.primaryGradient,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.more_horiz_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    'More Options',
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 20,
-                    ),
-                  ),
-                ),
-                InkWell(
-                  onTap: () => Navigator.pop(context),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: c.card2,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(Icons.close_rounded, color: c.text, size: 20),
-                  ),
-                ),
-              ],
-            ),
+          _SheetHeader(
+            icon: Icons.more_horiz_rounded,
+            title: 'More Options',
+            onClose: () => Navigator.pop(context),
           ),
           Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
                 _MoreOption(
-                  icon: Icons.info_outline_rounded,
-                  label: 'Stream Info',
-                  onTap: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Stream info for match $matchId'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                _MoreOption(
                   icon: Icons.refresh_rounded,
                   label: 'Refresh Stream',
-                  onTap: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Refreshing stream...'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
+                  onTap: onRefresh,
                 ),
                 const SizedBox(height: 12),
                 _MoreOption(
-                  icon: Icons.report_outlined,
-                  label: 'Report Issue',
-                  onTap: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Report issue feature coming soon'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
+                  icon: Icons.ios_share_rounded,
+                  label: 'Share Match',
+                  onTap: onShare,
                 ),
               ],
             ),
@@ -2598,48 +2407,20 @@ class _MoreOption extends StatelessWidget {
   }
 }
 
-// HLS Quality Model
-class HlsQuality {
-  const HlsQuality({
-    required this.label,
-    required this.code,
-    required this.resolution,
-    required this.url,
-    required this.rank,
-    this.bandwidth,
+class _QualitySheet extends StatelessWidget {
+  const _QualitySheet({
+    required this.qualities,
+    required this.selectedCode,
+    required this.onSelected,
   });
 
-  final String label;
-  final String code;
-  final String resolution;
-  final String url;
-  final int rank;
-  final int? bandwidth;
-}
-
-// Settings Bottom Sheet
-class _SettingsBottomSheet extends StatelessWidget {
-  const _SettingsBottomSheet({
-    required this.selectedStream,
-    required this.hlsQualities,
-    required this.selectedQuality,
-    required this.onQualitySelected,
-  });
-
-  final StreamSource selectedStream;
-  final List<HlsQuality> hlsQualities;
-  final HlsQuality? selectedQuality;
-  final ValueChanged<HlsQuality> onQualitySelected;
+  final List<StreamQuality> qualities;
+  final String? selectedCode;
+  final ValueChanged<StreamQuality> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    
-    // Use HLS qualities if available, otherwise create fallback qualities
-    final qualities = hlsQualities.isNotEmpty
-        ? hlsQualities
-        : _createFallbackQualities();
-
     return Container(
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -2664,128 +2445,23 @@ class _SettingsBottomSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: c.border.withValues(alpha: .4)),
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    gradient: c.primaryGradient,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.settings_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    'Stream Settings',
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 20,
-                    ),
-                  ),
-                ),
-                InkWell(
-                  onTap: () => Navigator.pop(context),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: c.card2,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(Icons.close_rounded, color: c.text, size: 20),
-                  ),
-                ),
-              ],
-            ),
+          _SheetHeader(
+            icon: Icons.hd_rounded,
+            title: 'Stream Quality',
+            onClose: () => Navigator.pop(context),
           ),
-          
-          // Quality Options
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.all(20),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.hd_rounded, color: c.cyan, size: 22),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Stream Quality',
-                      style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
                 for (final quality in qualities) ...[
-                  _QualityOption(
+                  _QualityCard(
                     quality: quality,
-                    selected: selectedQuality?.code == quality.code,
-                    onTap: () => onQualitySelected(quality),
+                    selected: quality.code == selectedCode,
+                    onTap: () => onSelected(quality),
                   ),
                   const SizedBox(height: 10),
                 ],
-                const SizedBox(height: 12),
-                
-                // Server Info
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: c.card2.withValues(alpha: .5),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: c.border.withValues(alpha: .3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.dns_rounded, color: c.cyan, size: 20),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Current Server',
-                              style: TextStyle(
-                                color: c.muted,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              selectedStream.name,
-                              style: TextStyle(
-                                color: c.text,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.check_circle_rounded, color: c.cyan, size: 20),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
@@ -2793,128 +2469,65 @@ class _SettingsBottomSheet extends StatelessWidget {
       ),
     );
   }
-
-  List<HlsQuality> _createFallbackQualities() {
-    return [
-      HlsQuality(
-        label: 'Auto',
-        code: 'AUTO',
-        resolution: 'Adaptive',
-        url: selectedStream.url,
-        rank: 0,
-      ),
-      HlsQuality(
-        label: 'Full HD',
-        code: 'FHD',
-        resolution: '1080p',
-        url: selectedStream.url,
-        rank: 1,
-      ),
-      HlsQuality(
-        label: 'HD',
-        code: 'HD',
-        resolution: '720p',
-        url: selectedStream.url,
-        rank: 2,
-      ),
-      HlsQuality(
-        label: 'SD',
-        code: 'SD',
-        resolution: '480p',
-        url: selectedStream.url,
-        rank: 3,
-      ),
-      HlsQuality(
-        label: 'Low',
-        code: 'LOW',
-        resolution: '240p',
-        url: selectedStream.url,
-        rank: 4,
-      ),
-    ];
-  }
 }
 
-class _QualityOption extends StatelessWidget {
-  const _QualityOption({
-    required this.quality,
-    required this.selected,
-    required this.onTap,
+class _SheetHeader extends StatelessWidget {
+  const _SheetHeader({
+    required this.icon,
+    required this.title,
+    required this.onClose,
   });
 
-  final HlsQuality quality;
-  final bool selected;
-  final VoidCallback onTap;
+  final IconData icon;
+  final String title;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: selected
-              ? c.cyan.withValues(alpha: .12)
-              : c.card2.withValues(alpha: .3),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: selected ? c.cyan : c.border.withValues(alpha: .25),
-            width: selected ? 2 : 1,
-          ),
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: c.border.withValues(alpha: .4)),
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              gradient: c.primaryGradient,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                color: c.text,
+                fontWeight: FontWeight.w900,
+                fontSize: 20,
+              ),
+            ),
+          ),
+          InkWell(
+            onTap: onClose,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
-                color: selected ? c.cyan : c.card2,
+                color: c.card2,
                 borderRadius: BorderRadius.circular(12),
               ),
-              alignment: Alignment.center,
-              child: Text(
-                quality.code,
-                style: TextStyle(
-                  color: selected ? Colors.black : c.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 12,
-                ),
-              ),
+              child: Icon(Icons.close_rounded, color: c.text, size: 20),
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    quality.label,
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    quality.resolution,
-                    style: TextStyle(
-                      color: selected ? c.cyan : c.muted,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              selected ? Icons.check_circle_rounded : Icons.circle_outlined,
-              color: selected ? c.cyan : c.muted,
-              size: 24,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
