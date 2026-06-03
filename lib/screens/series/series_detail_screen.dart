@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
-import 'package:cricpro_flutter/app_theme.dart';
-import 'package:cricpro_flutter/api_models.dart';
-import 'package:cricpro_flutter/components.dart';
-import 'package:cricpro_flutter/models.dart';
-import 'package:cricpro_flutter/models/api_response.dart';
-import 'package:cricpro_flutter/models/cricket_match.dart';
-import 'package:cricpro_flutter/repositories/cricket_repository.dart';
-import 'package:cricpro_flutter/screens/match_details/match_details_screen.dart' hide apiMap;
-import 'package:cricpro_flutter/screens/teams/team_detail_screen.dart';
-import 'package:cricpro_flutter/widgets/squad.dart';
+import '../../app_theme.dart';
+import '../../components.dart';
+import '../../models.dart';
+import '../../models/api_models.dart';
+import '../../models/api_response.dart';
+import '../../models/cricket_match.dart';
+import '../../repositories/cricket_repository.dart';
+import '../match_details/match_details_screen.dart' hide apiMap;
+import '../teams/team_detail_screen.dart';
+import '../../widgets/squad.dart';
 
 class SeriesDetailScreen extends StatefulWidget {
   const SeriesDetailScreen({

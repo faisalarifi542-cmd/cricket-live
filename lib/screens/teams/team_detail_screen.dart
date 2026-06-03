@@ -7,6 +7,13 @@ import 'package:cricpro_flutter/models.dart';
 import 'package:cricpro_flutter/models/api_response.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 import 'package:cricpro_flutter/widgets/squad.dart';
+import '../../app_theme.dart';
+import '../../components.dart';
+import '../../models.dart';
+import '../../models/api_models.dart';
+import '../../models/api_response.dart';
+import '../../repositories/cricket_repository.dart';
+import '../../widgets/squad.dart';
 
 class TeamDetailScreen extends StatefulWidget {
   const TeamDetailScreen({
@@ -130,9 +137,25 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                                 .team(widget.teamId, forceRefresh: true)),
                       );
                     }
-                    return _TeamProfileView(
-                      team: team,
-                      sourceSeriesId: widget.sourceSeriesId,
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _TeamHero(team: team),
+                        const SizedBox(height: 16),
+                        PremiumSquad(
+                          playingXi: team.squad,
+                          bench: const [],
+                          title: 'Squad',
+                        ),
+                        const SizedBox(height: 16),
+                        _TeamSection(
+                          title: 'Recent matches',
+                          empty: 'Recent matches are not available yet.',
+                          items: team.recentMatches,
+                          itemBuilder: (item) =>
+                              _SimpleTeamRow(data: apiMap(item)),
+                        ),
+                      ],
                     );
                   },
                 ),

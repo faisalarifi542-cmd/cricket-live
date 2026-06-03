@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
-import 'package:cricpro_flutter/app_theme.dart';
-import 'package:cricpro_flutter/api_models.dart';
-import 'package:cricpro_flutter/components.dart';
-import 'package:cricpro_flutter/screens/player/player_detail_screen.dart';
+import '../app_theme.dart';
+import '../components.dart';
+import '../models/api_models.dart';
+import '../screens/player/player_detail_screen.dart';
 
 /// Premium role-grouped squad display.
 /// Accepts a flat list of raw player maps from the API and groups them
