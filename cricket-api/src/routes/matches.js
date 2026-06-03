@@ -3,6 +3,17 @@ import providerManager from '../providers/provider-manager.js';
 import { cacheMiddleware } from '../middleware/cache.js';
 import { indexMatchListItems, indexScheduleMatches, getMatchSummary, summaryToMatchDetail } from '../lib/match-index.js';
 import logger from '../lib/logger.js';
+import {
+  buildPublicAppConfig,
+  enrichMatchListWithStreams,
+  fetchActiveStreamsForMatch,
+  isLiveStreamingFeatureEnabled,
+  publicStreamDto,
+} from '../lib/public-app-state.js';
+import {
+  fetchManualMatchById,
+  mergeManualMatches,
+} from '../lib/manual-matches.js';
 
 /**
  * Match routes — /matches/*, /match/:id/*
@@ -130,6 +141,28 @@ export default async function matchRoutes(fastify) {
     };
   }
 
+  async function streamSummaryForMatch(id) {
+    const [config, streamRows] = await Promise.all([
+      buildPublicAppConfig().catch(() => ({ enableLiveStreaming: true })),
+      fetchActiveStreamsForMatch(id).catch(() => []),
+    ]);
+    const liveStreamsEnabled = isLiveStreamingFeatureEnabled(config);
+    const streams = liveStreamsEnabled
+      ? streamRows.map(publicStreamDto).filter(Boolean)
+      : [];
+    return {
+      hasLiveStream: streams.length > 0,
+      watchLiveEnabled: liveStreamsEnabled && streams.length > 0,
+      streamCount: streams.length,
+      isPremiumStreamAvailable: streams.some((stream) => stream.isPremium),
+      streamBadgeText: streams.length > 0
+        ? (streams.some((stream) => stream.isPremium) ? 'Premium' : 'LIVE STREAM')
+        : null,
+      defaultStreamId: streams[0]?.id || null,
+      streams,
+    };
+  }
+
   function ballsFromSummary(summary = '') {
     return String(summary)
       .split(/\s+/)
@@ -202,8 +235,9 @@ export default async function matchRoutes(fastify) {
         return result.data;
       }
     );
-    if (data?.length) indexMatchListItems(data).catch(() => {});
-    return { success: true, data: data || [] };
+    const merged = await mergeManualMatches(data || [], { status: 'live' });
+    if (merged?.length) indexMatchListItems(merged).catch(() => {});
+    return { success: true, data: await enrichMatchListWithStreams(merged, { allowReplay: false }).catch(() => merged) };
   });
 
   // GET /matches/upcoming
@@ -220,7 +254,7 @@ export default async function matchRoutes(fastify) {
       }
     );
     if (data?.length) indexMatchListItems(data).catch(() => {});
-    return { success: true, data: data || [] };
+    return { success: true, data: await enrichMatchListWithStreams(data || [], { allowReplay: false }).catch(() => data || []) };
   });
 
   // GET /matches/recent
@@ -228,7 +262,7 @@ export default async function matchRoutes(fastify) {
     schema: { description: 'Get recently completed matches', tags: ['Matches'] },
     preHandler: cacheMiddleware(KEYS.matchesList('recent'), TTL.RECENT),
   }, async (request, reply) => {
-    return { success: true, data: await fetchRecentMatches() };
+    return { success: true, data: await enrichMatchListWithStreams(await fetchRecentMatches(), { allowReplay: false }).catch(() => []) };
   });
 
   // GET /matches/finished — app-facing alias for /matches/recent
@@ -236,7 +270,7 @@ export default async function matchRoutes(fastify) {
     schema: { description: 'Get completed matches (alias of /matches/recent)', tags: ['Matches'] },
     preHandler: cacheMiddleware(KEYS.matchesList('recent'), TTL.RECENT),
   }, async () => {
-    return { success: true, data: await fetchRecentMatches() };
+    return { success: true, data: await enrichMatchListWithStreams(await fetchRecentMatches(), { allowReplay: false }).catch(() => []) };
   });
 
   // GET /match/:id
@@ -263,7 +297,10 @@ export default async function matchRoutes(fastify) {
         }
       );
 
-      if (data) return { success: true, data };
+      if (data) {
+        const summary = await streamSummaryForMatch(id);
+        return { success: true, data: { ...data, ...summary } };
+      }
     } catch {
       // Livescore endpoint failed — try matchHeader fallback for upcoming/preview matches
     }
@@ -271,14 +308,30 @@ export default async function matchRoutes(fastify) {
     // Fallback 2: try matchHeader from provider
     try {
       const headerResult = await providerManager.execute('getMatchHeader', id);
-      if (headerResult?.data) return { success: true, data: headerResult.data };
+      if (headerResult?.data) {
+        const summary = await streamSummaryForMatch(id);
+        return {
+          success: true,
+          data: {
+            ...headerResult.data,
+            ...summary,
+          },
+        };
+      }
     } catch { /* ignore */ }
 
     // Fallback 3: look up cached match summary (indexed from schedule/list endpoints)
     try {
       const summary = await getMatchSummary(id);
       if (summary && (summary.team1?.name || summary.team1?.short_name)) {
-        return { success: true, data: summaryToMatchDetail(summary) };
+        const streamSummary = await streamSummaryForMatch(id);
+        return {
+          success: true,
+          data: {
+            ...summaryToMatchDetail(summary),
+            ...streamSummary,
+          },
+        };
       }
     } catch { /* ignore */ }
 
@@ -291,10 +344,33 @@ export default async function matchRoutes(fastify) {
             await indexScheduleMatches(schedResult.data);
             const summary = await getMatchSummary(id);
             if (summary && (summary.team1?.name || summary.team1?.short_name)) {
-              return { success: true, data: summaryToMatchDetail(summary) };
+              const streamSummary = await streamSummaryForMatch(id);
+              return {
+                success: true,
+                data: {
+                  ...summaryToMatchDetail(summary),
+                  ...streamSummary,
+                },
+              };
             }
           }
         } catch { /* try next type */ }
+      }
+    } catch { /* ignore */ }
+
+    // Fallback 5: admin-controlled manual / test match
+    try {
+      const manual = await fetchManualMatchById(id);
+      if (manual) {
+        const detail = manualMatchToDetail(manual);
+        const streams = await streamSummaryForMatch(id);
+        return {
+          success: true,
+          data: {
+            ...detail,
+            ...streams,
+          },
+        };
       }
     } catch { /* ignore */ }
 
@@ -324,6 +400,13 @@ export default async function matchRoutes(fastify) {
         latest_performance: [],
         powerplay_data: [],
         last_updated: new Date().toISOString(),
+        hasLiveStream: false,
+        watchLiveEnabled: false,
+        streamCount: 0,
+        isPremiumStreamAvailable: false,
+        streamBadgeText: null,
+        defaultStreamId: null,
+        streams: [],
       },
     };
   });

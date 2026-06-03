@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
-import '../core/api/api_client.dart';
-import '../models/api_response.dart';
-import '../models/cricket_match.dart';
+import 'package:cricpro_flutter/core/api/api_client.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/models/cricket_match.dart';
 
 class CricketApiService {
   CricketApiService({ApiClient? client}) : _client = client ?? ApiClient();
@@ -143,7 +143,7 @@ class CricketApiService {
       _list('/news', query: {'limit': limit});
 
   Future<ApiEnvelope<Map<String, dynamic>>> newsDetail(String newsId) =>
-      _map('/news/$newsId');
+      _newsDetail('/news/$newsId');
 
   Future<ApiEnvelope<List<dynamic>>> rankings({
     String gender = 'men',
@@ -185,6 +185,20 @@ class CricketApiService {
         ..remove('meta')
         ..remove('error');
       return fallback;
+    });
+  }
+
+  Future<ApiEnvelope<Map<String, dynamic>>> _newsDetail(String path) async {
+    final json = await _client.get(path, allowFailure: true);
+    return ApiEnvelope.fromJson(json, (value) {
+      final map = value is Map<String, dynamic>
+          ? Map<String, dynamic>.from(value)
+          : <String, dynamic>{};
+      final message = json['message'];
+      if (message != null && message.toString().trim().isNotEmpty) {
+        map['message'] = message.toString().trim();
+      }
+      return map;
     });
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+
 class TeamInfo {
   const TeamInfo({
     required this.code,
@@ -237,24 +238,32 @@ class CompactFixture {
 
 class NewsArticle {
   const NewsArticle({
+    required this.id,
     required this.title,
     required this.subtitle,
     required this.source,
     required this.date,
     required this.tag,
+    this.body,
     this.asset,
     this.featured = false,
     this.breaking = false,
     this.timeAgo,
+    this.context,
+    this.storyType,
   });
 
+  final String id;
   final String title;
   final String subtitle;
   final String source;
   final String date;
   final String tag;
+  final String? body;
   final String? asset;
   final bool featured;
   final bool breaking;
   final String? timeAgo;
+  final String? context;
+  final String? storyType;
 }

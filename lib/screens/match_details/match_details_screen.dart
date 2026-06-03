@@ -157,6 +157,19 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                         );
                       }
                       final match = CricketMatch.fromJson(data);
+                      if (match.hasStreamInfo) {
+                        return FutureBuilder<bool>(
+                          future: _repository.shouldShowWatchLiveForMatch(match),
+                          builder: (context, streamSnapshot) =>
+                              MatchDetailHeroCard(
+                            match: match,
+                            showWatchLive: streamSnapshot.data == true,
+                            onWatchLive: widget.onWatchLive == null
+                                ? null
+                                : () => widget.onWatchLive!(_matchId),
+                          ),
+                        );
+                      }
                       return FutureBuilder<bool>(
                         future: _streamAvailabilityFuture,
                         builder: (context, streamSnapshot) =>
@@ -178,6 +191,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                       style: TextStyle(color: c.muted, height: 1.5),
                     ),
                   ),
+                const SizedBox(height: 16),
+                const NativeAdCard(placement: AdPlacement.matchDetails),
                 const SizedBox(height: 16),
                 // Match Details has 5 tabs which squeeze "Commentary" into
                 // "Comment…" on narrow widths. Use the scrollable variant so
@@ -233,6 +248,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen> {
                           ),
                   ),
                 ),
+                const SizedBox(height: 16),
+                const BannerAdWidget(placement: AdPlacement.matchDetails),
               ],
             ),
           ),

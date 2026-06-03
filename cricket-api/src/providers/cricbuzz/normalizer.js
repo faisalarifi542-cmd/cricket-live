@@ -952,6 +952,16 @@ export function normalizeMatchStats(raw) {
  */
 // --- News normalizers ---
 
+function makeNewsSlug(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&amp;/g, 'and')
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+}
+
 export function normalizeNewsStories(raw) {
   if (!raw || !raw.paginatedData) return { stories: [], nextCursor: null, nextPaginationURL: null };
 
@@ -959,6 +969,12 @@ export function normalizeNewsStories(raw) {
     .filter((s) => s.id && s.headline)
     .map((s) => {
       const imageId = s.imageDetails?.imageId || null;
+      const storyUrl =
+        s.appIndex?.webURL ||
+        s.webURL ||
+        s.url ||
+        s.storyUrl ||
+        (s.id && s.headline ? `/cricket-news/${s.id}/${makeNewsSlug(s.headline)}` : '');
       return {
         id: String(s.id),
         context: s.context || '',
@@ -968,7 +984,8 @@ export function normalizeNewsStories(raw) {
         storyType: s.storyType || '',
         isPremium: !!(s.isCbPlusContent && !s.isPremiumFree),
         imageId: imageId ? String(imageId) : null,
-        imageUrl: getCricbuzzImageUrl(imageId, 'i1'),
+        imageUrl: getCricbuzzImageUrl(imageId, 'i3'),
+        storyUrl,
         isNewsPage: s.isNewsPage || false,
       };
     });
@@ -982,6 +999,53 @@ export function normalizeNewsStories(raw) {
   }
 
   return { stories, nextCursor, nextPaginationURL: nextUrl };
+}
+
+export function normalizeNewsDetail(raw, fallbackStory = null) {
+  if (!raw && !fallbackStory) return null;
+  const detail = raw || {};
+  const fallback = fallbackStory || {};
+  const paragraphs = [];
+  const paragraphInput = Array.isArray(detail.paragraphs) ? detail.paragraphs : [];
+  for (const paragraph of paragraphInput) {
+    const clean = String(paragraph || '').trim();
+    if (clean) paragraphs.push(clean);
+  }
+  const body = paragraphs.length
+    ? paragraphs.join('\n\n')
+    : String(detail.body || detail.content || fallback.body || '').trim();
+  const imageId = detail.imageId || detail.image_id || fallback.imageId || fallback.image_id || null;
+  const imageUrl = detail.imageUrl || detail.image_url || fallback.imageUrl || fallback.image_url || getCricbuzzImageUrl(imageId, 'i3');
+  const relatedStories = Array.isArray(detail.relatedStories)
+    ? detail.relatedStories.map((story) => {
+        const relatedImageId = story.imageId || story.image_id || null;
+        return {
+          id: String(story.id || ''),
+          headline: story.headline || story.hline || '',
+          intro: story.intro || '',
+          context: story.context || '',
+          publishedTime: story.publishedTime || story.pubTime || '',
+          imageId: relatedImageId ? String(relatedImageId) : null,
+          imageUrl: story.imageUrl || story.image_url || getCricbuzzImageUrl(relatedImageId, 'i3'),
+        };
+      })
+    : [];
+
+  return {
+    id: String(detail.id || fallback.id || ''),
+    headline: detail.headline || fallback.headline || '',
+    intro: detail.intro || fallback.intro || '',
+    body: body || null,
+    paragraphs,
+    source: detail.source || fallback.source || 'Cricbuzz',
+    context: detail.context || fallback.context || '',
+    publishedTime: detail.publishedTime || fallback.publishedTime || '',
+    storyType: detail.storyType || fallback.storyType || 'News',
+    imageId: imageId ? String(imageId) : null,
+    imageUrl,
+    storyUrl: detail.storyUrl || fallback.storyUrl || '',
+    relatedStories,
+  };
 }
 
 // --- Series stats normalizers ---

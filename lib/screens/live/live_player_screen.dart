@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models/ad_config.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/services/ad_service.dart';
+import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
+import 'package:cricpro_flutter/widgets/ads/rewarded_ad_manager.dart';
 
 class LivePlayerScreen extends StatefulWidget {
   const LivePlayerScreen({super.key, this.matchId = ''});
@@ -33,6 +37,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   List<HlsQuality> _hlsQualities = [];
   HlsQuality? _selectedQuality;
   bool _isMuted = false;
+  final Set<String> _rewardUnlockedStreamIds = <String>{};
 
   bool get _hasMatchId => widget.matchId.isNotEmpty;
 
@@ -63,6 +68,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   }
 
   Future<void> _selectStream(StreamSource stream) async {
+    if (await _requiresRewardedUnlock(stream)) {
+      final allowed = await _showRewardedUnlock(stream);
+      if (!allowed) return;
+    }
     setState(() {
       _selectedStream = stream;
       _playerError = null;
@@ -70,6 +79,54 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       _selectedQuality = null;
     });
     await _loadStream(stream);
+  }
+
+  Future<bool> _requiresRewardedUnlock(StreamSource stream) async {
+    if (!stream.isPremium || !stream.requiresRewardAd) return false;
+    if (_rewardUnlockedStreamIds.contains(_rewardKey(stream))) return false;
+    return AdService.instance.config.rewardedRequiredForPremiumStreams ||
+        AdService.instance.config.canShowRewarded;
+  }
+
+  String _rewardKey(StreamSource stream) => '${widget.matchId}:${stream.id}';
+
+  Future<bool> _showRewardedUnlock(StreamSource stream) async {
+    final c = context.cric;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: c.card,
+        title: Text('Unlock premium stream', style: TextStyle(color: c.text)),
+        content: Text(
+          'Watch a rewarded ad to unlock this stream for the current match session.',
+          style: TextStyle(color: c.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Watch ad'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return false;
+    final earned = await RewardedAdManager.instance.showForUnlock();
+    if (earned) {
+      _rewardUnlockedStreamIds.add(_rewardKey(stream));
+      return true;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Rewarded ad was not completed. Please try again.'),
+        ),
+      );
+    }
+    return false;
   }
 
   Future<void> _loadStream(StreamSource stream, {HlsQuality? quality}) async {
@@ -95,6 +152,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       return;
     }
 
+    // TODO: Add a player backend that supports DASH/MPD, DRM, and request
+    // headers. The current video_player path keeps HLS playback stable.
     // Parse HLS qualities if this is an HLS stream and no quality selected yet
     if (stream.isHls && quality == null && _hlsQualities.isEmpty) {
       await _parseHlsQualities(stream.url);
@@ -425,6 +484,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
                   selectedId: _selectedStream?.id,
                   onSelect: _selectStream,
                 ),
+                const SizedBox(height: 16),
+                const BannerAdWidget(placement: AdPlacement.livePlayer),
               ],
             ),
           ),
@@ -2227,11 +2288,8 @@ class _StreamsUnavailable extends StatelessWidget {
     return FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
       future: appConfigFuture,
       builder: (context, snapshot) {
-        final config = apiMap(snapshot.data?.data);
-        final message = apiString(
-          config['streamUnavailableMessage'],
-          'Live stream will be available closer to match time.',
-        );
+        final config = AppConfig.fromJson(snapshot.data?.data);
+        final message = config.streamUnavailableMessage;
         return PremiumCard(
           padding: const EdgeInsets.all(20),
           child: Column(

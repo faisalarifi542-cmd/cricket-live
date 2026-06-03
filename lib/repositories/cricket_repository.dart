@@ -1,7 +1,7 @@
-import '../models/api_response.dart';
-import '../models/api_models.dart';
-import '../models/cricket_match.dart';
-import '../services/cricket_api_service.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/models/cricket_match.dart';
+import 'package:cricpro_flutter/services/cricket_api_service.dart';
 
 class CricketRepository {
   CricketRepository({CricketApiService? service})
@@ -81,13 +81,33 @@ class CricketRepository {
   Future<bool> hasPlayableStreams(String matchId,
       {bool forceRefresh = false}) async {
     if (matchId.isEmpty) return false;
+    final config = await appConfig();
+    if (!AppConfig.fromJson(config.data).liveStreamingEnabled) return false;
     final response = await matchStreams(matchId, forceRefresh: forceRefresh);
     final data = apiMap(response.data);
     final streams = apiList(data['streams'])
         .map(StreamSource.fromJson)
         .where((stream) => stream.url.isNotEmpty)
         .toList();
-    return data['hasStreams'] == true || streams.isNotEmpty;
+    return apiBool(data['hasStream']) ||
+        apiBool(data['hasStreams']) ||
+        streams.isNotEmpty;
+  }
+
+  bool shouldShowWatchLive(CricketMatch match, AppConfig appConfig) {
+    return appConfig.liveStreamingEnabled &&
+        match.watchLiveEnabled &&
+        match.hasLiveStream;
+  }
+
+  Future<bool> shouldShowWatchLiveForMatch(CricketMatch match,
+      {bool forceRefresh = false}) async {
+    if (match.id.isEmpty) return false;
+    if (!match.hasStreamInfo) {
+      return hasPlayableStreams(match.id, forceRefresh: forceRefresh);
+    }
+    final config = await appConfig(forceRefresh: forceRefresh);
+    return shouldShowWatchLive(match, AppConfig.fromJson(config.data));
   }
 
   Future<ApiEnvelope<List<dynamic>>> schedule(
@@ -135,6 +155,12 @@ class CricketRepository {
         data: response.data.map(NewsStory.fromJson).toList(),
         meta: response.meta);
   }
+
+  Future<ApiEnvelope<Map<String, dynamic>>> newsDetail(String newsId,
+          {bool forceRefresh = false}) =>
+      _cached('news:detail:$newsId', const Duration(minutes: 10),
+          () => _service.newsDetail(newsId),
+          forceRefresh: forceRefresh);
 
   Future<ApiEnvelope<List<RankingEntry>>> rankings({
     String gender = 'men',

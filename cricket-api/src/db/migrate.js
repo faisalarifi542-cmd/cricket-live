@@ -378,24 +378,37 @@ const TABLES = [
   `CREATE TABLE IF NOT EXISTS match_streams (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     match_external_id VARCHAR(80) NOT NULL,
+    match_title VARCHAR(250),
     title VARCHAR(250),
+    team_a VARCHAR(180),
+    team_b VARCHAR(180),
     quality ENUM('AUTO','FHD','HD','SD') DEFAULT 'AUTO',
     label VARCHAR(80),
     language VARCHAR(80) DEFAULT 'English',
     server_id INT,
     server_name VARCHAR(160),
-    stream_type ENUM('hls','dash','iframe','external') DEFAULT 'hls',
+    stream_type ENUM('hls','dash','mpd','iframe','external') DEFAULT 'hls',
     stream_url TEXT NOT NULL,
+    backup_stream_url TEXT,
     is_active TINYINT(1) DEFAULT 1,
     is_premium TINYINT(1) DEFAULT 0,
+    requires_reward_ad TINYINT(1) DEFAULT 0,
+    requires_login TINYINT(1) DEFAULT 0,
     priority INT DEFAULT 100,
     status ENUM('working','slow','down','unknown') DEFAULT 'unknown',
     starts_at DATETIME,
     ends_at DATETIME,
     geo_blocked_countries JSON,
+    headers_json JSON,
     user_agent_header VARCHAR(400),
     referer_header VARCHAR(400),
+    origin_header VARCHAR(400),
     drm_enabled TINYINT(1) DEFAULT 0,
+    drm_type VARCHAR(40) DEFAULT 'none',
+    drm_license_url TEXT,
+    drm_headers JSON,
+    clear_key_key_id VARCHAR(220),
+    clear_key_key TEXT,
     notes TEXT,
     last_status_at DATETIME,
     created_by INT,
@@ -570,6 +583,42 @@ const TABLES = [
     FOREIGN KEY (notification_id) REFERENCES push_notifications(id) ON DELETE SET NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  `CREATE TABLE IF NOT EXISTS app_devices (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    subscription_id VARCHAR(220) UNIQUE NOT NULL,
+    push_token TEXT,
+    platform VARCHAR(40) DEFAULT 'unknown',
+    app_version VARCHAR(60),
+    build_number VARCHAR(60),
+    language VARCHAR(40),
+    permission_status VARCHAR(40) DEFAULT 'unknown',
+    metadata JSON,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_app_devices_platform (platform),
+    INDEX idx_app_devices_seen (last_seen_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS notification_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    notification_id BIGINT,
+    provider VARCHAR(80) DEFAULT 'onesignal',
+    target_type VARCHAR(80) DEFAULT 'all',
+    target_value VARCHAR(220),
+    title VARCHAR(220),
+    body TEXT,
+    payload JSON,
+    provider_response JSON,
+    status VARCHAR(40) DEFAULT 'pending',
+    sent_count INT DEFAULT 0,
+    failed_count INT DEFAULT 0,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_history_created (created_at),
+    INDEX idx_notification_history_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS ad_settings (
     id INT AUTO_INCREMENT PRIMARY KEY,
     setting_key VARCHAR(120) UNIQUE NOT NULL,
@@ -641,6 +690,30 @@ const TABLES = [
     created_by INT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  `CREATE TABLE IF NOT EXISTS manual_matches (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    match_external_id VARCHAR(50) UNIQUE NOT NULL,
+    title VARCHAR(300),
+    team1_name VARCHAR(200),
+    team2_name VARCHAR(200),
+    team1_short VARCHAR(20),
+    team2_short VARCHAR(20),
+    team1_logo_url TEXT,
+    team2_logo_url TEXT,
+    status VARCHAR(30) DEFAULT 'live',
+    match_state VARCHAR(30) DEFAULT 'live',
+    venue VARCHAR(300),
+    start_time DATETIME,
+    is_live TINYINT(1) DEFAULT 1,
+    is_test TINYINT(1) DEFAULT 1,
+    is_enabled TINYINT(1) DEFAULT 1,
+    sort_order INT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_manual_enabled (is_enabled, status),
+    INDEX idx_manual_external (match_external_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 async function migrate() {
@@ -697,6 +770,58 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'admin_users', 'locked_until', 'locked_until DATETIME NULL');
   await addColumnIfMissing(pool, 'admin_users', 'last_login_at', 'last_login_at DATETIME NULL');
   await addColumnIfMissing(pool, 'admin_users', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+
+  await addColumnIfMissing(pool, 'match_streams', 'match_title', 'match_title VARCHAR(250) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'team_a', 'team_a VARCHAR(180) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'team_b', 'team_b VARCHAR(180) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'backup_stream_url', 'backup_stream_url TEXT NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'requires_reward_ad', 'requires_reward_ad TINYINT(1) DEFAULT 0');
+  await addColumnIfMissing(pool, 'match_streams', 'requires_login', 'requires_login TINYINT(1) DEFAULT 0');
+  await addColumnIfMissing(pool, 'match_streams', 'headers_json', 'headers_json JSON NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'origin_header', 'origin_header VARCHAR(400) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'drm_type', "drm_type VARCHAR(40) DEFAULT 'none'");
+  await addColumnIfMissing(pool, 'match_streams', 'drm_license_url', 'drm_license_url TEXT NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'drm_headers', 'drm_headers JSON NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'clear_key_key_id', 'clear_key_key_id VARCHAR(220) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'clear_key_key', 'clear_key_key TEXT NULL');
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_devices (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    subscription_id VARCHAR(220) UNIQUE NOT NULL,
+    push_token TEXT,
+    platform VARCHAR(40) DEFAULT 'unknown',
+    app_version VARCHAR(60),
+    build_number VARCHAR(60),
+    language VARCHAR(40),
+    permission_status VARCHAR(40) DEFAULT 'unknown',
+    metadata JSON,
+    last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_app_devices_platform (platform),
+    INDEX idx_app_devices_seen (last_seen_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(() => null);
+  await pool.query(`CREATE TABLE IF NOT EXISTS notification_history (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    notification_id BIGINT,
+    provider VARCHAR(80) DEFAULT 'onesignal',
+    target_type VARCHAR(80) DEFAULT 'all',
+    target_value VARCHAR(220),
+    title VARCHAR(220),
+    body TEXT,
+    payload JSON,
+    provider_response JSON,
+    status VARCHAR(40) DEFAULT 'pending',
+    sent_count INT DEFAULT 0,
+    failed_count INT DEFAULT 0,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_history_created (created_at),
+    INDEX idx_notification_history_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(() => null);
+  await addColumnIfMissing(pool, 'push_notifications', 'payload', 'payload JSON NULL');
+  await addColumnIfMissing(pool, 'push_notifications', 'provider_response', 'provider_response JSON NULL');
+  await addColumnIfMissing(pool, 'push_notifications', 'error_message', 'error_message TEXT NULL');
 
   await addColumnIfMissing(pool, 'cache_events', 'cache_key', 'cache_key VARCHAR(300) NULL');
   await addColumnIfMissing(pool, 'cache_events', 'data_type', 'data_type VARCHAR(80) NULL');

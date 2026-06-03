@@ -1,5 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/widgets/squad.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models.dart';
@@ -98,6 +105,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                       );
                     }
                     if (snapshot.hasError) {
+                      final fallback = _fallbackTeam();
+                      if (fallback != null) {
+                        return _TeamProfileView(
+                          team: fallback,
+                          sourceSeriesId: widget.sourceSeriesId,
+                        );
+                      }
                       return _TeamStateCard(
                         text: 'Unable to load team profile. Pull to retry.',
                         onRetry: widget.teamId.isEmpty
@@ -108,6 +122,13 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     }
                     final team = snapshot.data?.data;
                     if (team == null || team.id.isEmpty) {
+                      final fallback = _fallbackTeam();
+                      if (fallback != null) {
+                        return _TeamProfileView(
+                          team: fallback,
+                          sourceSeriesId: widget.sourceSeriesId,
+                        );
+                      }
                       return _TeamStateCard(
                         text: 'Team profile is not available yet.',
                         onRetry: widget.teamId.isEmpty
@@ -143,6 +164,63 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  ApiTeamProfile? _fallbackTeam() {
+    final name = widget.initialName?.trim() ?? '';
+    final shortName = widget.initialShortName?.trim() ?? '';
+    final logo = widget.initialLogoUrl?.trim() ?? '';
+    if (name.isEmpty && shortName.isEmpty && logo.isEmpty) return null;
+    return ApiTeamProfile(
+      id: widget.teamId,
+      name: name.isNotEmpty ? name : (shortName.isNotEmpty ? shortName : 'Team'),
+      shortName: shortName.isNotEmpty ? shortName : null,
+      logo: logo.isNotEmpty ? logo : null,
+      squad: const [],
+      recentMatches: const [],
+      series: widget.sourceSeriesId == null
+          ? const []
+          : [
+              {'seriesId': widget.sourceSeriesId},
+            ],
+    );
+  }
+}
+
+class _TeamProfileView extends StatelessWidget {
+  const _TeamProfileView({required this.team, this.sourceSeriesId});
+
+  final ApiTeamProfile team;
+  final String? sourceSeriesId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TeamHero(team: team),
+        const SizedBox(height: 16),
+        PremiumSquad(
+          playingXi: team.squad,
+          bench: const [],
+          title: 'Squad',
+        ),
+        const SizedBox(height: 16),
+        _TeamSection(
+          title: 'Recent matches',
+          empty: 'Recent matches are not available yet.',
+          items: team.recentMatches,
+          itemBuilder: (item) => _SimpleTeamRow(data: apiMap(item)),
+        ),
+        if (sourceSeriesId != null) ...[
+          const SizedBox(height: 16),
+          const _TeamStateCard(
+            text: 'Team profile loaded from series context. Full team stats are not available yet.',
+            onRetry: null,
+          ),
+        ],
+      ],
     );
   }
 }

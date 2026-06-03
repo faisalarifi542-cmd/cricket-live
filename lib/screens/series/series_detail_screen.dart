@@ -1050,11 +1050,21 @@ class _SeriesMatchCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (title != null) ...[
-            Text(title!,
-                style: TextStyle(color: c.cyan, fontWeight: FontWeight.w900)),
+            Row(
+              children: [
+                Text(
+                  title!,
+                  style: TextStyle(
+                      color: c.cyan, fontWeight: FontWeight.w900, fontSize: 13),
+                ),
+                const Spacer(),
+                _ChipText(text: formatStatusChip(match.status)),
+              ],
+            ),
             const SizedBox(height: 8),
           ],
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               TeamBadge(
                 TeamInfo(
@@ -1064,16 +1074,36 @@ class _SeriesMatchCard extends StatelessWidget {
                   color: c.cyan,
                   asset: match.teamALogo,
                 ),
-                size: 38,
+                size: 42,
                 borderColor: c.border,
               ),
               const SizedBox(width: 10),
               Expanded(
-                  child: Text('${match.teamA} vs ${match.teamB}',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${match.teamA} vs ${match.teamB}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: c.text,
                           fontWeight: FontWeight.w900,
-                          fontSize: 16))),
+                          fontSize: 15.5),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      match.venue,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: c.muted,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(width: 10),
               TeamBadge(
                 TeamInfo(
@@ -1083,18 +1113,15 @@ class _SeriesMatchCard extends StatelessWidget {
                   color: c.warning,
                   asset: match.teamBLogo,
                 ),
-                size: 38,
+                size: 42,
                 borderColor: c.border,
               ),
-              const SizedBox(width: 10),
-              _ChipText(text: formatStatusChip(match.status)),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(match.venue,
-              style: TextStyle(color: c.muted, fontWeight: FontWeight.w700)),
-          if (startText.isNotEmpty)
+          if (startText.isNotEmpty) ...[
+            const SizedBox(height: 8),
             Text(startText, style: TextStyle(color: c.muted, fontSize: 12)),
+          ],
         ],
       ),
     );

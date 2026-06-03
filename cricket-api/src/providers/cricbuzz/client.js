@@ -605,7 +605,61 @@ export const cricbuzzApi = {
   // --- News APIs ---
   async getNewsStories(cursor) {
     const path = buildNewsPath(cursor);
-    return request(apiClient, path);
+    if (path) {
+      return request(apiClient, path);
+    }
+
+    const html = await request(htmlClient, '/cricket-news/latest-news', { responseType: 'text' });
+    const latest = extractNewsCardsFromHtml(html);
+    if (latest?.paginatedData?.length) {
+      return latest;
+    }
+
+    logger.warn({ msg: 'Cricbuzz latest news page did not expose story cards; trying API fallback from page links' });
+    const fallbackCursor = extractLatestNewsCursorFromHtml(html);
+    if (fallbackCursor) {
+      return request(apiClient, `/cricket-news/${fallbackCursor}/latest-news`);
+    }
+
+    return { paginatedData: [], nextPaginationURL: null, source: 'cricbuzz-latest-page' };
+  },
+
+  async getNewsDetail(newsId, story = null) {
+    const id = String(newsId || '').trim();
+    if (!id) return null;
+
+    const candidates = [];
+    const storyPath = normalizeCricbuzzPath(story?.storyUrl || story?.url || story?.webURL);
+    if (storyPath) candidates.push(storyPath);
+
+    const slug = makeNewsSlug(story?.headline || story?.title || story?.seoHeadline || '');
+    if (slug) candidates.push(`/cricket-news/${id}/${slug}`);
+    candidates.push(`/cricket-news/${id}`);
+
+    const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+    let lastError = null;
+
+    for (const path of uniqueCandidates) {
+      try {
+        const html = await request(htmlClient, path, { responseType: 'text' });
+        const detail = extractNewsDetailFromHtml(html);
+        if (detail) {
+          const canonical = extractHtmlAttribute(html, /<link[^>]+rel=["']canonical["'][^>]*>/i, 'href');
+          const ogUrl = extractMetaContent(html, 'og:url');
+          return {
+            ...detail,
+            storyUrl: canonical || ogUrl || `https://www.cricbuzz.com${path}`,
+            htmlPath: path,
+          };
+        }
+      } catch (err) {
+        lastError = err;
+        logger.debug({ msg: 'Cricbuzz news detail fetch failed', newsId: id, path, error: err.message });
+      }
+    }
+
+    if (lastError) throw lastError;
+    return null;
   },
 
   async getRankings({ gender = 'men', category = 'batting', format = 'test' } = {}) {
@@ -805,11 +859,273 @@ function decodeNextPayloadText(html = '') {
     .replace(/\\\//g, '/');
 }
 
+function normalizeCricbuzzPath(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      return new URL(text).pathname;
+    } catch {
+      return '';
+    }
+  }
+  if (text.startsWith('/')) return text;
+  return `/${text}`;
+}
+
+function makeNewsSlug(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&amp;/g, 'and')
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+}
+
+function extractHtmlAttribute(html = '', regex, attribute) {
+  const match = String(html || '').match(regex);
+  if (!match) return '';
+  const source = match[0];
+  const attrMatch = source.match(new RegExp(`${attribute}=["']([^"']+)["']`, 'i'));
+  return attrMatch?.[1] ? decodeHtmlEntities(attrMatch[1]) : '';
+}
+
+function extractMetaContent(html = '', name) {
+  const regex = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*content=["']([^"']+)["'][^>]*>`,
+    'i'
+  );
+  const match = String(html || '').match(regex);
+  return match?.[1] ? decodeHtmlEntities(match[1]) : '';
+}
+
+function extractBalancedJsonObject(text = '', marker = '') {
+  const source = String(text || '');
+  const idx = source.indexOf(marker);
+  if (idx < 0) return null;
+  const start = source.indexOf('{', idx);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function extractBalancedJsonArray(text = '', marker = '') {
+  const source = String(text || '');
+  const idx = source.indexOf(marker);
+  if (idx < 0) return null;
+  const start = source.indexOf('[', idx);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '[') depth += 1;
+    if (ch === ']') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function parseNewsDetailPayload(payload = '') {
+  const detailText = extractBalancedJsonObject(payload, '"newsDetail":');
+  if (!detailText) return null;
+  try {
+    return JSON.parse(detailText);
+  } catch (err) {
+    logger.debug({ msg: 'Failed to parse Cricbuzz news detail JSON', error: err.message });
+    return null;
+  }
+}
+
+function parseNewsCardsPayload(payload = '') {
+  const cardsText = extractBalancedJsonArray(payload, '"newsCardsData":');
+  if (!cardsText) return [];
+  try {
+    const parsed = JSON.parse(cardsText);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    logger.debug({ msg: 'Failed to parse Cricbuzz latest news cards JSON', error: err.message });
+    return [];
+  }
+}
+
+function extractNextPayloadsFromHtml(html = '') {
+  const scripts = String(html || '').match(/<script>(self\.__next_f\.push\((.*?)\))<\/script>/gs) || [];
+  const payloads = [];
+  for (const script of scripts) {
+    const raw = script.match(/self\.__next_f\.push\((.*?)\)<\/script>/s)?.[1];
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      const payload = parsed?.[1];
+      if (typeof payload === 'string') payloads.push(payload);
+    } catch {
+      continue;
+    }
+  }
+  return payloads;
+}
+
+function extractNewsCardsFromHtml(html = '') {
+  const stories = [];
+  const seen = new Set();
+
+  for (const payload of extractNextPayloadsFromHtml(html)) {
+    if (!payload.includes('"newsCardsData":')) continue;
+    for (const story of parseNewsCardsPayload(payload)) {
+      const id = String(story?.id || '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      stories.push(story);
+    }
+  }
+
+  const last = stories[stories.length - 1];
+  return {
+    paginatedData: stories,
+    nextPaginationURL: last?.id ? `/api/cricket-news/${last.id}/latest-news` : null,
+    source: 'cricbuzz-latest-page',
+  };
+}
+
+function extractLatestNewsCursorFromHtml(html = '') {
+  const match = String(html || '').match(/\/api\/cricket-news\/(\d+)\/latest-news/i);
+  return match?.[1] || null;
+}
+
+function extractNewsDetailFromHtml(html = '') {
+  for (const payload of extractNextPayloadsFromHtml(html)) {
+    try {
+      if (!payload.includes('"newsDetail":')) continue;
+      const detail = parseNewsDetailPayload(payload);
+      if (detail) {
+        detail.imageUrl = detail.imageUrl || extractMetaContent(html, 'og:image') || extractMetaContent(html, 'twitter:image');
+        return normalizeNewsDetailFields(detail);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const detail = {};
+  const headline = extractMetaContent(html, 'og:title') || extractHtmlText(html, /<h1[^>]*>(.*?)<\/h1>/is);
+  const intro = extractMetaContent(html, 'description') || extractMetaContent(html, 'og:description');
+  const imageUrl = extractMetaContent(html, 'og:image') || extractMetaContent(html, 'twitter:image');
+  if (headline || intro || imageUrl) {
+    detail.id = '';
+    detail.headline = headline;
+    detail.intro = intro;
+    detail.body = '';
+    detail.paragraphs = [];
+    detail.imageUrl = imageUrl || '';
+    return normalizeNewsDetailFields(detail);
+  }
+  return null;
+}
+
+function extractHtmlText(html = '', regex) {
+  const match = String(html || '').match(regex);
+  if (!match?.[1]) return '';
+  return decodeHtmlEntities(match[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+}
+
+function normalizeNewsDetailFields(detail = {}) {
+  const paragraphs = [];
+  const contentBlocks = Array.isArray(detail.content) ? detail.content : [];
+  for (const block of contentBlocks) {
+    const text = block?.content?.contentValue || block?.contentValue || block?.text || block?.paragraph || '';
+    const clean = decodeHtmlEntities(String(text || '').replace(/\s+/g, ' ').trim());
+    if (clean) paragraphs.push(clean);
+  }
+  if (Array.isArray(detail.paragraphs)) {
+    for (const paragraph of detail.paragraphs) {
+      const clean = decodeHtmlEntities(String(paragraph || '').replace(/\s+/g, ' ').trim());
+      if (clean) paragraphs.push(clean);
+    }
+  }
+
+  const relatedStories = Array.isArray(detail.relatedNews)
+    ? detail.relatedNews.map((story) => ({
+        id: String(story.id || ''),
+        headline: story.hline || story.headline || '',
+        intro: story.intro || '',
+        context: story.context || '',
+        publishedTime: story.pubTime || story.publishedTime || '',
+        imageId: story.imageId ? String(story.imageId) : (story.coverImage?.id ? String(story.coverImage.id) : null),
+        imageUrl: story.imageUrl || (story.imageId ? `https://static.cricbuzz.com/a/img/v1/i3/c${story.imageId}/i.jpg` : ''),
+      }))
+    : [];
+
+  const imageId = detail.coverImage?.id || detail.imageId || detail.image_id || null;
+  const imageUrl = detail.imageUrl || detail.coverImage?.imageUrl || detail.coverImage?.sourceUrl || (imageId ? `https://static.cricbuzz.com/a/img/v1/i3/c${imageId}/i.jpg` : '');
+
+  return {
+    id: String(detail.id || ''),
+    headline: detail.headline || detail.hline || '',
+    intro: detail.intro || '',
+    body: paragraphs.length ? paragraphs.join('\n\n') : (detail.body || ''),
+    paragraphs,
+    source: detail.source || 'Cricbuzz',
+    context: detail.context || '',
+    publishedTime: detail.publishTime || detail.publishedTime || detail.lastUpdatedTime || '',
+    imageId: imageId ? String(imageId) : null,
+    imageUrl: imageUrl || '',
+    relatedStories,
+    storyType: detail.storyType || 'News',
+    storyUrl: detail.storyUrl || '',
+  };
+}
+
 function buildNewsPath(cursor) {
-  const fallback = '/cricket-news/138966/latest-news';
-  if (!cursor) return fallback;
+  if (!cursor) return '';
   const raw = String(cursor).trim();
-  if (!raw) return fallback;
+  if (!raw) return '';
 
   if (raw.startsWith('/api/cricket-news/')) {
     return raw.replace(/^\/api/, '');
@@ -820,7 +1136,7 @@ function buildNewsPath(cursor) {
   if (urlMatch) return `/cricket-news/${urlMatch[1]}/${urlMatch[2]}`;
 
   const idMatch = raw.match(/\d+/);
-  return idMatch ? `/cricket-news/${idMatch[0]}/latest-news` : fallback;
+  return idMatch ? `/cricket-news/${idMatch[0]}/latest-news` : '';
 }
 
 function normalizeRankingGender(value) {

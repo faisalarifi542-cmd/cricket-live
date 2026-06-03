@@ -20,6 +20,7 @@ import {
   DatabaseZap,
   SlidersHorizontal,
   HeartPulse,
+  FlaskConical,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -39,6 +40,7 @@ export const navigation: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: Gauge, permission: 'dashboard.view', group: 'live' },
   { label: 'Matches', href: '/matches', icon: Trophy, permission: 'matches.view', group: 'live' },
   { label: 'Live Streams', href: '/streams', icon: PlaySquare, permission: 'streams.view', group: 'live' },
+  { label: 'Manual Matches', href: '/manual-matches', icon: FlaskConical, permission: 'matches.view', group: 'live' },
   { label: 'API Providers', href: '/providers', icon: Radio, permission: 'providers.view', group: 'live' },
   { label: 'API Keys', href: '/api-keys', icon: KeyRound, permission: 'apiKeys.view', group: 'live' },
 
@@ -72,8 +74,9 @@ export const navigationGroups: { id: NavItem['group']; label: string }[] = [
 ];
 
 export const STREAM_QUALITIES = ['AUTO', 'FHD', 'HD', 'SD'] as const;
-export const STREAM_TYPES = ['hls', 'dash', 'iframe', 'external'] as const;
+export const STREAM_TYPES = ['hls', 'dash', 'mpd', 'iframe', 'external'] as const;
 export const STREAM_STATUSES = ['unknown', 'working', 'slow', 'down'] as const;
+export const DRM_TYPES = ['none', 'clearkey', 'widevine', 'fairplay', 'aes128'] as const;
 
 export const PROVIDER_HEALTH = ['unknown', 'healthy', 'degraded', 'down'] as const;
 export const API_KEY_TIERS = ['free', 'standard', 'premium', 'unlimited'] as const;
@@ -113,7 +116,7 @@ export const NOTIFICATION_TARGETS = [
 export const NOTIFICATION_DEEP_LINKS = [
   { id: 'home', label: 'Home' },
   { id: 'match', label: 'Match details' },
-  { id: 'live', label: 'Live player' },
+  { id: 'live_stream', label: 'Live player' },
   { id: 'series', label: 'Series' },
   { id: 'news', label: 'News article' },
   { id: 'schedule', label: 'Schedule' },

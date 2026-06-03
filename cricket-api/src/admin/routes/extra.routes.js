@@ -12,6 +12,7 @@ import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import { getRedis } from '../../lib/redis.js';
+import { recordNotificationHistory, sendOneSignalNotification } from '../../lib/onesignal.js';
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../rbac.js';
 
 async function clearPattern(redis, pattern) {
@@ -169,18 +170,44 @@ export default async function extraAdminRoutes(fastify) {
   fastify.post('/notifications/:id/send', { preHandler: [requirePermissions('notifications.write')] }, async (request, reply) => {
     const rows = await query(`SELECT * FROM push_notifications WHERE id = ?`, [request.params.id]);
     if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const notification = rows[0];
+    let providerResult = null;
     await withAudit(
       request,
       { action: 'notification.send', entityType: 'push_notification', entityId: request.params.id },
       async () => {
-        await query(`UPDATE push_notifications SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?`, [request.params.id]);
+        providerResult = await sendOneSignalNotification(notification);
         await query(
-          `INSERT INTO notification_campaigns (notification_id, provider, status, sent_count) VALUES (?, 'fcm', 'queued', 0)`,
-          [request.params.id],
+          `UPDATE push_notifications SET status = 'sent', sent_at = CURRENT_TIMESTAMP, provider_response = ? WHERE id = ?`,
+          [JSON.stringify(providerResult.response), request.params.id],
+        );
+        await query(
+          `INSERT INTO notification_campaigns (notification_id, provider, status, sent_count, metadata) VALUES (?, 'onesignal', 'sent', 1, ?)`,
+          [request.params.id, JSON.stringify(providerResult.response)],
         ).catch(() => null);
+        await recordNotificationHistory({
+          notificationId: request.params.id,
+          notification,
+          payload: providerResult.payload,
+          providerResponse: providerResult.response,
+          status: 'sent',
+        });
       },
-    );
-    return { success: true };
+    ).catch(async (err) => {
+      await query(
+        `UPDATE push_notifications SET status = 'failed', error_message = ? WHERE id = ?`,
+        [err.message, request.params.id],
+      ).catch(() => null);
+      await recordNotificationHistory({
+        notificationId: request.params.id,
+        notification,
+        providerResponse: err.providerResponse || null,
+        status: 'failed',
+        errorMessage: err.message,
+      });
+      throw err;
+    });
+    return { success: true, data: providerResult?.response || null };
   });
 
   /* =====================================================

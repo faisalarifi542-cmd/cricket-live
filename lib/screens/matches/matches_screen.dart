@@ -5,6 +5,9 @@ import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
+import '../../models/ad_config.dart';
+import '../../widgets/ads/banner_ad_widget.dart';
+import '../../widgets/ads/native_ad_card.dart';
 import '../../screens.dart';
 
 class MatchesScreen extends StatefulWidget {
@@ -163,29 +166,38 @@ class _MatchesScreenState extends State<MatchesScreen> {
                                 fontWeight: FontWeight.w700),
                           ),
                         ),
-                      for (var i = 0; i < items.length; i++)
+                      for (var i = 0; i < items.length; i++) ...[
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 18),
-                          child: Builder(builder: (_) {
-                            final matchId =
-                                i >= apiItems.length ? '' : apiItems[i].id;
-                            void onTap() => widget.onOpenMatch(matchId);
-                            return topTab == 2
-                                ? FinishedMatchCard(
-                                    match: items[i], onTap: onTap)
-                                : topTab == 0
-                                    ? _StreamAwareLiveMatchCard(
-                                        match: items[i],
-                                        matchId: matchId,
-                                        onOpenMatch: widget.onOpenMatch,
-                                        onWatchLive: widget.onWatchLive,
-                                      )
-                                    : UpcomingMatchCard(
-                                        match: items[i],
-                                        onTap: onTap,
-                                        onReminder: widget.onOpenReminders);
-                          }),
-                        ),
+                            padding: const EdgeInsets.only(bottom: 18),
+                            child: Builder(builder: (_) {
+                              final matchId =
+                                  i >= apiItems.length ? '' : apiItems[i].id;
+                              void onTap() => widget.onOpenMatch(matchId);
+                              return topTab == 2
+                                  ? FinishedMatchCard(
+                                      match: items[i], onTap: onTap)
+                                  : topTab == 0
+                                      ? _StreamAwareLiveMatchCard(
+                                          match: items[i],
+                                          matchId: matchId,
+                                          apiMatch: i >= apiItems.length
+                                              ? null
+                                              : apiItems[i],
+                                          onOpenMatch: widget.onOpenMatch,
+                                          onWatchLive: widget.onWatchLive,
+                                        )
+                                      : UpcomingMatchCard(
+                                          match: items[i],
+                                          onTap: onTap,
+                                          onReminder: widget.onOpenReminders);
+                            })),
+                        if ((i + 1) % 5 == 0)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 18),
+                            child: NativeAdCard(placement: AdPlacement.matches),
+                          ),
+                      ],
+                      const BannerAdWidget(placement: AdPlacement.matches),
                     ],
                   );
                 },
@@ -202,12 +214,14 @@ class _StreamAwareLiveMatchCard extends StatelessWidget {
   const _StreamAwareLiveMatchCard({
     required this.match,
     required this.matchId,
+    this.apiMatch,
     required this.onOpenMatch,
     required this.onWatchLive,
   });
 
   final CompactFixture match;
   final String matchId;
+  final CricketMatch? apiMatch;
   final ValueChanged<String> onOpenMatch;
   final ValueChanged<String> onWatchLive;
 
@@ -215,6 +229,16 @@ class _StreamAwareLiveMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (matchId.isEmpty) {
       return UpcomingMatchCard(match: match, onTap: () => onOpenMatch(matchId));
+    }
+    if (apiMatch?.hasStreamInfo == true) {
+      return FutureBuilder<bool>(
+        future: CricketRepository().shouldShowWatchLiveForMatch(apiMatch!),
+        builder: (context, snapshot) => UpcomingMatchCard(
+          match: match,
+          onTap: () => onOpenMatch(matchId),
+          onReminder: snapshot.data == true ? () => onWatchLive(matchId) : null,
+        ),
+      );
     }
     return FutureBuilder<bool>(
       future: CricketRepository().hasPlayableStreams(matchId),
@@ -266,5 +290,3 @@ class _StateCard extends StatelessWidget {
     );
   }
 }
-
-

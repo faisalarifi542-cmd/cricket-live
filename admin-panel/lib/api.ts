@@ -156,11 +156,35 @@ export const dashboardApi = {
 export type StreamRow = Record<string, any> & {
   id: number;
   match_external_id: string;
+  match_title?: string | null;
+  team_a?: string | null;
+  team_b?: string | null;
+  title?: string | null;
+  label?: string | null;
+  language?: string | null;
+  server_name?: string | null;
   quality: string;
+  stream_type: string;
   stream_url: string;
+  backup_stream_url?: string | null;
   status: string;
   is_active: boolean;
   is_premium: boolean;
+  requires_reward_ad?: boolean;
+  requires_login?: boolean;
+  priority?: number;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  user_agent_header?: string | null;
+  referer_header?: string | null;
+  origin_header?: string | null;
+  headers_json?: Record<string, unknown> | string | null;
+  drm_enabled?: boolean;
+  drm_type?: string | null;
+  drm_license_url?: string | null;
+  drm_headers?: Record<string, unknown> | string | null;
+  clear_key_key_id?: string | null;
+  clear_key_key?: string | null;
 };
 
 export const streamsApi = {
@@ -464,6 +488,18 @@ export const notificationsApi = {
     adminFetch<{ success: true }>(`/admin/notifications/${id}`, { method: 'DELETE' }),
   send: (id: number) =>
     adminFetch<{ success: true }>(`/admin/notifications/${id}/send`, { method: 'POST' }),
+  sendDirect: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; data?: any }>('/admin/notifications/send', {
+      method: 'POST',
+      body: j(body),
+    }),
+  test: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; data?: any }>('/admin/notifications/test', {
+      method: 'POST',
+      body: j(body),
+    }),
+  history: () =>
+    adminFetch<{ success: true; data: any[] }>('/admin/notifications/history'),
 };
 
 export const adsApi = {
@@ -594,4 +630,17 @@ export const auditApi = {
       `/admin/audit-logs${qs ? `?${qs}` : ''}`,
     );
   },
+};
+
+export const manualMatchesApi = {
+  list: () => adminFetch<{ success: true; data: any[] }>('/admin/manual-matches'),
+  get: (id: number | string) => adminFetch<{ success: true; data: any }>(`/admin/manual-matches/${id}`),
+  create: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; data: any }>('/admin/manual-matches', { method: 'POST', body: j(body) }),
+  update: (id: number | string, body: Record<string, unknown>) =>
+    adminFetch<{ success: true; data: any }>(`/admin/manual-matches/${id}`, { method: 'PUT', body: j(body) }),
+  toggle: (id: number | string) =>
+    adminFetch<{ success: true; is_enabled: boolean }>(`/admin/manual-matches/${id}/toggle`, { method: 'POST' }),
+  delete: (id: number | string) =>
+    adminFetch<{ success: true }>(`/admin/manual-matches/${id}`, { method: 'DELETE' }),
 };

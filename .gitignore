@@ -1,74 +1,61 @@
-# Dependencies
-node_modules/
-admin-panel/node_modules/
-cricket-api/node_modules/
-
-# Next.js
-.next/
-admin-panel/.next/
-out/
-admin-panel/out/
-
-# Flutter / Dart
+# Flutter generated/build files
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
 build/
-.flutter/
 coverage/
 
-# Android
-android/.gradle/
-android/local.properties
-android/app/build/
-*.apk
-*.aab
+# Flutter platform folders - ignore if you do NOT want to upload them
+android/
+ios/
+web/
+windows/
+linux/
+macos/
 
-# iOS / macOS
-ios/Pods/
-ios/.symlinks/
-ios/Flutter/Flutter.framework
-ios/Flutter/Flutter.podspec
-macos/Pods/
-macos/.symlinks/
+# IDE files
+.idea/
+.vscode/
+*.iml
 
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# Android generated files
+.gradle/
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+*.jks
+*.keystore
+
+# Node / Next.js / Admin Panel
+node_modules/
+.next/
+out/
+dist/
+admin-panel/.next/
+admin-panel/out/
+admin-panel/dist/
+admin-panel/node_modules/
+*.tsbuildinfo
+admin-panel/tsconfig.tsbuildinfo
+
+# Backend
+cricket-api/node_modules/
+cricket-api/logs/
+cricket-api/*.log
 
 # Environment / secrets
 .env
 .env.*
 !.env.example
-cricket-api/.env
-cricket-api/.env.*
-admin-panel/.env
-admin-panel/.env.*
-admin-panel/.env.local
-admin-panel/.env.production
-admin-panel/.env.development
 
-# Cache
-.cache/
-.parcel-cache/
-.turbo/
-.vercel/
-
-# IDE / OS
-.vscode/
-.idea/
+# OS files
 .DS_Store
 Thumbs.db
 
-# Archives / temporary files
+# Archives / backups
 *.zip
 *.rar
 *.7z
 *.tar
 *.gz
-tmp/
-temp/

@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../app_theme.dart';
-import '../../components.dart';
-import '../../models/api_models.dart';
-import '../../models/api_response.dart';
-import '../../repositories/cricket_repository.dart';
-import '../player/player_detail_screen.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models/api_response.dart';
+import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/screens/player/player_detail_screen.dart';
 
 class RankingsScreen extends StatefulWidget {
   const RankingsScreen({super.key});

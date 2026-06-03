@@ -4,13 +4,13 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { streamsApi } from '@/lib/api';
 import { streamSchema, type StreamInput } from '@/lib/validators';
-import { STREAM_QUALITIES, STREAM_TYPES } from '@/lib/constants';
+import { DRM_TYPES, STREAM_QUALITIES, STREAM_STATUSES, STREAM_TYPES } from '@/lib/constants';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select, Textarea } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 
-export type StreamFormValue = Partial<StreamInput> & { id?: number };
+export type StreamFormValue = Partial<StreamInput> & { id?: number; send_push_now?: boolean };
 
 type Props = {
   open: boolean;
@@ -32,21 +32,36 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
   const isEdit = !!initial?.id;
   const [form, setForm] = useState<StreamFormValue>(() => ({
     match_external_id: initial?.match_external_id ?? defaultMatchId ?? '',
+    match_title: initial?.match_title ?? '',
     title: initial?.title ?? '',
+    team_a: initial?.team_a ?? '',
+    team_b: initial?.team_b ?? '',
     label: initial?.label ?? '',
     language: initial?.language ?? '',
     server_name: initial?.server_name ?? '',
     quality: initial?.quality ?? 'AUTO',
     stream_type: initial?.stream_type ?? 'hls',
     stream_url: initial?.stream_url ?? '',
+    backup_stream_url: initial?.backup_stream_url ?? '',
+    status: initial?.status ?? 'unknown',
     is_active: initial?.is_active ?? true,
     is_premium: initial?.is_premium ?? false,
+    requires_reward_ad: initial?.requires_reward_ad ?? false,
+    requires_login: initial?.requires_login ?? false,
     priority: initial?.priority ?? 100,
     starts_at: dtLocal(initial?.starts_at as string | undefined),
     ends_at: dtLocal(initial?.ends_at as string | undefined),
+    headers_json: typeof initial?.headers_json === 'string' ? initial.headers_json : initial?.headers_json ? JSON.stringify(initial.headers_json, null, 2) : '',
     user_agent_header: initial?.user_agent_header ?? '',
     referer_header: initial?.referer_header ?? '',
+    origin_header: initial?.origin_header ?? '',
     drm_enabled: initial?.drm_enabled ?? false,
+    drm_type: initial?.drm_type ?? 'none',
+    drm_license_url: initial?.drm_license_url ?? '',
+    drm_headers: typeof initial?.drm_headers === 'string' ? initial.drm_headers : initial?.drm_headers ? JSON.stringify(initial.drm_headers, null, 2) : '',
+    clear_key_key_id: initial?.clear_key_key_id ?? '',
+    clear_key_key: initial?.clear_key_key ?? '',
+    send_push_now: false,
     notes: initial?.notes ?? '',
   }));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -79,6 +94,12 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
     try {
       const payload = {
         ...parsed.data,
+        headers_json: parsed.data.headers_json?.trim() || null,
+        drm_headers: parsed.data.drm_headers?.trim() || null,
+        backup_stream_url: parsed.data.backup_stream_url?.trim() || null,
+        drm_license_url: parsed.data.drm_license_url?.trim() || null,
+        starts_at: parsed.data.starts_at || null,
+        ends_at: parsed.data.ends_at || null,
         // backend expects 0/1 ints; api layer doesn't transform — backend normalises booleans
       };
       if (isEdit && initial?.id) {
@@ -125,12 +146,45 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
           />
         </Field>
 
+        <Field label="Match title" error={errors.match_title}>
+          <Input
+            value={form.match_title ?? ''}
+            onChange={(e) => update('match_title', e.target.value)}
+            placeholder="India vs Australia"
+          />
+        </Field>
+
+        <Field label="Team A" error={errors.team_a}>
+          <Input
+            value={form.team_a ?? ''}
+            onChange={(e) => update('team_a', e.target.value)}
+            placeholder="India"
+          />
+        </Field>
+
+        <Field label="Team B" error={errors.team_b}>
+          <Input
+            value={form.team_b ?? ''}
+            onChange={(e) => update('team_b', e.target.value)}
+            placeholder="Australia"
+          />
+        </Field>
+
         <Field label="Stream URL" required error={errors.stream_url}>
           <Input
             value={form.stream_url ?? ''}
             onChange={(e) => update('stream_url', e.target.value)}
             placeholder="https://example.com/live/playlist.m3u8"
             invalid={!!errors.stream_url}
+          />
+        </Field>
+
+        <Field label="Backup stream URL" error={errors.backup_stream_url}>
+          <Input
+            value={form.backup_stream_url ?? ''}
+            onChange={(e) => update('backup_stream_url', e.target.value)}
+            placeholder="https://example.com/live/backup.m3u8"
+            invalid={!!errors.backup_stream_url}
           />
         </Field>
 
@@ -173,6 +227,19 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
             {STREAM_TYPES.map((t) => (
               <option key={t} value={t} className="bg-slate-900">
                 {t.toUpperCase()}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="Status" required error={errors.status}>
+          <Select
+            value={form.status}
+            onChange={(e) => update('status', e.target.value as StreamFormValue['status'])}
+          >
+            {STREAM_STATUSES.map((status) => (
+              <option key={status} value={status} className="bg-slate-900">
+                {status.toUpperCase()}
               </option>
             ))}
           </Select>
@@ -235,6 +302,76 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
           />
         </Field>
 
+        <Field label="Custom Origin" error={errors.origin_header}>
+          <Input
+            value={form.origin_header ?? ''}
+            onChange={(e) => update('origin_header', e.target.value)}
+            placeholder="https://example.com"
+          />
+        </Field>
+
+        <div className="md:col-span-2">
+          <Field label="Headers JSON" error={errors.headers_json}>
+            <Textarea
+              value={form.headers_json ?? ''}
+              onChange={(e) => update('headers_json', e.target.value)}
+              placeholder='{"X-Playback-Token":"public-player-token"}'
+              rows={3}
+              invalid={!!errors.headers_json}
+            />
+          </Field>
+        </div>
+
+        <Field label="DRM type" error={errors.drm_type}>
+          <Select
+            value={form.drm_type}
+            onChange={(e) => update('drm_type', e.target.value as StreamFormValue['drm_type'])}
+          >
+            {DRM_TYPES.map((type) => (
+              <option key={type} value={type} className="bg-slate-900">
+                {type.toUpperCase()}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="DRM license URL" error={errors.drm_license_url}>
+          <Input
+            value={form.drm_license_url ?? ''}
+            onChange={(e) => update('drm_license_url', e.target.value)}
+            placeholder="https://license.example.com/widevine"
+            invalid={!!errors.drm_license_url}
+          />
+        </Field>
+
+        <div className="md:col-span-2">
+          <Field label="DRM headers JSON" error={errors.drm_headers}>
+            <Textarea
+              value={form.drm_headers ?? ''}
+              onChange={(e) => update('drm_headers', e.target.value)}
+              placeholder='{"Authorization":"Bearer player-token"}'
+              rows={3}
+              invalid={!!errors.drm_headers}
+            />
+          </Field>
+        </div>
+
+        <Field label="ClearKey key ID" error={errors.clear_key_key_id}>
+          <Input
+            value={form.clear_key_key_id ?? ''}
+            onChange={(e) => update('clear_key_key_id', e.target.value)}
+            placeholder="Base64 or hex key ID"
+          />
+        </Field>
+
+        <Field label="ClearKey key" error={errors.clear_key_key}>
+          <Input
+            value={form.clear_key_key ?? ''}
+            onChange={(e) => update('clear_key_key', e.target.value)}
+            placeholder="Base64 or hex key"
+          />
+        </Field>
+
         <div className="md:col-span-2">
           <Field label="Notes" error={errors.notes}>
             <Textarea
@@ -260,10 +397,28 @@ export function StreamForm({ open, onClose, initial, defaultMatchId, onSaved }: 
             onChange={(v) => update('is_premium', v)}
           />
           <Switch
+            label="Rewarded ad"
+            description="Requires an ad before playback"
+            checked={!!form.requires_reward_ad}
+            onChange={(v) => update('requires_reward_ad', v)}
+          />
+          <Switch
+            label="Login required"
+            description="Requires signed-in users"
+            checked={!!form.requires_login}
+            onChange={(v) => update('requires_login', v)}
+          />
+          <Switch
             label="DRM"
             description="Stream is DRM protected"
             checked={!!form.drm_enabled}
             onChange={(v) => update('drm_enabled', v)}
+          />
+          <Switch
+            label="Send push now"
+            description="Notify users when this stream is saved active"
+            checked={!!form.send_push_now}
+            onChange={(v) => update('send_push_now', v)}
           />
         </div>
       </form>

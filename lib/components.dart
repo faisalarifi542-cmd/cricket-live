@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'app_theme.dart';
-import 'models.dart';
-import 'models/api_models.dart';
-import 'widgets/responsive.dart';
+import 'package:cricpro_flutter/app_theme.dart';
+import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/models.dart';
+import 'package:cricpro_flutter/widgets/responsive.dart';
 
 export 'widgets/responsive.dart'
     show

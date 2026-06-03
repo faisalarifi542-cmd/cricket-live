@@ -184,6 +184,17 @@ export class CricbuzzProvider extends BaseProvider {
     }
   }
 
+  async getNewsDetail(newsId, story) {
+    try {
+      const raw = await cricbuzzApi.getNewsDetail(newsId, story);
+      this.recordSuccess();
+      return norm.normalizeNewsDetail(raw, story);
+    } catch (err) {
+      this.recordFailure();
+      throw err;
+    }
+  }
+
   async getRankings(params) {
     try {
       const raw = await cricbuzzApi.getRankings(params);
