@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
@@ -48,7 +49,72 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   List<StreamSource> _availableStreams = const [];
   final Set<String> _rewardUnlockedStreamIds = <String>{};
 
+  /// True while the screen is holding the wakelock (screen kept awake during
+  /// playback). Mirrors the controller's play state.
+  bool _wakelockOn = false;
+
+  // Last-seen controller values, used to skip rebuilds when nothing the UI
+  // shows has changed. Position/duration are tracked at whole-second
+  // granularity so the progress/time UI updates ~1x/sec instead of on every
+  // controller notification (several per second).
+  bool _lastInitialized = false;
+  bool _lastIsPlaying = false;
+  bool _lastBuffering = false;
+  bool _lastHasError = false;
+  int _lastPositionSec = -1;
+  int _lastDurationSec = -1;
+
   bool get _hasMatchId => widget.matchId.isNotEmpty;
+
+  /// Enables/disables the screen wakelock, but only when the state actually
+  /// changes, so we don't spam the platform channel on every tick.
+  void _syncWakelock(bool enable) {
+    if (enable == _wakelockOn) return;
+    _wakelockOn = enable;
+    WakelockPlus.toggle(enable: enable);
+  }
+
+  /// Controller listener that drives wakelock and rebuilds. It rebuilds only
+  /// when a user-visible field changes (init/play/buffering/error or the
+  /// whole-second position/duration), instead of on every notification — which
+  /// previously rebuilt the entire player subtree several times per second.
+  void _onControllerUpdate() {
+    final controller = _videoController;
+    if (controller == null || !mounted) return;
+    final value = controller.value;
+
+    // Keep the screen awake only while actually playing initialized video.
+    _syncWakelock(value.isInitialized && value.isPlaying);
+
+    final positionSec = value.position.inSeconds;
+    final durationSec = value.duration.inSeconds;
+    final changed = value.isInitialized != _lastInitialized ||
+        value.isPlaying != _lastIsPlaying ||
+        value.isBuffering != _lastBuffering ||
+        value.hasError != _lastHasError ||
+        positionSec != _lastPositionSec ||
+        durationSec != _lastDurationSec;
+    if (!changed) return;
+
+    _lastInitialized = value.isInitialized;
+    _lastIsPlaying = value.isPlaying;
+    _lastBuffering = value.isBuffering;
+    _lastHasError = value.hasError;
+    _lastPositionSec = positionSec;
+    _lastDurationSec = durationSec;
+    setState(() {});
+  }
+
+  /// Resets the cached controller-value diff so the next controller produces a
+  /// fresh first rebuild.
+  void _resetControllerDiff() {
+    _lastInitialized = false;
+    _lastIsPlaying = false;
+    _lastBuffering = false;
+    _lastHasError = false;
+    _lastPositionSec = -1;
+    _lastDurationSec = -1;
+  }
 
   @override
   void initState() {
@@ -65,6 +131,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   @override
   void dispose() {
     _liveTimer?.cancel();
+    _videoController?.removeListener(_onControllerUpdate);
+    // Release the wakelock so the screen can sleep normally after leaving.
+    _syncWakelock(false);
     _videoController?.dispose();
     // Clear the global video flag so interstitial/app-open ads are allowed
     // again after leaving the player.
@@ -313,6 +382,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     final oldController = _videoController;
     _videoController = null;
     _videoInitFuture = null;
+    oldController?.removeListener(_onControllerUpdate);
+    _resetControllerDiff();
+    _syncWakelock(false);
     await oldController?.dispose();
 
     if (stream.url.isEmpty) {
@@ -358,9 +430,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       Uri.parse(playUrl),
       httpHeaders: headers,
     );
-    controller.addListener(() {
-      if (mounted) setState(() {});
-    });
+    controller.addListener(_onControllerUpdate);
     final initFuture = controller.initialize().then((_) {
       controller.play();
       controller.setLooping(false);
@@ -378,6 +448,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       await initFuture;
       if (mounted) setState(() {});
     } catch (_) {
+      controller.removeListener(_onControllerUpdate);
+      _syncWakelock(false);
       await controller.dispose();
       if (mounted) {
         setState(() {

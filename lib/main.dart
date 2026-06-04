@@ -208,6 +208,11 @@ class RootShell extends StatefulWidget {
 class _RootShellState extends State<RootShell> {
   AppTab active = AppTab.home;
 
+  /// Tabs the user has opened at least once. Visited tabs stay mounted in the
+  /// [IndexedStack] (preserving their state/scroll); unvisited tabs are not
+  /// built until first opened.
+  final Set<AppTab> _visitedTabs = {AppTab.home};
+
   /// Opens the match details screen. Accepts a positional [matchId] so it
   /// can be passed as a `ValueChanged<String>` callback directly. Empty
   /// strings are tolerated and surface the demo hero.
@@ -259,10 +264,13 @@ class _RootShellState extends State<RootShell> {
 
   void _openRanking() => _push(const RankingsScreen());
 
-  @override
-  Widget build(BuildContext context) {
-    Widget body = switch (active) {
-      AppTab.home => HomeScreen(
+  /// Builds the screen for [tab]. Each tab is constructed once and then kept
+  /// alive inside the [IndexedStack] below, so its state, loaded data and
+  /// scroll position survive bottom-nav switches.
+  Widget _buildTab(AppTab tab) {
+    switch (tab) {
+      case AppTab.home:
+        return HomeScreen(
           onOpenMatchDetails: _openMatch,
           onOpenSeries: _openSeries,
           onOpenNotifications: _openNotifications,
@@ -270,23 +278,27 @@ class _RootShellState extends State<RootShell> {
           onOpenReminders: _openReminders,
           onOpenRanking: _openRanking,
           onWatchLive: (id) => _openLivePlayer(matchId: id),
-        ),
-      AppTab.matches => MatchesScreen(
+        );
+      case AppTab.matches:
+        return MatchesScreen(
           onOpenMatch: _openMatch,
           onOpenFilters: _openFilters,
           onOpenReminders: _openReminders,
           onOpenSeries: _openSeries,
           onWatchLive: (id) => _openLivePlayer(matchId: id),
-        ),
-      AppTab.schedule => ScheduleScreen(
+        );
+      case AppTab.schedule:
+        return ScheduleScreen(
           onOpenSeries: _openSeries,
           onOpenMatch: _openMatch,
-        ),
-      AppTab.news => NewsScreen(
+        );
+      case AppTab.news:
+        return NewsScreen(
           onOpenFilters: _openFilters,
           onOpenArticle: _openArticle,
-        ),
-      AppTab.more => MoreScreen(
+        );
+      case AppTab.more:
+        return MoreScreen(
           isDark: widget.isDark,
           onThemeChanged: widget.onThemeChanged,
           onOpenRanking: _openRanking,
@@ -295,24 +307,27 @@ class _RootShellState extends State<RootShell> {
           onOpenPolicy: () => _push(const PrivacyPolicyScreen()),
           onOpenTerms: () => _push(const TermsScreen()),
           onOpenHighlights: _openHighlights,
-        ),
-    };
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _visitedTabs.add(active);
+    // IndexedStack keeps every visited tab mounted (off-stage) so their state
+    // and scroll position are preserved across switches. Tabs are built lazily:
+    // an unvisited tab stays an empty placeholder until the user first opens it.
+    final children = [
+      for (final tab in AppTab.values)
+        _visitedTabs.contains(tab)
+            ? KeyedSubtree(key: ValueKey(tab), child: _buildTab(tab))
+            : const SizedBox.shrink(),
+    ];
     return Scaffold(
       extendBody: true,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 240),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: SlideTransition(
-            position:
-                Tween<Offset>(begin: const Offset(0, .02), end: Offset.zero)
-                    .animate(anim),
-            child: child,
-          ),
-        ),
-        child: KeyedSubtree(key: ValueKey(active), child: body),
+      body: IndexedStack(
+        index: active.index,
+        children: children,
       ),
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
