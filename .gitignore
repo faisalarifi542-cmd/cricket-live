@@ -47,27 +47,32 @@ cricket-api/*.log
 # Environment / secrets
 .env
 .env.*
+*.env
 !.env.example
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Archives / backups
+# Archives / build artifacts / backups / debug output
 *.zip
 *.rar
 *.7z
 *.tar
 *.gz
-.env
-.env.local
 *.apk
 *.aab
+*.log
+*.out
+*.err
+*.backup
+qa_*.png
+debug/
+debug*.html
+screens_remaining.txt
 build/
 .dart_tool/
 node_modules/
 .next/
-*.log
-*.zip
-*.backup
-qa_*.png
+
+*.patch

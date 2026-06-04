@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -331,11 +332,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       return;
     }
 
-    // TODO: Add a player backend that supports DASH/MPD, DRM, and request
-    // headers. The current video_player path keeps HLS playback stable.
+    // Per-stream request headers (User-Agent / Referer / Origin / custom),
+    // configured in the admin panel and delivered via /app/config. Required for
+    // hotlink-protected HLS sources, which 403 without them.
+    final headers = _stringHeaders(stream.headers);
+    if (kDebugMode) {
+      debugPrint(
+          '[Player] stream headers present=${headers.isNotEmpty} count=${headers.length}');
+    }
+
+    // TODO: Add a player backend that supports DASH/MPD and DRM. The current
+    // video_player path handles HLS playback and request headers.
     // Parse HLS qualities if this is an HLS stream and no quality selected yet
     if (stream.isHls && quality == null && _hlsQualities.isEmpty) {
-      await _parseHlsQualities(stream.url);
+      await _parseHlsQualities(stream.url, headers: headers);
     }
 
     // Determine the URL to play
@@ -344,7 +354,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       playUrl = quality.url;
     }
 
-    final controller = VideoPlayerController.networkUrl(Uri.parse(playUrl));
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(playUrl),
+      httpHeaders: headers,
+    );
     controller.addListener(() {
       if (mounted) setState(() {});
     });
@@ -377,11 +390,35 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     }
   }
 
-  Future<void> _parseHlsQualities(String masterUrl) async {
+  /// Normalizes admin-configured headers (which arrive as a dynamic-valued
+  /// map) into the `Map<String, String>` the player/HTTP client require.
+  /// Drops null/empty entries. Values are never logged.
+  Map<String, String> _stringHeaders(Map<String, dynamic> raw) {
+    final result = <String, String>{};
+    raw.forEach((key, value) {
+      if (value == null) return;
+      final k = key.trim();
+      final v = value.toString().trim();
+      if (k.isEmpty || v.isEmpty) return;
+      result[k] = v;
+    });
+    return result;
+  }
+
+  Future<void> _parseHlsQualities(
+    String masterUrl, {
+    Map<String, String> headers = const {},
+  }) async {
     try {
-      final response = await http.get(Uri.parse(masterUrl)).timeout(
-        const Duration(seconds: 5),
-      );
+      final response = await http
+          .get(Uri.parse(masterUrl), headers: headers.isEmpty ? null : headers)
+          .timeout(
+            const Duration(seconds: 5),
+          );
+      if (kDebugMode) {
+        debugPrint(
+            '[Player] HLS master fetch status=${response.statusCode} headers=${headers.length}');
+      }
       if (response.statusCode != 200) return;
 
       final content = response.body;
