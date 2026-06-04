@@ -90,12 +90,12 @@ export function getSubscriber() {
 // TTL constants (seconds)
 export const TTL = Object.freeze({
   LIVE_SCORE: 15,
-  COMMENTARY: 15,
-  SCORECARD: 30,
-  MATCH_INFO: 60,
+  COMMENTARY: 5,
+  SCORECARD: 5,
+  MATCH_INFO: 10,
   MATCH_LIST: 20,
   MATCH_STATS: 20,
-  MATCH_OVERS: 15,
+  MATCH_OVERS: 5,
   SERIES: 300,
   PLAYER: 3600,
   TEAM: 3600,
@@ -122,6 +122,8 @@ export const TTL = Object.freeze({
   SQUADS: 1800, // 30 minutes
   LIVE_LINE: 5, // 5 seconds - very short for live data
   MATCH_INFO_DETAILED: 300, // 5 minutes for detailed match info
+  LIVE_CENTER_LIVE: 4, // merged live-center while the match is in progress
+  LIVE_CENTER_DONE: 600, // merged live-center for finished matches
 });
 
 // Key builders
@@ -156,6 +158,7 @@ export const KEYS = Object.freeze({
   matchSquads: (id) => `match:${id}:squads`,
   matchLiveLine: (id) => `match:${id}:live-line`,
   matchInfoDetailed: (id) => `match:${id}:info-detailed`,
+  matchLiveCenter: (id) => `match:${id}:live-center`,
   seriesTeams: (id) => `series:${id}:teams`,
   activeMatches: () => 'active:matches',
 });

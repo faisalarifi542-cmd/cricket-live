@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models/api_response.dart';
@@ -32,32 +35,140 @@ class MatchesScreen extends StatefulWidget {
   State<MatchesScreen> createState() => _MatchesScreenState();
 }
 
-class _MatchesScreenState extends State<MatchesScreen> {
+class _MatchesScreenState extends State<MatchesScreen>
+    with WidgetsBindingObserver {
   int topTab = 1;
   int category = 0;
   final CricketRepository _repository = CricketRepository();
+  final ScrollController _scrollController = ScrollController();
   late Future<ApiEnvelope<List<CricketMatch>>> _apiMatches;
+  ApiEnvelope<List<CricketMatch>>? _apiMatchesData;
+  Timer? _pollTimer;
+  bool _polling = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _apiMatches = _loadMatches();
+    _configurePolling();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _configurePolling();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+    }
   }
 
   Future<ApiEnvelope<List<CricketMatch>>> _loadMatches(
-          {bool forceRefresh = false}) =>
-      _repository.matchesForTab(topTab, forceRefresh: forceRefresh);
+      {bool forceRefresh = false}) async {
+    final response =
+        await _repository.matchesForTab(topTab, forceRefresh: forceRefresh);
+    _apiMatchesData = response;
+    return response;
+  }
 
   void _setTopTab(int value) {
     setState(() {
       topTab = value;
+      _apiMatchesData = null;
       _apiMatches = _loadMatches();
     });
+    _configurePolling();
   }
 
   Future<void> _refresh() async {
-    setState(() => _apiMatches = _loadMatches(forceRefresh: true));
-    await _apiMatches;
+    final oldOffset =
+        _scrollController.hasClients ? _scrollController.offset : null;
+    final response = await _loadMatches(forceRefresh: true);
+    if (!mounted) return;
+    setState(() => _apiMatches = Future.value(response));
+    _restoreScroll(oldOffset);
+  }
+
+  void _configurePolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    final interval = switch (topTab) {
+      0 => const Duration(seconds: 10),
+      1 => const Duration(seconds: 90),
+      _ => null,
+    };
+    if (kDebugMode) {
+      debugPrint(
+          '[Polling] Matches tab=$topTab interval=${interval?.inSeconds}s');
+    }
+    if (interval == null) return;
+    _pollTimer = Timer.periodic(interval, (_) => _silentPollVisibleTab());
+  }
+
+  Future<void> _silentPollVisibleTab() async {
+    if (_polling || !mounted) return;
+    _polling = true;
+    final oldOffset =
+        _scrollController.hasClients ? _scrollController.offset : null;
+    if (kDebugMode) {
+      debugPrint('[Polling] Matches silent refresh start offset=$oldOffset');
+    }
+    try {
+      final previous = _apiMatchesData;
+      final response =
+          await _repository.matchesForTab(topTab, forceRefresh: true);
+      if (!mounted) return;
+      final changed = previous == null ||
+          jsonEncode(previous.data.map(_matchRefreshKey).toList()) !=
+              jsonEncode(response.data.map(_matchRefreshKey).toList());
+      _apiMatchesData = response;
+      if (changed) {
+        setState(() {});
+        _restoreScroll(oldOffset);
+      }
+      if (kDebugMode) {
+        debugPrint('[Polling] Matches silent refresh changed=$changed');
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  void _restoreScroll(double? oldOffset) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (oldOffset != null && _scrollController.hasClients) {
+        final restoredOffset = oldOffset.clamp(
+          _scrollController.position.minScrollExtent,
+          _scrollController.position.maxScrollExtent,
+        );
+        _scrollController.jumpTo(restoredOffset);
+        if (kDebugMode) {
+          debugPrint('[Polling] Matches restored offset=$restoredOffset');
+        }
+      }
+    });
+  }
+
+  String _matchRefreshKey(CricketMatch match) {
+    return [
+      match.id,
+      match.status,
+      match.statusText,
+      match.teamAScoreText,
+      match.teamBScoreText,
+    ].join('|');
   }
 
   @override
@@ -70,6 +181,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
         child: RefreshIndicator(
           onRefresh: _refresh,
           child: ListView(
+            controller: _scrollController,
             padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
                 context.horizontalPadding, context.mainBottomPadding),
             children: [
@@ -108,13 +220,16 @@ class _MatchesScreenState extends State<MatchesScreen> {
                 future: _apiMatches,
                 builder: (context, snapshot) {
                   final apiItems =
-                      snapshot.data?.data ?? const <CricketMatch>[];
+                      _apiMatchesData?.data ??
+                          snapshot.data?.data ??
+                          const <CricketMatch>[];
                   final items = apiItems
                       .map((match) =>
                           match.toCompactFixture(finished: topTab == 2))
                       .toList();
 
-                  if (snapshot.connectionState == ConnectionState.waiting &&
+                  if (_apiMatchesData == null &&
+                      snapshot.connectionState == ConnectionState.waiting &&
                       apiItems.isEmpty) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 26),
@@ -122,7 +237,7 @@ class _MatchesScreenState extends State<MatchesScreen> {
                     );
                   }
 
-                  if (snapshot.hasError) {
+                  if (_apiMatchesData == null && snapshot.hasError) {
                     return _StateCard(
                       icon: Icons.cloud_off_rounded,
                       title: 'Unable to load matches',
@@ -155,11 +270,13 @@ class _MatchesScreenState extends State<MatchesScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (snapshot.data?.meta.lastUpdated != null)
+                      if ((_apiMatchesData?.meta.lastUpdated ??
+                              snapshot.data?.meta.lastUpdated) !=
+                          null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: Text(
-                            'Last updated ${snapshot.data!.meta.lastUpdated!.toLocal()}',
+                            'Last updated ${(_apiMatchesData?.meta.lastUpdated ?? snapshot.data!.meta.lastUpdated)!.toLocal()}',
                             style: TextStyle(
                                 color: c.muted,
                                 fontSize: 12,

@@ -1,10 +1,18 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'package:cricpro_flutter/models/ad_config.dart';
-import 'package:cricpro_flutter/services/ad_service.dart';
+import 'package:cricpro_flutter/services/ads/ad_adapter.dart';
+import 'package:cricpro_flutter/services/ads/ads_manager.dart';
 
+/// Native ad slot.
+///
+/// Loads an AdMob native ad through the [AdsManager] waterfall and renders it
+/// using the platform-registered "cricproNative" factory (Android), which
+/// includes a clear "Ad" badge so it never looks like normal content.
+///
+/// If native ads are disabled, the placement is off, there is no native factory
+/// on the platform, or no ad fills, this renders nothing (never a blank box).
 class NativeAdCard extends StatefulWidget {
   const NativeAdCard({super.key, required this.placement});
 
@@ -15,8 +23,7 @@ class NativeAdCard extends StatefulWidget {
 }
 
 class _NativeAdCardState extends State<NativeAdCard> {
-  NativeAd? _ad;
-  bool _loaded = false;
+  NativeLoadResult _result = NativeLoadResult.empty;
 
   @override
   void initState() {
@@ -24,39 +31,33 @@ class _NativeAdCardState extends State<NativeAdCard> {
     _load();
   }
 
-  void _load() {
-    if (kIsWeb || !AdService.instance.config.nativeFor(widget.placement)) return;
-    final unitId = AdService.instance.nativeUnitId();
-    if (unitId == null || unitId.isEmpty) return;
-    _ad = NativeAd(
-      adUnitId: unitId,
-      factoryId: 'cricproNative',
-      request: const AdRequest(),
-      listener: NativeAdListener(
-        onAdLoaded: (_) {
-          if (mounted) setState(() => _loaded = true);
-        },
-        onAdFailedToLoad: (ad, _) {
-          ad.dispose();
-          if (mounted) setState(() => _ad = null);
-        },
-      ),
-    )..load();
+  Future<void> _load() async {
+    if (kIsWeb) return;
+    if (!AdsManager.instance.config.nativeFor(widget.placement)) return;
+    final result = await AdsManager.instance.loadNative(widget.placement);
+    if (!mounted) {
+      result.dispose?.call();
+      return;
+    }
+    if (result.loaded) setState(() => _result = result);
   }
 
   @override
   void dispose() {
-    _ad?.dispose();
+    _result.dispose?.call();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ad = _ad;
-    if (!_loaded || ad == null) return const SizedBox.shrink();
-    return SizedBox(
-      height: 120,
-      child: AdWidget(ad: ad),
+    final widgetAd = _result.widget;
+    if (widgetAd == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: widgetAd,
+      ),
     );
   }
 }

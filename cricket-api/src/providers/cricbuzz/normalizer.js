@@ -189,6 +189,26 @@ export function normalizeMatchDetail(raw) {
   const batsmanNonStriker = mini.batsmanNonStriker;
   const bowlerStriker = mini.bowlerStriker;
 
+  // --- Robust live-state derivation -------------------------------------
+  // Cricbuzz `state` for an in-progress match can be "Rain delay",
+  // "Bad light stopped play", "Tea", "Drinks", "Stumps Day 1", "Innings
+  // Break", etc. The plain string mapper falls back to "upcoming" for those,
+  // which silently breaks live polling + the Live tab. If we actually have
+  // live miniscore data (batters/bowler on the field or overs already
+  // bowled) and the match is not finished, treat it as live.
+  let derivedStatus = normalizeStatus(score.state || header.state || score.customStatus);
+  const resultType = header.result?.resultType || header.result || '';
+  const looksComplete = derivedStatus === 'completed'
+    || derivedStatus === 'abandoned'
+    || derivedStatus === 'no_result'
+    || Boolean(resultType);
+  const hasLiveMiniscore = Boolean(batsmanStriker || bowlerStriker)
+    || inningsList.some((inn) => parseFloat(inn.overs || 0) > 0);
+  if (!looksComplete && hasLiveMiniscore
+      && (derivedStatus === 'upcoming' || derivedStatus === 'innings_break')) {
+    derivedStatus = 'live';
+  }
+
   return {
     match_id: String(matchId),
     series_id: String(header.seriesId || score.seriesId || ''),
@@ -197,7 +217,7 @@ export function normalizeMatchDetail(raw) {
     match_format: normalizeFormat(header.matchFormat || score.matchFormat),
     match_type: header.matchType || '',
     match_number: header.matchNumber || '',
-    status: normalizeStatus(score.state || header.state || score.customStatus),
+    status: derivedStatus,
     status_text: score.customStatus || mini.status || header.status || header.stateTitle || '',
     team1: normalizeTeamFull(team1Raw, team1ScoreData.inngs.length > 0 ? team1ScoreData : null),
     team2: normalizeTeamFull(team2Raw, team2ScoreData.inngs.length > 0 ? team2ScoreData : null),
@@ -233,8 +253,128 @@ export function normalizeMatchDetail(raw) {
     match_udrs: mini.matchUdrs || null,
     player_of_match: normalizePlayerOfMatch(header.playersOfTheMatch),
     match_image_url: getMatchImageUrl(header.matchImageId || score.matchImageId),
+    // Merged Live Center object — a single, clean payload the app's Live tab
+    // can consume directly without stitching multiple endpoints together.
+    live_center: buildLiveCenter({
+      status: derivedStatus,
+      statusText: score.customStatus || mini.status || header.status || header.stateTitle || '',
+      mini,
+      inningsList,
+      batsmanStriker,
+      batsmanNonStriker,
+      bowlerStriker,
+      playerOfMatch: normalizePlayerOfMatch(header.playersOfTheMatch),
+      result: resultType,
+    }),
     last_updated: new Date().toISOString(),
   };
+}
+
+/**
+ * Builds the merged "Live Center" object from the miniscore. Each section is
+ * included only when it carries real data, so the app never renders empty or
+ * fake rows. Recent balls are parsed from `recentOvsStats`.
+ */
+function buildLiveCenter({
+  status,
+  statusText,
+  mini,
+  inningsList,
+  batsmanStriker,
+  batsmanNonStriker,
+  bowlerStriker,
+  playerOfMatch,
+  result,
+}) {
+  const isFinished = status === 'completed'
+    || status === 'abandoned'
+    || status === 'no_result';
+
+  // Current batters — only real, named batters (drop empty placeholders).
+  const currentBatters = [];
+  if (batsmanStriker && (batsmanStriker.batName || batsmanStriker.batId)) {
+    currentBatters.push(normalizeLiveBatsman(batsmanStriker, true));
+  }
+  if (batsmanNonStriker && (batsmanNonStriker.batName || batsmanNonStriker.batId)) {
+    currentBatters.push(normalizeLiveBatsman(batsmanNonStriker, false));
+  }
+
+  // Current bowler — only when it has a real name (never "Player 0 0 0 0").
+  const currentBowler = bowlerStriker && (bowlerStriker.bowlName || bowlerStriker.bowlId)
+    ? normalizeLiveBowler(bowlerStriker)
+    : null;
+
+  // Partnership.
+  const partnership = mini.partnerShip && (mini.partnerShip.runs || mini.partnerShip.balls)
+    ? {
+        runs: mini.partnerShip.runs || 0,
+        balls: mini.partnerShip.balls || 0,
+        overs: oversFromBalls(mini.partnerShip.balls || 0),
+      }
+    : null;
+
+  // Last wicket — keep the raw Cricbuzz string; the app parses it.
+  const lastWicket = mini.lastWicket || '';
+
+  // Recent balls parsed from recentOvsStats ("1 4 0 W 2 | 6 1 .").
+  const recentBalls = parseRecentBalls(mini.recentOvsStats || '');
+
+  // Latest score line from the current innings.
+  const currentInn = inningsList.length
+    ? inningsList[inningsList.length - 1]
+    : null;
+  const score = currentInn
+    ? `${currentInn.score || 0}/${currentInn.wickets || 0}`
+    : '';
+  const overs = currentInn ? String(currentInn.overs || '') : '';
+
+  return {
+    match_state: isFinished ? 'finished' : (status === 'upcoming' ? 'upcoming' : 'live'),
+    status,
+    status_text: statusText,
+    score,
+    overs,
+    current_run_rate: mini.currentRunRate || 0,
+    required_run_rate: mini.requiredRunRate || 0,
+    target: mini.target || null,
+    current_batters: currentBatters,
+    current_bowler: currentBowler,
+    partnership,
+    last_wicket: lastWicket,
+    recent_balls: recentBalls,
+    player_of_match: isFinished ? playerOfMatch : null,
+    result: result || '',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function oversFromBalls(balls) {
+  const n = parseInt(balls, 10);
+  if (!n || n <= 0) return '';
+  return `${Math.floor(n / 6)}.${n % 6}`;
+}
+
+/**
+ * Parses Cricbuzz `recentOvsStats` into normalized ball pills. The string uses
+ * spaces between balls and `|` between overs, e.g. "1 4 0 W 2 | 6 1 .".
+ * Returns the most recent balls first (max 6).
+ */
+function parseRecentBalls(recentStr) {
+  if (!recentStr || typeof recentStr !== 'string') return [];
+  const tokens = recentStr.split(/\s+/).filter((t) => t && t !== '|');
+  const balls = tokens.map((raw) => {
+    const value = String(raw).trim();
+    const upper = value.toUpperCase();
+    let type = 'run';
+    if (upper.includes('W')) type = 'wicket';
+    else if (value === '4') type = 'four';
+    else if (value === '6') type = 'six';
+    else if (value === '0' || value === '.') type = 'dot';
+    else if (upper.includes('NB') || upper.includes('WD')) type = 'extra';
+    return { value: value === '.' ? '0' : value, type };
+  });
+  // Most recent last in Cricbuzz; take the final 6 for "recent over".
+  return balls.slice(-6);
 }
 
 function normalizeLatestPerformance(perf) {

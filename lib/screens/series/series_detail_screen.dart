@@ -1269,6 +1269,7 @@ class _TeamCard extends StatelessWidget {
               initialName: name,
               initialShortName: short,
               initialLogoUrl: team.logo,
+              initialSquad: players,
               sourceSeriesId: apiString(
                   data['seriesId'] ??
                       data['series_id'] ??

@@ -189,7 +189,7 @@ class _ReserveChip extends StatelessWidget {
     final name =
         apiString(row['name'] ?? row['playerName'] ?? row['player_name'],
             'Player');
-    final image = resolveCricbuzzImageUrl(row);
+    final image = resolvePlayerImageUrl(row);
     return InkWell(
       onTap: id.isEmpty
           ? null
@@ -249,7 +249,7 @@ class PremiumPlayerCard extends StatelessWidget {
         apiString(row['name'] ?? row['playerName'] ?? row['player_name'],
             'Player');
     final role = apiString(row['role'] ?? row['playerRole']);
-    final image = resolveCricbuzzImageUrl(row);
+    final image = resolvePlayerImageUrl(row);
     final isCaptain = _truthy(row['isCaptain']) ||
         _truthy(row['is_captain']) ||
         _truthy(row['captain']);

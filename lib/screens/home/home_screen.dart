@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import '../../app_theme.dart';
 import '../../components.dart';
 import '../../models/api_response.dart';
@@ -35,33 +38,132 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int topTab = 0;
   int category = 0;
   final CricketRepository _repository = CricketRepository();
+  final ScrollController _scrollController = ScrollController();
   late Future<ApiEnvelope<List<CricketMatch>>> _tabMatches;
-  late Future<ApiEnvelope<Map<String, dynamic>>> _homeData;
+  ApiEnvelope<List<CricketMatch>>? _tabMatchesData;
+  Timer? _pollTimer;
+  bool _polling = false;
 
   @override
   void initState() {
     super.initState();
-    _homeData = _repository.home();
-    _tabMatches = _repository.matchesForTab(topTab);
+    WidgetsBinding.instance.addObserver(this);
+    _tabMatches = _loadMatches();
+    _configurePolling();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _configurePolling();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+    }
+  }
+
+  Future<ApiEnvelope<List<CricketMatch>>> _loadMatches({
+    bool forceRefresh = false,
+  }) async {
+    final response =
+        await _repository.matchesForTab(topTab, forceRefresh: forceRefresh);
+    _tabMatchesData = response;
+    return response;
   }
 
   void _setTopTab(int value) {
     setState(() {
       topTab = value;
-      _tabMatches = _repository.matchesForTab(value);
+      _tabMatchesData = null;
+      _tabMatches = _loadMatches();
     });
+    _configurePolling();
   }
 
   Future<void> _refresh() async {
+    final oldOffset =
+        _scrollController.hasClients ? _scrollController.offset : null;
+    final matches = _loadMatches(forceRefresh: true);
+    final response = await matches;
+    if (!mounted) return;
     setState(() {
-      _homeData = _repository.home(forceRefresh: true);
-      _tabMatches = _repository.matchesForTab(topTab, forceRefresh: true);
+      _tabMatches = Future.value(response);
     });
-    await Future.wait([_homeData, _tabMatches]);
+    _restoreScroll(oldOffset);
+  }
+
+  void _configurePolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    final interval = switch (topTab) {
+      0 => const Duration(seconds: 10),
+      1 => const Duration(seconds: 90),
+      _ => null,
+    };
+    if (kDebugMode) {
+      debugPrint('[Polling] Home tab=$topTab interval=${interval?.inSeconds}s');
+    }
+    if (interval == null) return;
+    _pollTimer = Timer.periodic(interval, (_) => _silentPollVisibleTab());
+  }
+
+  Future<void> _silentPollVisibleTab() async {
+    if (_polling || !mounted) return;
+    _polling = true;
+    final oldOffset =
+        _scrollController.hasClients ? _scrollController.offset : null;
+    if (kDebugMode) {
+      debugPrint('[Polling] Home silent refresh start offset=$oldOffset');
+    }
+    try {
+      final previous = _tabMatchesData;
+      final response =
+          await _repository.matchesForTab(topTab, forceRefresh: true);
+      if (!mounted) return;
+      final changed = previous == null ||
+          jsonEncode(previous.data.map((match) => match.id + match.statusText + match.teamAScoreText + match.teamBScoreText).toList()) !=
+              jsonEncode(response.data.map((match) => match.id + match.statusText + match.teamAScoreText + match.teamBScoreText).toList());
+      _tabMatchesData = response;
+      if (changed) {
+        setState(() {});
+        _restoreScroll(oldOffset);
+      }
+      if (kDebugMode) {
+        debugPrint('[Polling] Home silent refresh changed=$changed');
+      }
+    } finally {
+      _polling = false;
+    }
+  }
+
+  void _restoreScroll(double? oldOffset) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (oldOffset != null && _scrollController.hasClients) {
+        final restoredOffset = oldOffset.clamp(
+          _scrollController.position.minScrollExtent,
+          _scrollController.position.maxScrollExtent,
+        );
+        _scrollController.jumpTo(restoredOffset);
+        if (kDebugMode) {
+          debugPrint('[Polling] Home restored offset=$restoredOffset');
+        }
+      }
+    });
   }
 
   HeroFixture _heroFromMatches(List<CricketMatch> matches) {
@@ -93,16 +195,8 @@ class _HomeScreenState extends State<HomeScreen> {
         .toHeroFixture(live: topTab == 0, finished: topTab == 2);
   }
 
-  VoidCallback _heroAction({String matchId = ''}) {
-    switch (topTab) {
-      case 0:
-        return () => widget.onWatchLive(matchId);
-      case 2:
-        return () => widget.onOpenMatchDetails(matchId);
-      default:
-        return widget.onOpenReminders;
-    }
-  }
+  HeroFixture _heroFromMatch(CricketMatch match) =>
+      match.toHeroFixture(live: topTab == 0, finished: topTab == 2);
 
   Future<bool> _hasPlayableStreams(String matchId) =>
       _repository.hasPlayableStreams(matchId);
@@ -120,7 +214,8 @@ class _HomeScreenState extends State<HomeScreen> {
       child: SafeArea(
         child: RefreshIndicator(
           onRefresh: _refresh,
-          child: ListView(
+            child: ListView(
+              controller: _scrollController,
             padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
                 context.horizontalPadding, context.mainBottomPadding),
             children: [
@@ -160,15 +255,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 22),
-              FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
-                future: _tabMatches,
-                builder: (context, snapshot) {
-                  final matches = snapshot.data?.data ?? const <CricketMatch>[];
-                  final heroMatchId = matches.isEmpty ? '' : matches.first.id;
-                  final heroMatch =
-                      matches.isEmpty ? null : matches.first;
-                  final heroFixture = _heroFromMatches(matches);
-
+              _tabMatchesData != null
+                  ? _HomeHeroSection(
+                      matches: _tabMatchesData!.data,
+                      lastUpdated: _tabMatchesData!.meta.lastUpdated,
+                      topTab: topTab,
+                      fixtureFor: _heroFromMatch,
+                      emptyFixture: _heroFromMatches(_tabMatchesData!.data),
+                      hasPlayableStreams: _hasPlayableStreams,
+                      shouldShowWatchLive: _shouldShowWatchLive,
+                      onOpenMatch: widget.onOpenMatchDetails,
+                      onWatchLive: widget.onWatchLive,
+                      onReminder: widget.onOpenReminders,
+                    )
+                  : FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
+                      future: _tabMatches,
+                      builder: (context, snapshot) {
+                        final matches =
+                            snapshot.data?.data ?? const <CricketMatch>[];
                   // Don't show hero card if no matches and it's live tab
                   if (topTab == 0 && matches.isEmpty) {
                     return const SizedBox.shrink();
@@ -177,46 +281,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (topTab == 0 && heroMatchId.isNotEmpty)
-                        heroMatch?.hasStreamInfo == true
-                            ? FutureBuilder<bool>(
-                                future: _shouldShowWatchLive(heroMatch!),
-                                builder: (context, streamSnapshot) =>
-                                    HomeHeroCard(
-                                  fixture: heroFixture,
-                                  finished: false,
-                                  live: true,
-                                  onTap: () =>
-                                      widget.onOpenMatchDetails(heroMatchId),
-                                  showButton: streamSnapshot.data == true,
-                                  onButtonTap:
-                                      _heroAction(matchId: heroMatchId),
-                                ),
-                              )
-                            : FutureBuilder<bool>(
-                                future: _hasPlayableStreams(heroMatchId),
-                                builder: (context, streamSnapshot) =>
-                                    HomeHeroCard(
-                                  fixture: heroFixture,
-                                  finished: false,
-                                  live: true,
-                                  onTap: () =>
-                                      widget.onOpenMatchDetails(heroMatchId),
-                                  showButton: streamSnapshot.data == true,
-                                  onButtonTap:
-                                      _heroAction(matchId: heroMatchId),
-                                ),
-                              )
-                      else if (matches.isNotEmpty)
+                      if (matches.isNotEmpty)
+                        _FeaturedMatchCarousel(
+                          matches: matches.take(5).toList(growable: false),
+                          topTab: topTab,
+                          fixtureFor: _heroFromMatch,
+                          hasPlayableStreams: _hasPlayableStreams,
+                          shouldShowWatchLive: _shouldShowWatchLive,
+                          onOpenMatch: widget.onOpenMatchDetails,
+                          onWatchLive: widget.onWatchLive,
+                          onReminder: widget.onOpenReminders,
+                        ),
+                      if (matches.isEmpty && topTab != 0)
                         HomeHeroCard(
-                          fixture: heroFixture,
+                          fixture: _heroFromMatches(matches),
                           finished: topTab == 2,
-                          live: topTab == 0,
-                          onTap: heroMatchId.isEmpty
-                              ? null
-                              : () => widget.onOpenMatchDetails(heroMatchId),
-                          showButton: topTab != 0,
-                          onButtonTap: _heroAction(matchId: heroMatchId),
+                          live: false,
+                          showButton: false,
                         ),
                       if (snapshot.data?.meta.lastUpdated != null) ...[
                         const SizedBox(height: 10),
@@ -230,11 +311,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ],
                   );
-                },
-              ),
+                      },
+                    ),
               const SizedBox(height: 28),
               _HomeTabContent(
                 future: _tabMatches,
+                data: _tabMatchesData,
                 topTab: topTab,
                 onRetry: () => setState(() => _tabMatches =
                     _repository.matchesForTab(topTab, forceRefresh: true)),
@@ -286,9 +368,184 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+class _FeaturedMatchCarousel extends StatefulWidget {
+  const _FeaturedMatchCarousel({
+    required this.matches,
+    required this.topTab,
+    required this.fixtureFor,
+    required this.hasPlayableStreams,
+    required this.shouldShowWatchLive,
+    required this.onOpenMatch,
+    required this.onWatchLive,
+    required this.onReminder,
+  });
+
+  final List<CricketMatch> matches;
+  final int topTab;
+  final HeroFixture Function(CricketMatch match) fixtureFor;
+  final Future<bool> Function(String matchId) hasPlayableStreams;
+  final Future<bool> Function(CricketMatch match) shouldShowWatchLive;
+  final ValueChanged<String> onOpenMatch;
+  final ValueChanged<String> onWatchLive;
+  final VoidCallback onReminder;
+
+  @override
+  State<_FeaturedMatchCarousel> createState() => _FeaturedMatchCarouselState();
+}
+
+class _HomeHeroSection extends StatelessWidget {
+  const _HomeHeroSection({
+    required this.matches,
+    required this.lastUpdated,
+    required this.topTab,
+    required this.fixtureFor,
+    required this.emptyFixture,
+    required this.hasPlayableStreams,
+    required this.shouldShowWatchLive,
+    required this.onOpenMatch,
+    required this.onWatchLive,
+    required this.onReminder,
+  });
+
+  final List<CricketMatch> matches;
+  final DateTime? lastUpdated;
+  final int topTab;
+  final HeroFixture Function(CricketMatch match) fixtureFor;
+  final HeroFixture emptyFixture;
+  final Future<bool> Function(String matchId) hasPlayableStreams;
+  final Future<bool> Function(CricketMatch match) shouldShowWatchLive;
+  final ValueChanged<String> onOpenMatch;
+  final ValueChanged<String> onWatchLive;
+  final VoidCallback onReminder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    if (topTab == 0 && matches.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (matches.isNotEmpty)
+          _FeaturedMatchCarousel(
+            matches: matches.take(5).toList(growable: false),
+            topTab: topTab,
+            fixtureFor: fixtureFor,
+            hasPlayableStreams: hasPlayableStreams,
+            shouldShowWatchLive: shouldShowWatchLive,
+            onOpenMatch: onOpenMatch,
+            onWatchLive: onWatchLive,
+            onReminder: onReminder,
+          ),
+        if (matches.isEmpty && topTab != 0)
+          HomeHeroCard(
+            fixture: emptyFixture,
+            finished: topTab == 2,
+            live: false,
+            showButton: false,
+          ),
+        if (lastUpdated != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Last updated ${lastUpdated!.toLocal()}',
+            style: TextStyle(
+              color: c.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _FeaturedMatchCarouselState extends State<_FeaturedMatchCarousel> {
+  final PageController _controller = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final height = context.w <= 400 ? 382.0 : 420.0;
+    return Column(
+      children: [
+        SizedBox(
+          height: height,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: widget.matches.length,
+            onPageChanged: (value) => setState(() => _page = value),
+            itemBuilder: (context, index) {
+              final match = widget.matches[index];
+              final fixture = widget.fixtureFor(match);
+              final live = widget.topTab == 0;
+              final finished = widget.topTab == 2;
+              if (live) {
+                final future = match.hasStreamInfo
+                    ? widget.shouldShowWatchLive(match)
+                    : widget.hasPlayableStreams(match.id);
+                return FutureBuilder<bool>(
+                  future: future,
+                  builder: (context, streamSnapshot) => HomeHeroCard(
+                    fixture: fixture,
+                    finished: false,
+                    live: true,
+                    onTap: () => widget.onOpenMatch(match.id),
+                    showButton: streamSnapshot.data == true,
+                    onButtonTap: () => widget.onWatchLive(match.id),
+                  ),
+                );
+              }
+              return HomeHeroCard(
+                fixture: fixture,
+                finished: finished,
+                live: false,
+                onTap: () => widget.onOpenMatch(match.id),
+                showButton: true,
+                onButtonTap:
+                    finished ? () => widget.onOpenMatch(match.id) : widget.onReminder,
+              );
+            },
+          ),
+        ),
+        if (widget.matches.length > 1) ...[
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < widget.matches.length; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: i == _page ? 26 : 10,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: i == _page
+                        ? c.cyan
+                        : Colors.white.withValues(alpha: .26),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _HomeTabContent extends StatelessWidget {
   const _HomeTabContent({
     required this.future,
+    required this.data,
     required this.topTab,
     required this.onRetry,
     required this.onSwitchUpcoming,
@@ -298,6 +555,7 @@ class _HomeTabContent extends StatelessWidget {
   });
 
   final Future<ApiEnvelope<List<CricketMatch>>> future;
+  final ApiEnvelope<List<CricketMatch>>? data;
   final int topTab;
   final VoidCallback onRetry;
   final VoidCallback onSwitchUpcoming;
@@ -310,7 +568,8 @@ class _HomeTabContent extends StatelessWidget {
     return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
       future: future,
       builder: (context, snapshot) {
-        final allMatches = snapshot.data?.data ?? const <CricketMatch>[];
+        final allMatches =
+            data?.data ?? snapshot.data?.data ?? const <CricketMatch>[];
         // Drop the hero match from the list so the same fixture is never
         // shown twice on the Home screen. The first match in `allMatches` is
         // promoted to the hero card right above, so we skip(1) here for the
@@ -322,7 +581,8 @@ class _HomeTabContent extends StatelessWidget {
             .map((match) => match.toCompactFixture(finished: topTab == 2))
             .toList();
 
-        if (snapshot.connectionState == ConnectionState.waiting &&
+        if (data == null &&
+            snapshot.connectionState == ConnectionState.waiting &&
             allMatches.isEmpty) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
@@ -330,7 +590,7 @@ class _HomeTabContent extends StatelessWidget {
           );
         }
 
-        if (snapshot.hasError && allMatches.isEmpty) {
+        if (data == null && snapshot.hasError && allMatches.isEmpty) {
           return _HomeStateCard(
             icon: Icons.cloud_off_rounded,
             title: 'Unable to refresh cricket data',

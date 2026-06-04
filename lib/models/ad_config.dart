@@ -2,9 +2,15 @@ import 'package:flutter/foundation.dart';
 
 import 'package:cricpro_flutter/api_models.dart';
 
+/// Web-safe iOS check. Avoids importing `dart:io` (which is unavailable on web)
+/// so [AdConfig.fromAppConfig] can run on every platform during startup.
+bool get _isIos =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
 enum AdPlacement {
   home,
   matches,
+  schedule,
   matchDetails,
   news,
   series,
@@ -12,10 +18,111 @@ enum AdPlacement {
   livePlayer,
 }
 
+/// The independent ad networks CricPro can serve through.
+enum AdNetwork { admob, unity, meta }
+
+AdNetwork? adNetworkFromString(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'admob':
+      return AdNetwork.admob;
+    case 'unity':
+      return AdNetwork.unity;
+    case 'meta':
+    case 'facebook':
+    case 'fan':
+      return AdNetwork.meta;
+  }
+  return null;
+}
+
+String adNetworkName(AdNetwork network) {
+  switch (network) {
+    case AdNetwork.admob:
+      return 'admob';
+    case AdNetwork.unity:
+      return 'unity';
+    case AdNetwork.meta:
+      return 'meta';
+  }
+}
+
+/// The ad type shown between tapping Watch Live and opening the stream.
+enum StreamPreRollAdType { none, interstitial, rewardedInterstitial, rewardedVideo }
+
+StreamPreRollAdType streamPreRollFromString(String value) {
+  switch (value.trim().toLowerCase()) {
+    case 'interstitial':
+      return StreamPreRollAdType.interstitial;
+    case 'rewarded_interstitial':
+    case 'rewardedinterstitial':
+      return StreamPreRollAdType.rewardedInterstitial;
+    case 'rewarded_video':
+    case 'rewardedvideo':
+    case 'rewarded':
+      return StreamPreRollAdType.rewardedVideo;
+    case 'none':
+      return StreamPreRollAdType.none;
+  }
+  return StreamPreRollAdType.rewardedVideo;
+}
+
+/// Per-network unit / placement IDs resolved for the current platform.
+class AdNetworkConfig {
+  const AdNetworkConfig({
+    required this.network,
+    required this.enabled,
+    required this.testMode,
+    required this.appId,
+    required this.gameId,
+    required this.bannerId,
+    required this.nativeId,
+    required this.interstitialId,
+    required this.rewardedId,
+    required this.rewardedInterstitialId,
+    required this.appOpenId,
+    required this.directSupported,
+  });
+
+  final AdNetwork network;
+  final bool enabled;
+  final bool testMode;
+
+  /// AdMob/Meta app id, or Unity game id depending on the network.
+  final String? appId;
+  final String? gameId;
+  final String? bannerId;
+  final String? nativeId;
+  final String? interstitialId;
+  final String? rewardedId;
+  final String? rewardedInterstitialId;
+  final String? appOpenId;
+
+  /// Whether the Flutter client has a working direct adapter for this network.
+  final bool directSupported;
+
+  static AdNetworkConfig empty(AdNetwork network) => AdNetworkConfig(
+        network: network,
+        enabled: false,
+        testMode: kDebugMode,
+        appId: null,
+        gameId: null,
+        bannerId: null,
+        nativeId: null,
+        interstitialId: null,
+        rewardedId: null,
+        rewardedInterstitialId: null,
+        appOpenId: null,
+        directSupported: network == AdNetwork.admob,
+      );
+}
+
 class AdConfig {
   const AdConfig({
     required this.enabled,
     required this.testMode,
+    required this.consentRequired,
+    required this.primaryNetwork,
+    required this.fallbackOrder,
     required this.admobEnabled,
     required this.unityEnabled,
     required this.metaEnabled,
@@ -24,20 +131,23 @@ class AdConfig {
     required this.interstitialEnabled,
     required this.rewardedEnabled,
     required this.rewardedRequiredForPremiumStreams,
-    required this.androidBannerId,
-    required this.androidNativeId,
-    required this.androidInterstitialId,
-    required this.androidRewardedId,
-    required this.iosBannerId,
-    required this.iosNativeId,
-    required this.iosInterstitialId,
-    required this.iosRewardedId,
+    required this.appOpenEnabled,
+    required this.appOpenShowOnColdStart,
+    required this.appOpenShowOnResume,
+    required this.streamPreRollAdType,
+    required this.preRollForFreeStreams,
+    required this.preRollForPremiumStreams,
+    required this.preRollAllowFallback,
+    required this.networks,
     required this.placements,
     required this.frequency,
   });
 
   final bool enabled;
   final bool testMode;
+  final bool consentRequired;
+  final AdNetwork primaryNetwork;
+  final List<AdNetwork> fallbackOrder;
   final bool admobEnabled;
   final bool unityEnabled;
   final bool metaEnabled;
@@ -46,20 +156,23 @@ class AdConfig {
   final bool interstitialEnabled;
   final bool rewardedEnabled;
   final bool rewardedRequiredForPremiumStreams;
-  final String? androidBannerId;
-  final String? androidNativeId;
-  final String? androidInterstitialId;
-  final String? androidRewardedId;
-  final String? iosBannerId;
-  final String? iosNativeId;
-  final String? iosInterstitialId;
-  final String? iosRewardedId;
+  final bool appOpenEnabled;
+  final bool appOpenShowOnColdStart;
+  final bool appOpenShowOnResume;
+  final StreamPreRollAdType streamPreRollAdType;
+  final bool preRollForFreeStreams;
+  final bool preRollForPremiumStreams;
+  final bool preRollAllowFallback;
+  final Map<AdNetwork, AdNetworkConfig> networks;
   final Map<String, dynamic> placements;
   final Map<String, dynamic> frequency;
 
-  static const empty = AdConfig(
+  static final empty = AdConfig(
     enabled: false,
     testMode: true,
+    consentRequired: false,
+    primaryNetwork: AdNetwork.admob,
+    fallbackOrder: const [AdNetwork.admob, AdNetwork.unity, AdNetwork.meta],
     admobEnabled: true,
     unityEnabled: false,
     metaEnabled: false,
@@ -68,23 +181,25 @@ class AdConfig {
     interstitialEnabled: false,
     rewardedEnabled: false,
     rewardedRequiredForPremiumStreams: false,
-    androidBannerId: null,
-    androidNativeId: null,
-    androidInterstitialId: null,
-    androidRewardedId: null,
-    iosBannerId: null,
-    iosNativeId: null,
-    iosInterstitialId: null,
-    iosRewardedId: null,
-    placements: {},
-    frequency: {},
+    appOpenEnabled: false,
+    appOpenShowOnColdStart: true,
+    appOpenShowOnResume: true,
+    streamPreRollAdType: StreamPreRollAdType.rewardedVideo,
+    preRollForFreeStreams: false,
+    preRollForPremiumStreams: true,
+    preRollAllowFallback: false,
+    networks: {
+      AdNetwork.admob: AdNetworkConfig.empty(AdNetwork.admob),
+      AdNetwork.unity: AdNetworkConfig.empty(AdNetwork.unity),
+      AdNetwork.meta: AdNetworkConfig.empty(AdNetwork.meta),
+    },
+    placements: const {},
+    frequency: const {},
   );
 
   factory AdConfig.fromAppConfig(dynamic value) {
     final root = apiMap(value);
     final ads = apiMap(root['ads']);
-    final android = apiMap(ads['android'] ?? ads['units']?['android']);
-    final ios = apiMap(ads['ios'] ?? ads['units']?['ios']);
     final placements = apiMap(ads['placements'] ?? ads['placementConfig']);
     final frequency = apiMap(ads['frequency'] ?? ads['frequencyConfig']);
 
@@ -92,43 +207,184 @@ class AdConfig {
       ads['enabled'] ?? root['enableAds'] ?? root['features']?['adsEnabled'],
       false,
     );
-    final testMode = kDebugMode || apiBool(ads['testMode'] ?? ads['test_mode'], false);
+    final testMode =
+        kDebugMode || apiBool(ads['testMode'] ?? ads['test_mode'], false);
+
+    final admobEnabled =
+        apiBool(ads['admobEnabled'] ?? ads['admob_enabled'], true);
+    final unityEnabled =
+        apiBool(ads['unityEnabled'] ?? ads['unity_enabled'], false);
+    final metaEnabled =
+        apiBool(ads['metaEnabled'] ?? ads['meta_enabled'], false);
+
+    final networksRaw = apiMap(ads['networks']);
+    final networks = <AdNetwork, AdNetworkConfig>{
+      AdNetwork.admob: _networkConfig(
+        AdNetwork.admob,
+        apiMap(networksRaw['admob']),
+        legacy: ads,
+        enabledFallback: admobEnabled,
+        testMode: testMode,
+      ),
+      AdNetwork.unity: _networkConfig(
+        AdNetwork.unity,
+        apiMap(networksRaw['unity']),
+        legacy: ads,
+        enabledFallback: unityEnabled,
+        testMode: testMode,
+      ),
+      AdNetwork.meta: _networkConfig(
+        AdNetwork.meta,
+        apiMap(networksRaw['meta']),
+        legacy: ads,
+        enabledFallback: metaEnabled,
+        testMode: testMode,
+      ),
+    };
+
+    final primary =
+        adNetworkFromString(apiString(ads['primaryNetwork'])) ?? AdNetwork.admob;
+    final fallback = _parseFallbackOrder(ads['fallbackOrder'], primary);
+
+    final appOpen = apiMap(ads['appOpen'] ?? ads['app_open']);
 
     return AdConfig(
       enabled: enabled,
       testMode: testMode,
-      admobEnabled: apiBool(ads['admobEnabled'] ?? ads['admob_enabled'], true),
-      unityEnabled: apiBool(ads['unityEnabled'] ?? ads['unity_enabled'], false),
-      metaEnabled: apiBool(ads['metaEnabled'] ?? ads['meta_enabled'], false),
+      consentRequired:
+          apiBool(ads['consentRequired'] ?? ads['consent_required'], false),
+      primaryNetwork: primary,
+      fallbackOrder: fallback,
+      admobEnabled: admobEnabled,
+      unityEnabled: unityEnabled,
+      metaEnabled: metaEnabled,
       bannerEnabled: apiBool(ads['bannerEnabled'] ?? ads['banner_enabled'], true),
       nativeEnabled: apiBool(ads['nativeEnabled'] ?? ads['native_enabled'], true),
       interstitialEnabled:
           apiBool(ads['interstitialEnabled'] ?? ads['interstitial_enabled'], true),
-      rewardedEnabled: apiBool(ads['rewardedEnabled'] ?? ads['rewarded_enabled'], false),
+      rewardedEnabled:
+          apiBool(ads['rewardedEnabled'] ?? ads['rewarded_enabled'], false),
       rewardedRequiredForPremiumStreams: apiBool(
         ads['rewardedRequiredForPremiumStreams'] ??
             ads['rewarded_required_for_premium_streams'],
         false,
       ),
-      androidBannerId:
-          _text(android['bannerId'] ?? android['banner_id'] ?? ads['android_banner_id']),
-      androidNativeId:
-          _text(android['nativeId'] ?? android['native_id'] ?? ads['android_native_id']),
-      androidInterstitialId: _text(android['interstitialId'] ??
-          android['interstitial_id'] ??
-          ads['android_interstitial_id']),
-      androidRewardedId: _text(
-          android['rewardedId'] ?? android['rewarded_id'] ?? ads['android_rewarded_id']),
-      iosBannerId: _text(ios['bannerId'] ?? ios['banner_id'] ?? ads['ios_banner_id']),
-      iosNativeId: _text(ios['nativeId'] ?? ios['native_id'] ?? ads['ios_native_id']),
-      iosInterstitialId:
-          _text(ios['interstitialId'] ?? ios['interstitial_id'] ?? ads['ios_interstitial_id']),
-      iosRewardedId:
-          _text(ios['rewardedId'] ?? ios['rewarded_id'] ?? ads['ios_rewarded_id']),
+      appOpenEnabled: apiBool(appOpen['enabled'] ?? ads['appOpenEnabled'], false),
+      appOpenShowOnColdStart:
+          apiBool(appOpen['showOnColdStart'] ?? appOpen['show_on_cold_start'], true),
+      appOpenShowOnResume:
+          apiBool(appOpen['showOnResume'] ?? appOpen['show_on_resume'], true),
+      streamPreRollAdType: streamPreRollFromString(
+        apiString(ads['liveStreamPreRollAdType'] ??
+            ads['live_stream_pre_roll_ad_type'] ??
+            'rewarded_video'),
+      ),
+      preRollForFreeStreams: apiBool(
+        ads['preRollForFreeStreams'] ?? ads['pre_roll_free_streams'],
+        false,
+      ),
+      preRollForPremiumStreams: apiBool(
+        ads['preRollForPremiumStreams'] ?? ads['pre_roll_premium_streams'],
+        true,
+      ),
+      preRollAllowFallback: apiBool(
+        ads['preRollAllowFallback'] ?? ads['pre_roll_allow_fallback'],
+        false,
+      ),
+      networks: networks,
       placements: placements,
       frequency: frequency,
     );
   }
+
+  static AdNetworkConfig _networkConfig(
+    AdNetwork network,
+    Map<String, dynamic> data, {
+    required Map<String, dynamic> legacy,
+    required bool enabledFallback,
+    required bool testMode,
+  }) {
+    final platform = apiMap(
+      _isIos ? (data['ios'] ?? data['iOS']) : data['android'],
+    );
+    final appIdMap = apiMap(data['appId'] ?? data['app_id']);
+    final gameIdMap = apiMap(data['gameId'] ?? data['game_id']);
+    final isIos = _isIos;
+
+    String? legacyUnit(String kind) {
+      // Legacy flat AdMob fields (android_banner_id, ios_rewarded_id, ...).
+      if (network != AdNetwork.admob) return null;
+      final prefix = isIos ? 'ios' : 'android';
+      return _text(legacy['${prefix}_${kind}_id']);
+    }
+
+    return AdNetworkConfig(
+      network: network,
+      enabled: apiBool(data['enabled'], enabledFallback),
+      testMode: apiBool(data['testMode'] ?? data['test_mode'], testMode),
+      appId: _text(isIos ? (appIdMap['ios'] ?? appIdMap['iOS']) : appIdMap['android']),
+      gameId:
+          _text(isIos ? (gameIdMap['ios'] ?? gameIdMap['iOS']) : gameIdMap['android']),
+      bannerId: _text(platform['bannerId'] ?? platform['banner_id']) ??
+          legacyUnit('banner'),
+      nativeId: _text(platform['nativeId'] ?? platform['native_id']) ??
+          legacyUnit('native'),
+      interstitialId:
+          _text(platform['interstitialId'] ?? platform['interstitial_id']) ??
+              legacyUnit('interstitial'),
+      rewardedId: _text(platform['rewardedId'] ?? platform['rewarded_id']) ??
+          legacyUnit('rewarded'),
+      rewardedInterstitialId: _text(platform['rewardedInterstitialId'] ??
+              platform['rewarded_interstitial_id']) ??
+          legacyUnit('rewarded_interstitial'),
+      appOpenId: _text(platform['appOpenId'] ?? platform['app_open_id']) ??
+          legacyUnit('app_open'),
+      directSupported:
+          network == AdNetwork.admob || apiBool(data['directSupported'], false),
+    );
+  }
+
+  static List<AdNetwork> _parseFallbackOrder(dynamic raw, AdNetwork primary) {
+    final list = <AdNetwork>[];
+    if (raw is List) {
+      for (final item in raw) {
+        final n = adNetworkFromString(item.toString());
+        if (n != null && !list.contains(n)) list.add(n);
+      }
+    } else if (raw is String) {
+      for (final part in raw.split(',')) {
+        final n = adNetworkFromString(part);
+        if (n != null && !list.contains(n)) list.add(n);
+      }
+    }
+    // Guarantee the primary is first, then every network appears once.
+    final ordered = <AdNetwork>[primary];
+    for (final n in list) {
+      if (!ordered.contains(n)) ordered.add(n);
+    }
+    for (final n in AdNetwork.values) {
+      if (!ordered.contains(n)) ordered.add(n);
+    }
+    return ordered;
+  }
+
+  /// Networks to try, in waterfall order, that are globally enabled for ads.
+  List<AdNetwork> get orderedNetworks =>
+      fallbackOrder.where(isNetworkEnabled).toList(growable: false);
+
+  bool isNetworkEnabled(AdNetwork network) {
+    switch (network) {
+      case AdNetwork.admob:
+        return admobEnabled;
+      case AdNetwork.unity:
+        return unityEnabled;
+      case AdNetwork.meta:
+        return metaEnabled;
+    }
+  }
+
+  AdNetworkConfig networkConfig(AdNetwork network) =>
+      networks[network] ?? AdNetworkConfig.empty(network);
 
   int get minimumInterstitialSeconds =>
       apiInt(frequency['minimumSecondsBetweenInterstitials']) ??
@@ -145,24 +401,137 @@ class AdConfig {
       apiInt(frequency['frequencyCap']) ??
       1;
 
+  int get minimumAppOpenSeconds =>
+      apiInt(frequency['minimumSecondsBetweenAppOpenAds']) ??
+      apiInt(frequency['minimum_seconds_between_app_open_ads']) ??
+      120;
+
+  int get maxAppOpenPerSession =>
+      apiInt(frequency['maxAppOpenAdsPerSession']) ??
+      apiInt(frequency['max_app_open_ads_per_session']) ??
+      4;
+
+  /// Minimum seconds that must elapse between ANY two full-screen ads
+  /// (interstitial, rewarded, rewarded interstitial, app open). This is the
+  /// cross-format cooldown that prevents e.g. interstitial → app open back to
+  /// back.
+  int get minimumFullScreenSeconds =>
+      apiInt(frequency['minimumSecondsBetweenFullScreenAds']) ??
+      apiInt(frequency['minimum_seconds_between_full_screen_ads']) ??
+      90;
+
   bool bannerFor(AdPlacement placement) {
-    if (!enabled || !admobEnabled || !bannerEnabled) return false;
+    if (!enabled || !bannerEnabled) return false;
     return _placementBool(placement, 'bannerEnabled', true);
   }
 
   bool nativeFor(AdPlacement placement) {
-    // Native ads stay off until Android/iOS native factories are implemented.
+    // Native ads need the platform-registered native ad factory. It is wired up
+    // for Android ("cricproNative"); other platforms hide native until added.
     if (!nativeFactoryAvailable) return false;
-    if (!enabled || !admobEnabled || !nativeEnabled) return false;
+    if (!enabled || !nativeEnabled) return false;
+    // Match Details never renders native ads (too close to live content /
+    // Watch Live action). Ignore the admin toggle here by design.
+    if (placement == AdPlacement.matchDetails) return false;
     return _placementBool(placement, 'nativeEnabled', true);
   }
 
-  static bool get nativeFactoryAvailable => false;
+  /// Whether an interstitial may show on the natural transition for
+  /// [placement]. Respects the global interstitial toggle AND the per-placement
+  /// admin switch (defaults to true when unspecified).
+  bool interstitialFor(AdPlacement placement) {
+    if (!canShowInterstitial) return false;
+    return _placementBool(placement, 'interstitialEnabled', true);
+  }
 
-  bool get canShowInterstitial =>
-      enabled && admobEnabled && interstitialEnabled;
+  /// Whether the interstitial after leaving the live player is enabled
+  /// (defaults OFF — opt-in only).
+  bool get interstitialAfterPlayer =>
+      canShowInterstitial &&
+      _placementBool(AdPlacement.livePlayer, 'interstitialAfterEnabled', false);
 
-  bool get canShowRewarded => enabled && admobEnabled && rewardedEnabled;
+  static bool get nativeFactoryAvailable =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  bool get canShowInterstitial => enabled && interstitialEnabled;
+
+  bool get canShowRewarded => enabled && rewardedEnabled;
+
+  /// Rewarded unlock for premium streams is allowed when ads are on AND either
+  /// the general rewarded toggle OR the "rewarded required for premium streams"
+  /// admin switch is enabled. This is the gate the live player should use so a
+  /// premium stream is never opened without showing the rewarded ad.
+  bool get canShowRewardedForPremium {
+    if (!enabled) return false;
+    if (!_placementBool(AdPlacement.livePlayer,
+        'premiumStreamRewardedEnabled', true)) {
+      return false;
+    }
+    return rewardedEnabled || rewardedRequiredForPremiumStreams;
+  }
+
+  bool get appOpenAllowed => enabled && appOpenEnabled;
+
+  /// Whether the live-stream rewarded-interstitial placement is enabled.
+  bool get rewardedInterstitialForLivePlayer => _placementBool(
+      AdPlacement.livePlayer, 'rewardedInterstitialEnabled', true);
+
+  /// Whether the live-stream rewarded-video placement is enabled.
+  bool get rewardedVideoForLivePlayer =>
+      _placementBool(AdPlacement.livePlayer, 'premiumStreamRewardedEnabled', true);
+
+  /// Decides which pre-roll ad (if any) must play between tapping Watch Live
+  /// and opening the stream. Returns [StreamPreRollAdType.none] when no ad
+  /// should show.
+  ///
+  /// The admin-selected type is honored exactly. We NEVER silently fall back to
+  /// a different format unless [preRollAllowFallback] is explicitly enabled —
+  /// if the selected type can't run, we return [none] (open directly) for
+  /// optional streams, and the caller blocks required premium streams.
+  StreamPreRollAdType resolveStreamPreRoll({
+    required bool isPremium,
+    required bool requiresRewardAd,
+  }) {
+    if (!enabled) return StreamPreRollAdType.none;
+    final type = streamPreRollAdType;
+    if (type == StreamPreRollAdType.none) return StreamPreRollAdType.none;
+
+    final isPremiumGated = isPremium && requiresRewardAd;
+
+    // Respect free / premium pre-roll switches.
+    if (isPremiumGated) {
+      if (!preRollForPremiumStreams) return StreamPreRollAdType.none;
+    } else {
+      if (!preRollForFreeStreams) return StreamPreRollAdType.none;
+    }
+
+    // Validate the chosen type can actually run; honor it exactly.
+    switch (type) {
+      case StreamPreRollAdType.none:
+        return StreamPreRollAdType.none;
+      case StreamPreRollAdType.interstitial:
+        if (!canShowInterstitial) return StreamPreRollAdType.none;
+        return StreamPreRollAdType.interstitial;
+      case StreamPreRollAdType.rewardedVideo:
+        if (!canShowRewardedForPremium || !rewardedVideoForLivePlayer) {
+          return _preRollFallback();
+        }
+        return StreamPreRollAdType.rewardedVideo;
+      case StreamPreRollAdType.rewardedInterstitial:
+        if (!canShowRewardedForPremium || !rewardedInterstitialForLivePlayer) {
+          return _preRollFallback();
+        }
+        return StreamPreRollAdType.rewardedInterstitial;
+    }
+  }
+
+  /// Only used when the admin-selected rewarded type is unavailable. Returns a
+  /// fallback ONLY if [preRollAllowFallback] is on, otherwise [none].
+  StreamPreRollAdType _preRollFallback() {
+    if (!preRollAllowFallback) return StreamPreRollAdType.none;
+    if (canShowInterstitial) return StreamPreRollAdType.interstitial;
+    return StreamPreRollAdType.none;
+  }
 
   bool _placementBool(AdPlacement placement, String key, bool fallback) {
     final raw = apiMap(placements[_placementKey(placement)]);
@@ -173,6 +542,7 @@ class AdConfig {
     return switch (placement) {
       AdPlacement.home => 'home',
       AdPlacement.matches => 'matches',
+      AdPlacement.schedule => 'schedule',
       AdPlacement.matchDetails => 'matchDetails',
       AdPlacement.news => 'news',
       AdPlacement.series => 'series',

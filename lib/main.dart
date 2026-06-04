@@ -26,7 +26,9 @@ import 'package:cricpro_flutter/screens/common/notifications_screen.dart';
 import 'package:cricpro_flutter/screens/player/player_detail_screen.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 import 'package:cricpro_flutter/services/ad_service.dart';
+import 'package:cricpro_flutter/services/ads/ads_manager.dart';
 import 'package:cricpro_flutter/services/notification_service.dart';
+import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,15 +44,35 @@ class CricProApp extends StatefulWidget {
   State<CricProApp> createState() => _CricProAppState();
 }
 
-class _CricProAppState extends State<CricProApp> {
+class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
   bool dark = true;
   final CricketRepository _repository = CricketRepository();
   AppConfig _appConfig = const AppConfig(values: {});
+  bool _adsReady = false;
+  bool _appOpenColdStartDone = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadAppConfig();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // App Open on resume — only when enabled, config loaded, and safe.
+    if (state == AppLifecycleState.resumed &&
+        _adsReady &&
+        AdsManager.instance.config.appOpenAllowed &&
+        AdsManager.instance.config.appOpenShowOnResume) {
+      AdsManager.instance.maybeShowAppOpen();
+    }
   }
 
   Future<void> _loadAppConfig() async {
@@ -59,15 +81,32 @@ class _CricProAppState extends State<CricProApp> {
       if (mounted) {
         final config = AppConfig.fromJson(response.data);
         await AdService.instance.initialize(AdConfig.fromAppConfig(response.data));
+        _adsReady = true;
+        // Warm full-screen formats so the first eligible transition can show.
+        AdsManager.instance.preloadInterstitial();
+        AdsManager.instance.preloadAppOpen();
         await NotificationService.instance.initialize(
           config,
           onDeepLink: _handleNotificationDeepLink,
         );
         setState(() => _appConfig = config);
+        _maybeShowColdStartAppOpen();
       }
     } catch (_) {
       // The app can still render with built-in defaults when config is unavailable.
     }
+  }
+
+  /// Shows the cold-start App Open ad once, after the first frame so the UI is
+  /// visible first (policy-safe timing). No-op unless enabled in admin config.
+  void _maybeShowColdStartAppOpen() {
+    if (_appOpenColdStartDone) return;
+    final ads = AdsManager.instance.config;
+    if (!ads.appOpenAllowed || !ads.appOpenShowOnColdStart) return;
+    _appOpenColdStartDone = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AdsManager.instance.maybeShowAppOpen();
+    });
   }
 
   @override
@@ -172,23 +211,36 @@ class _RootShellState extends State<RootShell> {
   /// Opens the match details screen. Accepts a positional [matchId] so it
   /// can be passed as a `ValueChanged<String>` callback directly. Empty
   /// strings are tolerated and surface the demo hero.
-  void _openMatch([String matchId = '']) => _push(MatchDetailsScreen(
-        matchId: matchId,
-        onWatchLive: (id) => _openLivePlayer(matchId: id),
-      ));
+  void _openMatch([String matchId = '']) {
+    // Interstitial on a natural transition (gated by admin toggle + frequency).
+    AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.matchDetails);
+    _push(MatchDetailsScreen(
+      matchId: matchId,
+      onWatchLive: (id) => _openLivePlayer(matchId: id),
+    ));
+  }
 
-  void _openLivePlayer({String matchId = ''}) =>
-      _push(LivePlayerScreen(matchId: matchId));
+  void _openLivePlayer({String matchId = ''}) async {
+    await _push(LivePlayerScreen(matchId: matchId));
+    // After the user leaves the live player, optionally show an interstitial
+    // (opt-in via admin "after player" toggle). Never during playback.
+    if (AdsManager.instance.config.interstitialAfterPlayer) {
+      AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.livePlayer);
+    }
+  }
 
-  void _openSeries({int initialTab = 0}) => _push(SeriesListScreen(
-        onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
-          seriesId: seriesId,
-          initialTab: initialTab,
-          onOpenReminders: () => showReminderSheet(context),
-          onOpenCalendar: () => showCalendarSheet(context),
-          onOpenPlayer: () => _push(const PlayerDetailScreen()),
-        )),
-      ));
+  void _openSeries({int initialTab = 0}) {
+    AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.series);
+    _push(SeriesListScreen(
+      onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
+        seriesId: seriesId,
+        initialTab: initialTab,
+        onOpenReminders: () => showReminderSheet(context),
+        onOpenCalendar: () => showCalendarSheet(context),
+        onOpenPlayer: () => _push(const PlayerDetailScreen()),
+      )),
+    ));
+  }
 
   void _openNotifications() => _push(const NotificationsScreen());
 
@@ -196,8 +248,10 @@ class _RootShellState extends State<RootShell> {
 
   void _openReminders() => showReminderSheet(context);
 
-  void _openArticle(NewsArticle article) =>
-      _push(NewsDetailScreen(article: article));
+  void _openArticle(NewsArticle article) {
+    AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.news);
+    _push(NewsDetailScreen(article: article));
+  }
 
   void _openHighlights() => _push(HighlightsScreen(
         onOpenNotifications: _openNotifications,
@@ -260,9 +314,33 @@ class _RootShellState extends State<RootShell> {
         ),
         child: KeyedSubtree(key: ValueKey(active), child: body),
       ),
-      bottomNavigationBar: BottomNav(
-          active: active, onTab: (tab) => setState(() => active = tab)),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Sticky bottom banner above the bottom navigation. Renders nothing
+          // when ads are disabled, the placement is off, or no ad fills.
+          StickyBannerBar(placement: _bannerPlacementForTab(active)),
+          BottomNav(
+              active: active, onTab: (tab) => setState(() => active = tab)),
+        ],
+      ),
     );
+  }
+
+  /// Maps the active tab to its banner placement (null = no sticky banner).
+  AdPlacement? _bannerPlacementForTab(AppTab tab) {
+    switch (tab) {
+      case AppTab.home:
+        return AdPlacement.home;
+      case AppTab.matches:
+        return AdPlacement.matches;
+      case AppTab.schedule:
+        return AdPlacement.schedule;
+      case AppTab.news:
+        return AdPlacement.news;
+      case AppTab.more:
+        return null;
+    }
   }
 
   Future<void> _push(Widget screen) => Navigator.of(context).push(

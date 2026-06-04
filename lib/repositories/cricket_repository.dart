@@ -38,7 +38,7 @@ class CricketRepository {
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchDetail(String matchId,
           {bool forceRefresh = false}) =>
-      _cached('match:$matchId:detail', const Duration(seconds: 10),
+      _cached('match:$matchId:detail', const Duration(seconds: 5),
           () => _service.matchDetail(matchId),
           forceRefresh: forceRefresh);
 
@@ -50,19 +50,25 @@ class CricketRepository {
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchScorecard(String matchId,
           {bool forceRefresh = false}) =>
-      _cached('match:$matchId:scorecard', const Duration(seconds: 30),
+      _cached('match:$matchId:scorecard', const Duration(seconds: 5),
           () => _service.matchScorecard(matchId),
+          forceRefresh: forceRefresh);
+
+  Future<ApiEnvelope<Map<String, dynamic>>> matchLiveCenter(String matchId,
+          {bool forceRefresh = false}) =>
+      _cached('match:$matchId:live-center', const Duration(seconds: 4),
+          () => _service.matchLiveCenter(matchId),
           forceRefresh: forceRefresh);
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId,
           {bool forceRefresh = false}) =>
-      _cached('match:$matchId:commentary', const Duration(seconds: 30),
+      _cached('match:$matchId:commentary', const Duration(seconds: 5),
           () => _service.matchCommentary(matchId),
           forceRefresh: forceRefresh);
 
   Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId,
           {bool forceRefresh = false}) =>
-      _cached('match:$matchId:overs', const Duration(seconds: 20),
+      _cached('match:$matchId:overs', const Duration(seconds: 5),
           () => _service.matchOvers(matchId),
           forceRefresh: forceRefresh);
 

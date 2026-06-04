@@ -34,6 +34,9 @@ class CricketApiService {
   Future<ApiEnvelope<Map<String, dynamic>>> matchScorecard(String matchId) =>
       _map('/match/$matchId/scorecard');
 
+  Future<ApiEnvelope<Map<String, dynamic>>> matchLiveCenter(String matchId) =>
+      _map('/match/$matchId/live-center', allowFailure: true);
+
   Future<ApiEnvelope<Map<String, dynamic>>> matchCommentary(String matchId,
       {int page = 1, int limit = 50}) async {
     final json = await _client.get(

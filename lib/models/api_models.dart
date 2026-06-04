@@ -165,7 +165,7 @@ String? resolveCricbuzzImageUrl(dynamic value) {
   }
   final json = apiMap(value);
   final imageDetails = apiMap(json['imageDetails'] ?? json['image_details']);
-  return resolveCricbuzzImageUrlFromFields(
+  final resolved = resolveCricbuzzImageUrlFromFields(
     logoUrl: json['logo_url'] ??
         json['logoUrl'] ??
         json['logoURL'] ??
@@ -186,6 +186,18 @@ String? resolveCricbuzzImageUrl(dynamic value) {
         imageDetails['imageId'] ??
         imageDetails['image_id'],
   );
+  if (resolved != null) return resolved;
+
+  return resolveKnownTeamLogoUrl(
+    id: json['id'] ?? json['team_id'] ?? json['teamId'],
+    name: json['name'] ?? json['teamName'] ?? json['fullName'],
+    shortName: json['short_name'] ??
+        json['shortName'] ??
+        json['teamShort'] ??
+        json['team_short'] ??
+        json['abbr'] ??
+        json['code'],
+  );
 }
 
 String? resolveCricbuzzImageUrlFromFields({
@@ -202,6 +214,66 @@ String? resolveCricbuzzImageUrlFromFields({
       imageKey.startsWith('c') ? imageKey.substring(1) : imageKey;
   return 'https://static.cricbuzz.com/a/img/v1/i1/c$normalized/i.jpg';
 }
+
+String? resolveKnownTeamLogoUrl({
+  dynamic id,
+  dynamic name,
+  dynamic shortName,
+}) {
+  final candidates = [
+    apiString(id),
+    apiString(shortName),
+    apiString(name),
+  ].map(_normalizeTeamKey).where((value) => value.isNotEmpty);
+
+  for (final key in candidates) {
+    final imageId = _knownTeamImageIds[key];
+    if (imageId != null) {
+      return resolveCricbuzzImageUrlFromFields(imageId: imageId);
+    }
+  }
+  return null;
+}
+
+String _normalizeTeamKey(String value) {
+  return value
+      .trim()
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^A-Z0-9]+'), ' ');
+}
+
+const Map<String, String> _knownTeamImageIds = {
+  '5': '776254',
+  'SL': '776254',
+  'SRI LANKA': '776254',
+  '10': '776191',
+  'WI': '776191',
+  'WEST INDIES': '776191',
+  '2': '776182',
+  'IND': '776182',
+  'INDIA': '776182',
+  '96': '778316',
+  'AFG': '778316',
+  'AFGHANISTAN': '778316',
+  '3': '776308',
+  'PAK': '776308',
+  'PAKISTAN': '776308',
+  '4': '776202',
+  'AUS': '776202',
+  'AUSTRALIA': '776202',
+  '9': '776241',
+  'ENG': '776241',
+  'ENGLAND': '776241',
+  '13': '776263',
+  'NZ': '776263',
+  'NEW ZEALAND': '776263',
+  '11': '776313',
+  'SA': '776313',
+  'SOUTH AFRICA': '776313',
+  '6': '776210',
+  'BAN': '776210',
+  'BANGLADESH': '776210',
+};
 
 /// Normalizes cricket overs format.
 /// Converts invalid formats like 19.6 to 20.0 (6 balls = 1 over).

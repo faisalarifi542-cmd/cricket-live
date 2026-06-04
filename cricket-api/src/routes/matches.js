@@ -596,6 +596,498 @@ export default async function matchRoutes(fastify) {
     }
   });
 
+  // Build the merged Live Center payload from miniscore + commentary +
+  // scorecard. Each section is included only when it carries real data.
+  function buildLiveCenterPayload({
+    matchId,
+    detail,
+    commentary,
+    scorecard,
+    fullCommentary,
+    overByOver,
+    ballsMap,
+    quickAccess,
+  }) {
+    const base = detail?.live_center || {};
+    const status = base.status || detail?.status || 'upcoming';
+    const isFinished = base.match_state === 'finished'
+      || status === 'completed'
+      || status === 'abandoned'
+      || status === 'no_result';
+    const inningsId = resolveCurrentInningsId(detail, scorecard, fullCommentary, overByOver, ballsMap);
+    const fullLines = Array.isArray(fullCommentary?.commentary) ? fullCommentary.commentary : [];
+    const basicLines = Array.isArray(commentary) ? commentary : [];
+    const allCommentary = mergeCommentaryLines(fullLines, basicLines);
+    const overRows = Array.isArray(overByOver?.overs) ? overByOver.overs : [];
+    const ballRows = Array.isArray(ballsMap?.balls) ? ballsMap.balls : [];
+
+    // Current batters: prefer miniscore; fall back to not-out batters in the
+    // latest scorecard innings (handles brief gaps between balls/over breaks).
+    let currentBatters = Array.isArray(base.current_batters) ? base.current_batters : [];
+    if (!isFinished && currentBatters.length === 0 && Array.isArray(ballsMap?.batters)) {
+      currentBatters = ballsMap.batters
+        .filter((b) => b && b.name)
+        .slice(0, 2)
+        .map((b, idx) => ({
+          player_id: String(b.id || b.player_id || ''),
+          name: b.name,
+          runs: b.runs || 0,
+          balls: b.balls || 0,
+          fours: b.fours || 0,
+          sixes: b.sixes || 0,
+          strike_rate: b.strikeRate || b.strike_rate || 0,
+          is_batting: true,
+          is_striker: idx === 0,
+        }));
+    }
+    if (!isFinished && currentBatters.length === 0 && fullLines.length) {
+      currentBatters = latestBattersFromFullCommentary(fullLines);
+    }
+    if (!isFinished && currentBatters.length === 0 && scorecard?.innings?.length) {
+      const lastInn = resolveScorecardInnings(scorecard, inningsId);
+      const notOut = (lastInn.batting || [])
+        .filter((b) => b && b.name && (b.is_batting || /not out|batting/i.test(b.dismissal || '')))
+        .slice(0, 2)
+        .map((b, idx) => ({
+          player_id: String(b.player_id || ''),
+          name: b.name,
+          runs: b.runs || 0,
+          balls: b.balls || 0,
+          fours: b.fours || 0,
+          sixes: b.sixes || 0,
+          strike_rate: b.strike_rate || 0,
+          is_batting: true,
+          is_striker: idx === 0,
+        }));
+      if (notOut.length) currentBatters = notOut;
+    }
+
+    // Current bowler: prefer miniscore; fall back to the latest commentary
+    // bowler when missing.
+    let currentBowler = base.current_bowler || null;
+    if (!isFinished && !currentBowler && ballsMap?.bowlers?.length) {
+      const latestBall = ballRows.find((b) => b && b.bowlerId);
+      const bowler = ballsMap.bowlers.find((b) => String(b.id || b.player_id || '') === String(latestBall?.bowlerId || ''))
+        || ballsMap.bowlers[0];
+      if (bowler?.name) currentBowler = normalizeLiveCenterBowler(bowler);
+    }
+    if (!isFinished && !currentBowler && overRows.length) {
+      const row = overRows.find((o) => o && (o.bowlerName || o.bowlerId));
+      if (row?.bowlerName) {
+        currentBowler = {
+          player_id: String(row.bowlerId || ''),
+          name: row.bowlerName,
+          overs: row.bowlerOvers || 0,
+          maidens: row.bowlerMaidens || 0,
+          runs: row.bowlerRuns || 0,
+          wickets: row.bowlerWickets || 0,
+          economy: 0,
+          is_bowling: true,
+        };
+      }
+    }
+    if (!isFinished && !currentBowler && allCommentary.length) {
+      const withBowler = allCommentary.find((c) => c && c.bowler && (c.bowler.name || typeof c.bowler === 'string'));
+      if (withBowler) {
+        const b = withBowler.bowler;
+        currentBowler = {
+          player_id: String(b.id || b.player_id || ''),
+          name: b.name || String(b),
+          overs: b.overs || 0,
+          maidens: b.maidens || 0,
+          runs: b.runs || 0,
+          wickets: b.wickets || 0,
+          economy: b.economy || 0,
+          is_bowling: true,
+        };
+      }
+    }
+
+    // Recent balls: prefer miniscore-parsed; fall back to commentary deliveries.
+    let recentBalls = Array.isArray(base.recent_balls) ? base.recent_balls : [];
+    if (recentBalls.length < 2 && ballRows.length) {
+      recentBalls = ballRows.slice(0, 8).map(ballToRecentBall);
+    }
+    if (recentBalls.length < 2 && overRows.length) {
+      recentBalls = parseOverSummaryBalls(overRows[0]).slice(0, 8);
+    }
+    if (recentBalls.length < 2 && allCommentary.length) {
+      recentBalls = allCommentary
+        .filter(hasDelivery)
+        .slice(0, 8)
+        .map(commentaryToRecentBall);
+    }
+
+    // Commentary lines (latest 8).
+    const commentaryLines = allCommentary.length
+      ? allCommentary
+          .filter((c) => c && (c.text || c.commentary || c.rawText))
+          .slice(0, 8)
+          .map((c) => ({
+            over: deliveryOver(c),
+            ball: deliveryBall(c),
+            text: c.text || c.commentary || c.rawText || '',
+            event: eventType(c),
+          }))
+      : [];
+    const scoreInfo = resolveCurrentScore({ base, detail, scorecard, ballsMap, overByOver, inningsId });
+    const lastWicket = base.last_wicket || detail?.last_wicket || resolveLastWicket(allCommentary, scorecard, inningsId);
+
+    const payload = {
+      match_state: base.match_state || (isFinished ? 'finished' : (status === 'upcoming' ? 'upcoming' : 'live')),
+      status,
+      status_text: base.status_text || detail?.status_text || '',
+      score: scoreInfo.score || base.score || '',
+      overs: scoreInfo.overs || base.overs || '',
+      current_run_rate: scoreInfo.currentRunRate || base.current_run_rate || detail?.current_run_rate || 0,
+      required_run_rate: base.required_run_rate || detail?.required_run_rate || 0,
+      target: base.target ?? detail?.target ?? null,
+      current_batters: currentBatters,
+      current_bowler: currentBowler,
+      partnership: base.partnership || detail?.partnership || null,
+      last_wicket: lastWicket,
+      recent_balls: recentBalls,
+      commentary: commentaryLines,
+      player_of_match: isFinished
+        ? (base.player_of_match || detail?.player_of_match || null)
+        : null,
+      result: base.result || detail?.result || '',
+      innings_id: inningsId,
+      sources: {
+        quick_access: !!quickAccess && Object.keys(quickAccess || {}).length > 0,
+        full_commentary: fullLines.length,
+        commentary: basicLines.length,
+        over_by_over: overRows.length,
+        balls_map: ballRows.length,
+        scorecard_innings: scorecard?.innings?.length || 0,
+      },
+      updated_at: new Date().toISOString(),
+    };
+
+    if (process.env.NODE_ENV !== 'production') {
+      logger.info({
+        msg: '[LiveCenter] built',
+        matchId,
+        state: payload.match_state,
+        currentBatters: payload.current_batters.length,
+        hasBowler: !!payload.current_bowler,
+        recentBalls: payload.recent_balls.length,
+        commentary: payload.commentary.length,
+        sources: payload.sources,
+      });
+    }
+
+    return payload;
+  }
+
+  function resolveCurrentInningsId(detail, scorecard, fullCommentary, overByOver, ballsMap) {
+    const candidates = [
+      detail?.current_innings,
+      detail?.live_center?.innings_id,
+      ballsMap?.scoreDetails?.inningsId,
+      fullCommentary?.inningsId,
+      overByOver?.overs?.[0]?.inningsId,
+      scorecard?.innings?.[scorecard.innings.length - 1]?.innings_number,
+    ];
+    const value = candidates.find((v) => Number(v) > 0);
+    return Number(value || 1);
+  }
+
+  function resolveScorecardInnings(scorecard, inningsId) {
+    const innings = scorecard?.innings || [];
+    return innings.find((inn) => Number(inn.innings_number) === Number(inningsId))
+      || innings[innings.length - 1]
+      || {};
+  }
+
+  function normalizeLiveCenterBowler(bowler) {
+    return {
+      player_id: String(bowler.id || bowler.player_id || ''),
+      name: bowler.name || '',
+      overs: bowler.overs || 0,
+      maidens: bowler.maidens || 0,
+      runs: bowler.runs || 0,
+      wickets: bowler.wickets || 0,
+      economy: bowler.economy || 0,
+      wides: bowler.wides || 0,
+      no_balls: bowler.noBalls || bowler.no_balls || 0,
+      is_bowling: true,
+    };
+  }
+
+  function latestBattersFromFullCommentary(lines) {
+    const seen = new Set();
+    const batters = [];
+    for (const row of lines) {
+      const b = row?.batsman;
+      if (!b?.name || seen.has(String(b.id || b.name))) continue;
+      seen.add(String(b.id || b.name));
+      batters.push({
+        player_id: String(b.id || ''),
+        name: b.name,
+        runs: b.runs || 0,
+        balls: b.balls || 0,
+        fours: b.fours || 0,
+        sixes: b.sixes || 0,
+        strike_rate: b.strikeRate || b.strike_rate || 0,
+        is_batting: true,
+        is_striker: batters.length === 0,
+      });
+      if (batters.length >= 2) break;
+    }
+    return batters;
+  }
+
+  function mergeCommentaryLines(primary, fallback) {
+    const rows = [];
+    const seen = new Set();
+    for (const row of [...(primary || []), ...(fallback || [])]) {
+      if (!row) continue;
+      const key = String(row.timestamp || row.id || `${deliveryOver(row)}:${deliveryBall(row)}:${row.text || row.commentary || ''}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+    return rows.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+  }
+
+  function deliveryOver(row) {
+    const value = row?.over ?? row?.overNumber ?? row?.ballMetric ?? '';
+    if (value === null || value === undefined) return '';
+    return String(value);
+  }
+
+  function deliveryBall(row) {
+    const value = row?.ball ?? row?.ballNumber ?? row?.ballNbr ?? '';
+    if (value === null || value === undefined) return '';
+    return String(value);
+  }
+
+  function hasDelivery(row) {
+    return deliveryOver(row) !== '' || deliveryBall(row) !== '';
+  }
+
+  function eventType(row) {
+    const event = String(row?.event || '').toLowerCase();
+    if (row?.is_wicket || row?.isWicket || event.includes('wicket')) return 'wicket';
+    if (row?.is_six || row?.isSix || event.includes('six')) return 'six';
+    if (row?.is_four || row?.isFour || event.includes('four')) return 'four';
+    return event || 'ball';
+  }
+
+  function runValue(row) {
+    if (typeof row?.runs === 'number') return row.runs;
+    if (typeof row?.runs?.total === 'number') return row.runs.total;
+    if (typeof row?.totalRuns === 'number') return row.totalRuns;
+    return 0;
+  }
+
+  function ballTypeFromValue(value, event) {
+    const upper = String(value || '').toUpperCase();
+    if (event === 'wicket' || upper.includes('W')) return 'wicket';
+    if (event === 'six' || upper === '6') return 'six';
+    if (event === 'four' || upper === '4') return 'four';
+    if (upper === '0' || upper === '.' || upper === '•') return 'dot';
+    if (upper.includes('NB') || upper.includes('WD') || upper.includes('B') || upper.includes('LB')) return 'extra';
+    return 'run';
+  }
+
+  function commentaryToRecentBall(row) {
+    const event = eventType(row);
+    const value = event === 'wicket' ? 'W' : String(runValue(row));
+    return {
+      over: [deliveryOver(row), deliveryBall(row)].filter(Boolean).join('.').replace(/(\.\d+)\.\d+$/, '$1'),
+      value,
+      type: ballTypeFromValue(value, event),
+    };
+  }
+
+  function ballToRecentBall(ball) {
+    const event = eventType(ball);
+    const value = event === 'wicket' ? 'W' : String(ball.ballLabel || ball.totalRuns || 0).replace('•', '0');
+    return {
+      over: String(ball.overNumber || ''),
+      value,
+      type: ballTypeFromValue(value, event),
+    };
+  }
+
+  function parseOverSummaryBalls(overRow) {
+    const over = String(overRow?.overNumber || '');
+    return String(overRow?.summary || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((value, index) => ({
+        over: over ? `${Number(over) - 1}.${index + 1}` : '',
+        value: value === '•' || value === '.' ? '0' : value,
+        type: ballTypeFromValue(value, value.toUpperCase().includes('W') ? 'wicket' : ''),
+      }));
+  }
+
+  function resolveCurrentScore({ base, detail, scorecard, ballsMap, overByOver, inningsId }) {
+    if (ballsMap?.scoreDetails && Number(ballsMap.scoreDetails.runs) >= 0) {
+      const sd = ballsMap.scoreDetails;
+      return {
+        score: `${sd.runs || 0}/${sd.wickets || 0}`,
+        overs: String(sd.overs || ''),
+        currentRunRate: sd.runRate || 0,
+      };
+    }
+    const over = overByOver?.overs?.find((o) => Number(o.inningsId) === Number(inningsId)) || overByOver?.overs?.[0];
+    if (over && Number(over.totalScore) >= 0) {
+      return {
+        score: `${over.totalScore || 0}/${over.totalWickets || 0}`,
+        overs: String(over.overNumber || ''),
+        currentRunRate: 0,
+      };
+    }
+    const inn = resolveScorecardInnings(scorecard, inningsId);
+    if (inn?.total) {
+      return {
+        score: `${inn.total.runs || 0}/${inn.total.wickets || 0}`,
+        overs: String(inn.total.overs || ''),
+        currentRunRate: inn.run_rate || 0,
+      };
+    }
+    return {
+      score: base?.score || '',
+      overs: base?.overs || '',
+      currentRunRate: detail?.current_run_rate || 0,
+    };
+  }
+
+  function resolveLastWicket(lines, scorecard, inningsId) {
+    const wicketLine = (lines || []).find((row) => eventType(row) === 'wicket' && (row.text || row.commentary));
+    if (wicketLine) return wicketLine.text || wicketLine.commentary || '';
+    const inn = resolveScorecardInnings(scorecard, inningsId);
+    const wickets = inn?.fall_of_wickets || inn?.fallOfWickets || [];
+    if (Array.isArray(wickets) && wickets.length) {
+      const last = wickets[wickets.length - 1];
+      return last.player || last.name || last.wicket || last.text || '';
+    }
+    return '';
+  }
+
+  // GET /match/:id/live-center — one merged object for the app's Live tab.
+  fastify.get('/match/:id/live-center', {
+    schema: {
+      description: 'Merged Live Center: current batters, bowler, partnership, last wicket, recent balls and latest commentary',
+      tags: ['Matches'],
+      params: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    },
+  }, async (request, reply) => {
+    const { id } = request.params;
+
+    // Pull match detail first to decide on the live/finished cache TTL.
+    let detail = null;
+    try {
+      const res = await cacheGetOrFetch(
+        KEYS.matchLive(id),
+        TTL.LIVE_SCORE,
+        async () => (await providerManager.execute('getMatchInfo', id)).data,
+      );
+      detail = res?.data || null;
+    } catch { /* detail optional */ }
+
+    const status = detail?.status || 'upcoming';
+    const isFinished = status === 'completed' || status === 'abandoned' || status === 'no_result';
+    const ttl = isFinished ? TTL.LIVE_CENTER_DONE : TTL.LIVE_CENTER_LIVE;
+
+    const cacheKey = KEYS.matchLiveCenter(id);
+    const cached = await cacheGet(cacheKey);
+    if (cached) {
+      reply.header('X-Cache', 'HIT');
+      return { success: true, data: cached, fromCache: true };
+    }
+
+    const currentInningsId = resolveCurrentInningsId(detail, null, null, null, null);
+
+    // Fetch every Cricbuzz source that can contribute Live tab data. These are
+    // optional and merged best-effort, so one partial endpoint never empties
+    // the whole Live Center.
+    const [commentaryRes, scorecardRes] = await Promise.allSettled([
+      cacheGetOrFetch(
+        KEYS.matchCommentary(id),
+        TTL.COMMENTARY,
+        async () => (await providerManager.execute('getCommentary', id)).data,
+      ),
+      cacheGetOrFetch(
+        KEYS.matchScorecard(id),
+        TTL.SCORECARD,
+        async () => (await providerManager.execute('getScorecard', id)).data,
+      ),
+    ]);
+
+    const commentary = commentaryRes.status === 'fulfilled'
+      ? (commentaryRes.value?.data || [])
+      : [];
+    const scorecard = scorecardRes.status === 'fulfilled'
+      ? (scorecardRes.value?.data || null)
+      : null;
+
+    const inningsId = resolveCurrentInningsId(detail, scorecard, null, null, null) || currentInningsId;
+    const [quickAccessRes, fullCommentaryRes, overByOverRes, ballsMapRes] = await Promise.allSettled([
+      providerManager.execute('getQuickAccess', id),
+      cacheGetOrFetch(
+        KEYS.fullCommentary(id, inningsId),
+        TTL.COMMENTARY,
+        async () => (await providerManager.execute('getFullCommentary', id, String(inningsId))).data,
+      ),
+      cacheGetOrFetch(
+        KEYS.overByOver(id, inningsId),
+        TTL.COMMENTARY,
+        async () => (await providerManager.execute('getOverByOver', id, String(inningsId))).data,
+      ),
+      cacheGetOrFetch(
+        KEYS.ballsMap(id, inningsId),
+        TTL.COMMENTARY,
+        async () => (await providerManager.execute('getBallsMap', id, String(inningsId))).data,
+      ),
+    ]);
+
+    const quickAccess = quickAccessRes.status === 'fulfilled'
+      ? (quickAccessRes.value?.data || quickAccessRes.value || null)
+      : null;
+    const fullCommentary = fullCommentaryRes.status === 'fulfilled'
+      ? (fullCommentaryRes.value?.data || null)
+      : null;
+    const overByOver = overByOverRes.status === 'fulfilled'
+      ? (overByOverRes.value?.data || null)
+      : null;
+    const ballsMap = ballsMapRes.status === 'fulfilled'
+      ? (ballsMapRes.value?.data || null)
+      : null;
+
+    const payload = buildLiveCenterPayload({
+      matchId: id,
+      detail,
+      commentary,
+      scorecard,
+      fullCommentary,
+      overByOver,
+      ballsMap,
+      quickAccess,
+    });
+
+    // Only cache payloads that carry real data so we never lock in an empty
+    // live-center for the full TTL.
+    const hasData = payload.current_batters.length > 0
+      || !!payload.current_bowler
+      || payload.recent_balls.length > 0
+      || payload.commentary.length > 0
+      || payload.match_state === 'finished';
+    if (hasData) {
+      await cacheSet(cacheKey, payload, ttl);
+    }
+
+    reply.header('X-Cache', 'MISS');
+    return { success: true, data: payload, fromCache: false };
+  });
+
   // GET /match/:id/stats
   fastify.get('/match/:id/stats', {
     schema: {

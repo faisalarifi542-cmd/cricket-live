@@ -254,6 +254,7 @@ class ScrollableSegmentedTabs extends StatefulWidget {
 
 class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
   final _controller = ScrollController();
+  final _scrollViewKey = GlobalKey();
   final _keys = <GlobalKey>[];
 
   @override
@@ -286,17 +287,33 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     final i = widget.selected;
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
-    if (ctx == null) return;
-    // Keep the selected tab left-aligned rather than centered. Centering can
-    // push the leading/trailing labels partially off-screen on narrow widths
-    // and clip them to "ecard" / "Sq".
-    Scrollable.ensureVisible(
-      ctx,
-      alignment: 0.12,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
+    final viewportCtx = _scrollViewKey.currentContext;
+    if (ctx == null || viewportCtx == null) return;
+    final itemBox = ctx.findRenderObject() as RenderBox?;
+    final viewportBox = viewportCtx.findRenderObject() as RenderBox?;
+    if (itemBox == null || viewportBox == null) return;
+
+    // Scroll only the horizontal tab strip. Using Scrollable.ensureVisible here
+    // also moves the parent ListView, which made Match Details open/jump down
+    // to the tabs after load or tab selection.
+    final itemOffset = itemBox.localToGlobal(Offset.zero, ancestor: viewportBox);
+    final itemLeft = itemOffset.dx + _controller.offset;
+    final itemRight = itemLeft + itemBox.size.width;
+    final viewportWidth = viewportBox.size.width;
+    var target = _controller.offset;
+    if (itemLeft < _controller.offset) {
+      target = itemLeft - 8;
+    } else if (itemRight > _controller.offset + viewportWidth) {
+      target = itemRight - viewportWidth + 8;
+    }
+    target = target.clamp(
+      _controller.position.minScrollExtent,
+      _controller.position.maxScrollExtent,
     );
+    if ((target - _controller.offset).abs() < 1) return;
+    _controller.animateTo(target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic);
   }
 
   @override
@@ -317,6 +334,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         border: Border.all(color: c.border),
       ),
       child: SingleChildScrollView(
+        key: _scrollViewKey,
         controller: _controller,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),

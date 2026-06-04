@@ -16,6 +16,7 @@ class TeamDetailScreen extends StatefulWidget {
     this.initialShortName,
     this.initialLogoUrl,
     this.sourceSeriesId,
+    this.initialSquad = const [],
   });
 
   final String teamId;
@@ -23,6 +24,11 @@ class TeamDetailScreen extends StatefulWidget {
   final String? initialShortName;
   final String? initialLogoUrl;
   final String? sourceSeriesId;
+
+  /// Squad players passed from the series context (when the series payload
+  /// carries them) so the team screen can show a useful squad even when the
+  /// team endpoint has none.
+  final List<dynamic> initialSquad;
 
   @override
   State<TeamDetailScreen> createState() => _TeamDetailScreenState();
@@ -103,6 +109,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                         return _TeamProfileView(
                           team: fallback,
                           sourceSeriesId: widget.sourceSeriesId,
+                          initialSquad: widget.initialSquad,
                         );
                       }
                       return _TeamStateCard(
@@ -120,6 +127,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                         return _TeamProfileView(
                           team: fallback,
                           sourceSeriesId: widget.sourceSeriesId,
+                          initialSquad: widget.initialSquad,
                         );
                       }
                       return _TeamStateCard(
@@ -133,6 +141,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                     return _TeamProfileView(
                       team: team,
                       sourceSeriesId: widget.sourceSeriesId,
+                      initialSquad: widget.initialSquad,
                     );
                   },
                 ),
@@ -166,37 +175,54 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
 }
 
 class _TeamProfileView extends StatelessWidget {
-  const _TeamProfileView({required this.team, this.sourceSeriesId});
+  const _TeamProfileView({
+    required this.team,
+    this.sourceSeriesId,
+    this.initialSquad = const [],
+  });
 
   final ApiTeamProfile team;
   final String? sourceSeriesId;
+  final List<dynamic> initialSquad;
 
   @override
   Widget build(BuildContext context) {
+    // Prefer the team endpoint squad; fall back to the squad passed from the
+    // series context so the screen is useful even when the team API is empty.
+    final squad = team.squad.isNotEmpty ? team.squad : initialSquad;
+    final hasSquad = squad.isNotEmpty;
+    final fromProvider = sourceSeriesId != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TeamHero(team: team),
         const SizedBox(height: 16),
-        PremiumSquad(
-          playingXi: team.squad,
-          bench: const [],
-          title: 'Squad',
-        ),
-        const SizedBox(height: 16),
-        _TeamSection(
-          title: 'Recent matches',
-          empty: 'Recent matches are not available yet.',
-          items: team.recentMatches,
-          itemBuilder: (item) => _SimpleTeamRow(data: apiMap(item)),
-        ),
-        if (sourceSeriesId != null) ...[
-          const SizedBox(height: 16),
-          const _TeamStateCard(
-            text: 'Team profile loaded from series context. Full team stats are not available yet.',
+        if (hasSquad)
+          PremiumSquad(
+            playingXi: squad,
+            bench: const [],
+            title: 'Squad',
+          )
+        else
+          _TeamStateCard(
+            text: fromProvider
+                ? 'Team squad is not available from the provider yet.'
+                : 'Squad players are not available yet.',
             onRetry: null,
           ),
-        ],
+        const SizedBox(height: 16),
+        if (team.recentMatches.isNotEmpty)
+          _TeamSection(
+            title: 'Recent matches',
+            empty: 'Recent matches are not available yet.',
+            items: team.recentMatches,
+            itemBuilder: (item) => _SimpleTeamRow(data: apiMap(item)),
+          )
+        else
+          const _TeamStateCard(
+            text: 'Recent matches are not available from the provider yet.',
+            onRetry: null,
+          ),
       ],
     );
   }
@@ -343,13 +369,16 @@ class _TeamStateCard extends StatelessWidget {
           Text(text,
               textAlign: TextAlign.center,
               style: TextStyle(color: c.muted, height: 1.4)),
-          const SizedBox(height: 16),
-          GradientButton(
-            label: 'Retry',
-            icon: Icons.refresh_rounded,
-            onTap: onRetry ?? () {},
-            outlined: onRetry == null,
-          ),
+          // Only surface Retry when retrying can actually fetch the data.
+          // Provider-limited states pass `onRetry: null` and show no button.
+          if (onRetry != null) ...[
+            const SizedBox(height: 16),
+            GradientButton(
+              label: 'Retry',
+              icon: Icons.refresh_rounded,
+              onTap: onRetry!,
+            ),
+          ],
         ],
       ),
     );

@@ -59,6 +59,20 @@ function safeJson(value) {
   return value == null ? null : JSON.stringify(value);
 }
 
+// Clears cached public app config + home payloads so admin ads changes take
+// effect immediately (no backend redeploy needed).
+async function invalidateAdsCaches() {
+  const redis = getRedis();
+  await redis
+    .del(
+      'appdata:app:config',
+      'appdata:app:home',
+      'app:config',
+      'home:config',
+    )
+    .catch(() => null);
+}
+
 async function getSettingsMap(publicOnly = false) {
   const where = publicOnly ? 'WHERE is_public = 1 OR is_public IS NULL' : '';
   const rows = await query(`SELECT setting_key, setting_value FROM app_settings ${where}`);
@@ -308,9 +322,29 @@ export default async function adminPanelRoutes(fastify) {
     const rows = await query(`SELECT * FROM notification_history ORDER BY created_at DESC LIMIT ?`, [limit]).catch(() => []);
     return { success: true, data: rows };
   });
-  fastify.get('/admin/ads', { preHandler: [adminAuth, requirePermissions('ads.view')] }, () => simpleList('ad_settings'));
+  fastify.get('/admin/ads', { preHandler: [adminAuth, requirePermissions('ads.view')] }, async () => {
+    // Order by id (not created_at) so this works even on older databases, and
+    // never let a query error blank out the admin form.
+    const rows = await query(`SELECT * FROM ad_settings ORDER BY id DESC LIMIT 500`).catch(() => []);
+    return { success: true, data: rows };
+  });
   fastify.put('/admin/ads', { preHandler: [adminAuth, requirePermissions('ads.write')] }, async (request) => {
-    await withAudit(request, { action: 'ads.update', entityType: 'ad_settings', newValue: request.body }, async () => query(`INSERT INTO ad_settings (setting_key, setting_value, is_public) VALUES ('ads_config', ?, 1) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`, [safeJson(request.body || {})]));
+    const incoming = request.body || {};
+    // Stamp an updated_at into the JSON so the client can detect config changes.
+    const payload = { ...incoming, updated_at: new Date().toISOString() };
+    await withAudit(
+      request,
+      { action: 'ads.update', entityType: 'ad_settings', newValue: incoming },
+      async () =>
+        query(
+          `INSERT INTO ad_settings (setting_key, setting_value, is_public) VALUES ('ads_config', ?, 1)
+             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+          [safeJson(payload)],
+        ),
+    );
+    // Invalidate cached public config so /app/config + /app/home reflect the
+    // change immediately without a backend redeploy.
+    await invalidateAdsCaches();
     return { success: true };
   });
 

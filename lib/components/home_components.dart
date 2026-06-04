@@ -25,11 +25,19 @@ class HomeHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final w = context.w;
-    final narrow = w <= 400;
-    final badgeSize = narrow ? 78.0 : (w <= 480 ? 90.0 : 110.0);
-    final cardPad = narrow ? 14.0 : 18.0;
-    final card = Container(
+    final card = LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        final compact = w <= 390 || h < 430;
+        final badgeSize = compact ? 70.0 : (w <= 480 ? 82.0 : 96.0);
+        final cardPad = compact ? 12.0 : 16.0;
+        final gap = compact ? 7.0 : 10.0;
+        final showVenue = h >= 365;
+        final showStatusLine = h >= 385;
+        final buttonHeight = compact ? 42.0 : 48.0;
+        final buttonWidth = compact ? 210.0 : 250.0;
+        return Container(
       padding: EdgeInsets.all(cardPad),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
@@ -87,7 +95,7 @@ class HomeHeroCard extends StatelessWidget {
                                 fontWeight: FontWeight.w700))),
                 ],
               ),
-              SizedBox(height: narrow ? 14 : 18),
+              SizedBox(height: gap),
               Center(
                 child: Text(fixture.series,
                     textAlign: TextAlign.center,
@@ -96,34 +104,36 @@ class HomeHeroCard extends StatelessWidget {
                     style: TextStyle(
                         color: c.cyan,
                         fontWeight: FontWeight.w800,
-                        fontSize: context.sp(15))),
+                        fontSize: context.sp(compact ? 13 : 15))),
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: gap),
               Center(
                 child: Text(
                   fixture.date,
                   textAlign: TextAlign.center,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w900,
-                      fontSize: context.sp(narrow ? 20 : 24)),
+                      fontSize: context.sp(compact ? 18 : 22)),
                 ),
               ),
-              const SizedBox(height: 6),
-              Center(
-                child: Text(
-                  fixture.time,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.cyan,
-                      fontWeight: FontWeight.w700,
-                      fontSize: context.sp(17)),
+              if (showStatusLine) ...[
+                const SizedBox(height: 4),
+                Center(
+                  child: Text(
+                    fixture.time,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: c.cyan,
+                        fontWeight: FontWeight.w700,
+                        fontSize: context.sp(compact ? 14 : 16)),
+                  ),
                 ),
-              ),
-              SizedBox(height: narrow ? 12 : 16),
+              ],
+              SizedBox(height: gap),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -135,8 +145,8 @@ class HomeHeroCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: narrow ? 52 : 68,
-                        height: narrow ? 52 : 68,
+                        width: compact ? 46 : 58,
+                        height: compact ? 46 : 58,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.black.withValues(alpha: .22),
@@ -146,7 +156,7 @@ class HomeHeroCard extends StatelessWidget {
                         child: Text(fixture.centerTitle,
                             style: TextStyle(
                                 color: Colors.white,
-                                fontSize: narrow ? 18 : 22,
+                                fontSize: compact ? 16 : 20,
                                 fontWeight: FontWeight.w900)),
                       ),
                       if (fixture.result != null) ...[
@@ -164,8 +174,8 @@ class HomeHeroCard extends StatelessWidget {
                           fixture.rightMeta ?? fixture.right.code, badgeSize)),
                 ],
               ),
-              SizedBox(height: narrow ? 12 : 16),
-              if (finished)
+              SizedBox(height: gap),
+              if (finished && showVenue)
                 Center(
                   child: Text(fixture.venue,
                       textAlign: TextAlign.center,
@@ -175,7 +185,7 @@ class HomeHeroCard extends StatelessWidget {
                           color: Colors.white.withValues(alpha: .82),
                           fontWeight: FontWeight.w600)),
                 )
-              else
+              else if (!finished && showVenue)
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -191,11 +201,11 @@ class HomeHeroCard extends StatelessWidget {
                                 fontWeight: FontWeight.w600))),
                   ],
                 ),
-              SizedBox(height: narrow ? 16 : 20),
+              const Spacer(),
               if (showButton) ...[
                 Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
+                    constraints: BoxConstraints(maxWidth: buttonWidth),
                     child: GradientButton(
                       label: fixture.button,
                       icon: finished
@@ -204,35 +214,18 @@ class HomeHeroCard extends StatelessWidget {
                               ? Icons.play_circle_fill_rounded
                               : Icons.notifications_none_rounded,
                       outlined: finished,
+                      height: buttonHeight,
                       onTap: onButtonTap,
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
               ],
-              Center(
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: List.generate(
-                    4,
-                    (i) => Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      width: i == 0 ? 26 : 10,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: i == 0
-                            ? c.cyan
-                            : Colors.white.withValues(alpha: .26),
-                        borderRadius: BorderRadius.circular(99),
-                      ),
-                    ),
-                  ),
-                ),
-              )
             ],
           ),
         ],
       ),
+    );
+      },
     );
 
     if (onTap == null) return card;
@@ -470,4 +463,3 @@ class QuickAccessCard extends StatelessWidget {
     );
   }
 }
-

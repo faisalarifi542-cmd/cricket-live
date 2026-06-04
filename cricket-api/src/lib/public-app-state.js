@@ -20,6 +20,20 @@ function normalizeBool(value, fallback = false) {
   return fallback;
 }
 
+/**
+ * Resolves the effective "ads enabled" flag with the correct precedence:
+ * an explicitly saved ads_config.show_ads always wins over the legacy
+ * app-setting enableAds (which is always present with a default and therefore
+ * cannot be used as a `??` fallback). Exported for unit testing.
+ */
+export function resolveAdsEnabled(adsValue, legacyEnableAds) {
+  const hasAdsConfig = adsValue && Object.keys(adsValue).length > 0;
+  if (hasAdsConfig && adsValue.show_ads != null) {
+    return normalizeBool(adsValue.show_ads, false);
+  }
+  return normalizeBool(legacyEnableAds, false);
+}
+
 const PUBLIC_SETTING_KEYS = new Set([
   'appName',
   'appEnvironment',
@@ -300,12 +314,46 @@ export async function buildPublicAppConfig() {
   const adsValue = parseJsonMaybe(
     adRows.find((row) => row.setting_key === 'ads_config')?.setting_value,
     {},
-  );
+  ) || {};
+
+  // The admin panel writes the ads master toggle as `show_ads` inside the
+  // ad_settings.ads_config JSON. The legacy `enableAds` app-setting is only a
+  // fallback for older installs. We must prefer the explicitly saved ads value
+  // (when present) instead of letting the always-present legacy default win.
+  const adsEnabled = resolveAdsEnabled(adsValue, settings.enableAds);
+
+  const primaryNetwork = (() => {
+    const raw = String(adsValue?.primary_network || 'admob').toLowerCase();
+    return ['admob', 'unity', 'meta'].includes(raw) ? raw : 'admob';
+  })();
+
+  const fallbackOrder = (() => {
+    const raw = adsValue?.fallback_order;
+    const list = Array.isArray(raw)
+      ? raw.map((v) => String(v).toLowerCase())
+      : String(raw || '')
+          .split(',')
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean);
+    const valid = list.filter((n) => ['admob', 'unity', 'meta'].includes(n));
+    // Always derive a sane waterfall: primary first, then any remaining
+    // networks in a stable order.
+    const ordered = [primaryNetwork, ...valid].filter(
+      (n, i, arr) => arr.indexOf(n) === i,
+    );
+    for (const n of ['admob', 'unity', 'meta']) {
+      if (!ordered.includes(n)) ordered.push(n);
+    }
+    return ordered;
+  })();
 
   const ads = {
-    enabled: normalizeBool(settings.enableAds ?? adsValue?.show_ads, false),
+    enabled: adsEnabled,
     testMode: normalizeBool(adsValue?.test_mode ?? settings.adsTestMode, false),
-    admobEnabled: normalizeBool(adsValue?.admob_enabled ?? adsValue?.show_ads, true),
+    consentRequired: normalizeBool(adsValue?.consent_required, false),
+    primaryNetwork,
+    fallbackOrder,
+    admobEnabled: normalizeBool(adsValue?.admob_enabled, true),
     unityEnabled: normalizeBool(adsValue?.unity_enabled, false),
     metaEnabled: normalizeBool(adsValue?.meta_enabled, false),
     rewardedEnabled: normalizeBool(adsValue?.rewarded_enabled, false),
@@ -313,25 +361,110 @@ export async function buildPublicAppConfig() {
     nativeEnabled: normalizeBool(adsValue?.native_enabled ?? true, true),
     interstitialEnabled: normalizeBool(adsValue?.interstitial_enabled ?? true, true),
     frequencyMinutes: toNumber(adsValue?.frequency_minutes, 5),
+    networks: {
+      admob: {
+        enabled: normalizeBool(adsValue?.admob_enabled, true),
+        status: 'active',
+        appId: {
+          android: adsValue?.admob_android_app_id || null,
+          ios: adsValue?.admob_ios_app_id || null,
+        },
+        android: {
+          bannerId: adsValue?.android_banner_id || null,
+          nativeId: adsValue?.android_native_id || null,
+          interstitialId: adsValue?.android_interstitial_id || null,
+          rewardedId: adsValue?.android_rewarded_id || null,
+          rewardedInterstitialId: adsValue?.android_rewarded_interstitial_id || null,
+          appOpenId: adsValue?.android_app_open_id || null,
+        },
+        ios: {
+          bannerId: adsValue?.ios_banner_id || null,
+          nativeId: adsValue?.ios_native_id || null,
+          interstitialId: adsValue?.ios_interstitial_id || null,
+          rewardedId: adsValue?.ios_rewarded_id || null,
+          rewardedInterstitialId: adsValue?.ios_rewarded_interstitial_id || null,
+          appOpenId: adsValue?.ios_app_open_id || null,
+        },
+      },
+      unity: {
+        enabled: normalizeBool(adsValue?.unity_enabled, false),
+        // Direct Unity SDK is not wired into Flutter yet.
+        status: 'pending',
+        directSupported: false,
+        testMode: normalizeBool(adsValue?.unity_test_mode ?? adsValue?.test_mode, false),
+        gameId: {
+          android: adsValue?.unity_android_game_id || null,
+          ios: adsValue?.unity_ios_game_id || null,
+        },
+        android: {
+          bannerId: adsValue?.unity_android_banner_id || null,
+          interstitialId: adsValue?.unity_android_interstitial_id || null,
+          rewardedId: adsValue?.unity_android_rewarded_id || null,
+        },
+        ios: {
+          bannerId: adsValue?.unity_ios_banner_id || null,
+          interstitialId: adsValue?.unity_ios_interstitial_id || null,
+          rewardedId: adsValue?.unity_ios_rewarded_id || null,
+        },
+      },
+      meta: {
+        enabled: normalizeBool(adsValue?.meta_enabled, false),
+        // Direct Meta/Facebook Audience Network is NOT implemented in the
+        // Flutter client yet. This flag tells the app it may store IDs but
+        // must treat Meta as unavailable until a direct adapter ships.
+        status: 'pending',
+        directSupported: false,
+        testMode: normalizeBool(adsValue?.meta_test_mode ?? adsValue?.test_mode, false),
+        appId: {
+          android: adsValue?.meta_android_app_id || null,
+          ios: adsValue?.meta_ios_app_id || null,
+        },
+        android: {
+          bannerId: adsValue?.meta_android_banner_id || null,
+          nativeId: adsValue?.meta_android_native_id || null,
+          interstitialId: adsValue?.meta_android_interstitial_id || null,
+          rewardedId: adsValue?.meta_android_rewarded_id || null,
+        },
+        ios: {
+          bannerId: adsValue?.meta_ios_banner_id || null,
+          nativeId: adsValue?.meta_ios_native_id || null,
+          interstitialId: adsValue?.meta_ios_interstitial_id || null,
+          rewardedId: adsValue?.meta_ios_rewarded_id || null,
+        },
+      },
+    },
     android: {
       bannerId: adsValue?.android_banner_id || null,
       nativeId: adsValue?.android_native_id || null,
       interstitialId: adsValue?.android_interstitial_id || null,
       rewardedId: adsValue?.android_rewarded_id || null,
+      rewardedInterstitialId: adsValue?.android_rewarded_interstitial_id || null,
     },
     ios: {
       bannerId: adsValue?.ios_banner_id || null,
       nativeId: adsValue?.ios_native_id || null,
       interstitialId: adsValue?.ios_interstitial_id || null,
       rewardedId: adsValue?.ios_rewarded_id || null,
+      rewardedInterstitialId: adsValue?.ios_rewarded_interstitial_id || null,
     },
     placementConfig: parseJsonMaybe(adsValue?.placement_config, null) || {},
     frequencyConfig: parseJsonMaybe(adsValue?.frequency_config, null) || {},
   };
   ads.units = {
-    android: ads.android,
-    ios: ads.ios,
+    android: { ...ads.android, appOpenId: adsValue?.android_app_open_id || null },
+    ios: { ...ads.ios, appOpenId: adsValue?.ios_app_open_id || null },
   };
+  // Live-stream pre-roll ad behavior (Watch Live → ad → stream).
+  ads.liveStreamPreRollAdType = (() => {
+    const raw = String(adsValue?.live_stream_pre_roll_ad_type || 'rewarded_video')
+      .toLowerCase();
+    return ['none', 'interstitial', 'rewarded_interstitial', 'rewarded_video'].includes(raw)
+      ? raw
+      : 'rewarded_video';
+  })();
+  ads.preRollForFreeStreams = normalizeBool(adsValue?.pre_roll_free_streams, false);
+  ads.preRollForPremiumStreams = normalizeBool(adsValue?.pre_roll_premium_streams, true);
+  ads.preRollAllowFallback = normalizeBool(adsValue?.pre_roll_allow_fallback, false);
   ads.placements = {
     home: {
       bannerEnabled: normalizeBool(adsValue?.home_banner_enabled, true),
@@ -343,19 +476,28 @@ export async function buildPublicAppConfig() {
       nativeEnabled: normalizeBool(adsValue?.matches_native_enabled, true),
       nativeEvery: toNumber(adsValue?.matches_native_every, 5),
     },
+    schedule: {
+      bannerEnabled: normalizeBool(adsValue?.schedule_banner_enabled, true),
+    },
     matchDetails: {
       bannerEnabled: normalizeBool(adsValue?.match_details_banner_enabled, true),
       nativeEnabled: normalizeBool(adsValue?.match_details_native_enabled, true),
+      interstitialEnabled:
+          normalizeBool(adsValue?.match_details_interstitial_enabled, true),
     },
     news: {
       bannerEnabled: normalizeBool(adsValue?.news_banner_enabled, true),
       nativeEnabled: normalizeBool(adsValue?.news_native_enabled, true),
       nativeEvery: toNumber(adsValue?.news_native_every, 4),
+      interstitialEnabled:
+          normalizeBool(adsValue?.news_interstitial_enabled, true),
     },
     series: {
       bannerEnabled: normalizeBool(adsValue?.series_banner_enabled, true),
       nativeEnabled: normalizeBool(adsValue?.series_native_enabled, true),
       nativeEvery: toNumber(adsValue?.series_native_every, 6),
+      interstitialEnabled:
+          normalizeBool(adsValue?.series_interstitial_enabled, true),
     },
     more: {
       bannerEnabled: normalizeBool(adsValue?.more_banner_enabled, true),
@@ -364,8 +506,20 @@ export async function buildPublicAppConfig() {
     livePlayer: {
       bannerEnabled: normalizeBool(adsValue?.live_player_banner_enabled, false),
       nativeEnabled: false,
+      interstitialAfterEnabled:
+          normalizeBool(adsValue?.after_player_interstitial_enabled, false),
+      premiumStreamRewardedEnabled:
+          normalizeBool(adsValue?.premium_stream_rewarded_enabled, true),
+      rewardedInterstitialEnabled:
+          normalizeBool(adsValue?.premium_stream_rewarded_interstitial_enabled, true),
     },
     ...ads.placementConfig,
+  };
+  // App Open ads — separate config block (admin-controlled).
+  ads.appOpen = {
+    enabled: normalizeBool(adsValue?.app_open_enabled, false),
+    showOnColdStart: normalizeBool(adsValue?.app_open_cold_start, true),
+    showOnResume: normalizeBool(adsValue?.app_open_resume, true),
   };
   ads.frequency = {
     interstitialFrequencyCap: toNumber(adsValue?.interstitial_frequency_cap, 1),
@@ -373,12 +527,23 @@ export async function buildPublicAppConfig() {
       adsValue?.minimum_seconds_between_interstitials,
       toNumber(adsValue?.frequency_minutes, 5) * 60,
     ),
+    minimumSecondsBetweenFullScreenAds: toNumber(
+      adsValue?.minimum_seconds_between_full_screen_ads,
+      90,
+    ),
+    minimumSecondsBetweenAppOpenAds: toNumber(
+      adsValue?.minimum_seconds_between_app_open_ads,
+      120,
+    ),
+    maxAppOpenAdsPerSession: toNumber(adsValue?.max_app_open_ads_per_session, 4),
     ...ads.frequencyConfig,
   };
   ads.rewardedRequiredForPremiumStreams = normalizeBool(
     adsValue?.rewarded_required_for_premium_streams,
     false,
   );
+  // Config version/timestamp so the client can detect changes and refresh.
+  ads.updatedAt = adsValue?.updated_at || new Date().toISOString();
 
   const features = {
     liveScores: normalizeBool(settings.enableLiveScores, true),
@@ -390,8 +555,8 @@ export async function buildPublicAppConfig() {
     series: normalizeBool(settings.enableSeries, true),
     notifications: normalizeBool(settings.enableNotifications, true),
     notificationsEnabled: normalizeBool(settings.enableNotifications, true),
-    ads: normalizeBool(settings.enableAds, false),
-    adsEnabled: normalizeBool(settings.enableAds, false),
+    ads: ads.enabled,
+    adsEnabled: ads.enabled,
     premiumStreams: normalizeBool(settings.enableLiveStreaming, true),
     premiumStreamsEnabled: normalizeBool(settings.enableLiveStreaming, true),
     newsEnabled: normalizeBool(settings.enableNews, true),

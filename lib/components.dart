@@ -263,44 +263,100 @@ class TeamBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return TeamLogoWidget(
+      logoUrl: team.asset,
+      teamName: team.name,
+      abbreviation: team.shortName.isNotEmpty ? team.shortName : team.code,
+      color: team.color,
+      size: size,
+      borderColor: borderColor,
+      emoji: team.emoji,
+    );
+  }
+}
+
+class TeamLogoWidget extends StatelessWidget {
+  const TeamLogoWidget({
+    super.key,
+    this.logoUrl,
+    required this.teamName,
+    required this.abbreviation,
+    required this.color,
+    this.size = 76,
+    this.borderColor,
+    this.emoji,
+  });
+
+  final String? logoUrl;
+  final String teamName;
+  final String abbreviation;
+  final Color color;
+  final double size;
+  final Color? borderColor;
+  final String? emoji;
+
+  @override
+  Widget build(BuildContext context) {
+    // When a real logo exists, render it cleanly with a transparent
+    // background — no colored circle, border, or glow behind it. Only the
+    // initials fallback gets the premium gradient circle treatment.
+    if (_hasLogo) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: logoUrl!.startsWith('http')
+            ? Image.network(
+                logoUrl!,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return _teamLoading(context);
+                },
+                errorBuilder: (_, __, ___) => _fallbackCircle(context),
+              )
+            : Image.asset(
+                logoUrl!,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => _fallbackCircle(context),
+              ),
+      );
+    }
+    return _fallbackCircle(context);
+  }
+
+  bool get _hasLogo => logoUrl != null && logoUrl!.trim().isNotEmpty;
+
+  /// Premium gradient circle used only when no real logo is available.
+  Widget _fallbackCircle(BuildContext context) {
     return Container(
       width: size,
       height: size,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: team.color.withValues(alpha: .22),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: .34),
+            const Color(0xff08213d).withValues(alpha: .96),
+          ],
+        ),
         border: Border.all(
           color: borderColor ?? Colors.white.withValues(alpha: .62),
           width: 2,
         ),
         boxShadow: [
           BoxShadow(
-            color: team.color.withValues(alpha: .28),
+            color: color.withValues(alpha: .28),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: team.asset != null
-          ? (team.asset!.startsWith('http')
-              ? Image.network(
-                  team.asset!,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return _teamLoading(context);
-                  },
-                  errorBuilder: (_, __, ___) => _teamFallback(context),
-                )
-              : Image.asset(
-                  team.asset!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _teamFallback(context),
-                ))
-          : _teamFallback(context),
+      child: _teamFallback(context),
     );
   }
 
@@ -319,14 +375,16 @@ class TeamBadge extends StatelessWidget {
   }
 
   Widget _teamFallback(BuildContext context) {
-    final initials = safeTeamInitials(team.code);
+    final initials = safeTeamInitials(
+      abbreviation.isNotEmpty ? abbreviation : teamName,
+    );
     return Center(
       child: FittedBox(
         fit: BoxFit.scaleDown,
         child: Padding(
           padding: EdgeInsets.all(size * 0.15),
           child: Text(
-            team.emoji ?? initials,
+            emoji ?? initials,
             style: TextStyle(
               fontSize: size * .42,
               fontWeight: FontWeight.w900,

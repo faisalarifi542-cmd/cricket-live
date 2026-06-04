@@ -624,6 +624,7 @@ const TABLES = [
     setting_key VARCHAR(120) UNIQUE NOT NULL,
     setting_value JSON,
     is_public TINYINT(1) DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
@@ -758,6 +759,13 @@ async function addColumnIfMissing(pool, tableName, columnName, definition) {
 }
 
 async function applyCompatibilityMigrations(pool) {
+  // ad_settings historically shipped without created_at, but the admin GET
+  // route orders by created_at. Add it on existing databases so the ads
+  // config can be read back (root cause of "Ads ON saves as OFF").
+  await addColumnIfMissing(pool, 'ad_settings', 'created_at', 'created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  await addColumnIfMissing(pool, 'ad_settings', 'is_public', 'is_public TINYINT(1) DEFAULT 1');
+  await addColumnIfMissing(pool, 'ad_settings', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
   await addColumnIfMissing(pool, 'app_settings', 'is_public', 'is_public TINYINT(1) DEFAULT 1');
   await addColumnIfMissing(pool, 'app_settings', 'type', "type VARCHAR(40) DEFAULT 'json'");
   await addColumnIfMissing(pool, 'app_settings', 'group', "`group` VARCHAR(80) DEFAULT 'general'");

@@ -98,6 +98,17 @@ export class CricbuzzProvider extends BaseProvider {
     }
   }
 
+  async getQuickAccess(matchId) {
+    try {
+      const raw = await cricbuzzApi.getQuickAccess(matchId);
+      this.recordSuccess();
+      return raw || {};
+    } catch (err) {
+      this.recordFailure();
+      throw err;
+    }
+  }
+
   async getSeriesList() {
     try {
       const raw = await cricbuzzApi.getSeriesList();

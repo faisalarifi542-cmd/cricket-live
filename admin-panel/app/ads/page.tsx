@@ -20,7 +20,7 @@ function Inner() {
     <>
       <PageHeader
         title="Ads"
-        description="Master toggle, per-format switches, frequency cap, and per-platform AdMob unit IDs."
+        description="Global toggle, primary network + fallback waterfall, per-network (AdMob / Unity / Meta) settings, placement and frequency controls, and consent."
       />
       <AdsSettingsForm canWrite={perms.can('ads.write')} />
     </>
