@@ -26,6 +26,7 @@ class SeriesView {
     this.startDate,
     this.endDate,
     this.formats = const [],
+    this.formatLabel = '',
     this.matchCount,
     this.host,
     this.teams = const [],
@@ -39,6 +40,10 @@ class SeriesView {
   final DateTime? startDate;
   final DateTime? endDate;
   final List<String> formats;
+
+  /// Pre-formatted, count-aware label from the backend, e.g. "1 Test • 3 ODIs
+  /// • 3 T20Is". Preferred over [formats] when present.
+  final String formatLabel;
   final int? matchCount;
   final String? host;
   final List<SeriesTeamRef> teams;
@@ -69,8 +74,12 @@ class SeriesView {
     return _shortDate(s ?? e!);
   }
 
-  /// "3 ODIs • 3 T20Is" style chip text derived from formats.
-  String get formatSummary => formats.isEmpty ? '' : formats.join(' • ');
+  /// "3 ODIs • 3 T20Is" style chip text. Prefers the backend's count-aware
+  /// label, falling back to the format tokens parsed from the name.
+  String get formatSummary {
+    if (formatLabel.contains(RegExp(r'\d'))) return formatLabel;
+    return formats.isEmpty ? '' : formats.join(' • ');
+  }
 
   factory SeriesView.fromApi(ApiSeries series) {
     return SeriesView(
@@ -81,8 +90,10 @@ class SeriesView {
       startDate: _parseDate(series.startDate),
       endDate: _parseDate(series.endDate),
       formats: _formatsFromText('${series.format ?? ''} ${series.name}'),
+      formatLabel: (series.format ?? '').trim(),
       matchCount: series.matchCount,
       host: series.country,
+      teams: _teamsFromApi(series.teams),
     );
   }
 }
@@ -165,6 +176,24 @@ SeriesCategory _categoryFor(String name, String? format) {
     return SeriesCategory.domestic;
   }
   return SeriesCategory.international;
+}
+
+List<SeriesTeamRef> _teamsFromApi(List<dynamic> raw) {
+  final teams = <SeriesTeamRef>[];
+  for (final entry in raw) {
+    final map = apiMap(entry);
+    final name = apiString(map['name'] ?? map['teamName'] ?? map['team_name']);
+    if (name.isEmpty) continue;
+    final shortName = apiString(
+        map['shortName'] ?? map['short_name'] ?? map['teamShortName']);
+    final logo = apiString(map['logoUrl'] ?? map['logo_url'] ?? map['logo']);
+    teams.add(SeriesTeamRef(
+      name: name,
+      shortName: shortName.isEmpty ? name : shortName,
+      logoUrl: logo.isEmpty ? null : logo,
+    ));
+  }
+  return teams;
 }
 
 List<String> _formatsFromText(String raw) {

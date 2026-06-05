@@ -1859,11 +1859,10 @@ class _StatPlayerRow extends StatelessWidget {
     final c = context.cric;
     final name = apiString(row['playerName'] ?? row['name'], 'Player');
     final team = apiString(row['team']);
-    final playerId = apiString(row['playerId'] ?? row['player_id']);
-    var image = apiString(row['imageUrl'] ?? row['image_url']);
-    if (image.isEmpty && playerId.isNotEmpty) {
-      image = 'https://static.cricbuzz.com/a/img/v1/i2/c$playerId/i.jpg';
-    }
+    // Use only the real Cricbuzz face image resolved by the backend; never
+    // synthesise one from the player id (that produced wrong faces). A missing
+    // image falls through to the initials avatar.
+    final image = apiString(row['imageUrl'] ?? row['image_url']);
     final metric = isBowling
         ? apiString(row['wickets'], '0')
         : apiString(row['runs'], '0');
@@ -2011,10 +2010,10 @@ List<SquadTeam> _parseSquadTeams(Map<String, dynamic> data) {
 SquadPlayer _parseSquadPlayer(dynamic raw) {
   final p = apiMap(raw);
   final id = apiString(p['playerId'] ?? p['player_id'] ?? p['id']);
-  var image = apiString(p['imageUrl'] ?? p['image_url']);
-  if (image.isEmpty && id.isNotEmpty) {
-    image = 'https://static.cricbuzz.com/a/img/v1/i2/c$id/i.jpg';
-  }
+  // Only trust a real Cricbuzz face image from the backend; a missing image
+  // stays null so the card renders a neutral initials avatar (never a wrong
+  // face synthesised from the player id).
+  final image = apiString(p['imageUrl'] ?? p['image_url']);
   return SquadPlayer(
     id: id,
     name: apiString(p['name'] ?? p['playerName'] ?? p['player_name'], 'Player'),

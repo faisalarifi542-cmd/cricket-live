@@ -318,15 +318,147 @@ export default async function seriesRoutes(fastify) {
     return { data, fromCache };
   }
 
+  // Builds "1 Test • 3 ODIs • 3 T20Is" from a {FORMAT: count} map.
+  function buildFormatLabel(counts, category) {
+    const plural = (label, n) => (n > 0 ? `${n} ${label}${n > 1 ? 's' : ''}` : '');
+    const cat = String(category || '').toLowerCase();
+    // Cricbuzz reports 20-over internationals as "T20"; show them as T20I for
+    // international tours, plain T20 for leagues/domestic competitions.
+    const t20Label = !cat || cat.includes('international') ? 'T20I' : 'T20';
+    const parts = [
+      plural('Test', counts.TEST || 0),
+      plural('ODI', counts.ODI || 0),
+      plural(t20Label, counts.T20 || 0),
+      plural('T10', counts.T10 || 0),
+      plural('Hundred', counts.HUNDRED || counts.THE100 || 0),
+    ].filter(Boolean);
+    return parts.join(' • ');
+  }
+
+  /**
+   * Enriches the thin Cricbuzz series list (id + name only) with status,
+   * date range, format breakdown, match count and the two representative
+   * teams. Status is derived from genuine signals only — the set of series
+   * that currently have a live match, plus the date window of scheduled
+   * matches — never guessed. Schedule/live lookups are best-effort so the
+   * base list is always returned even if they fail.
+   */
+  async function enrichSeriesList() {
+    const baseRaw = (await cacheGetOrFetch(
+      KEYS.seriesList(),
+      TTL.SERIES,
+      async () => (await providerManager.execute('getSeriesList')).data,
+    )).data || [];
+
+    const agg = new Map();
+    const liveSeries = new Set();
+
+    const [scheduleRes, liveRes] = await Promise.allSettled([
+      providerManager.execute('getUpcomingSchedule', 'all'),
+      providerManager.execute('getLiveMatches'),
+    ]);
+
+    if (scheduleRes.status === 'fulfilled') {
+      const days = scheduleRes.value?.data?.days || [];
+      for (const day of days) {
+        for (const s of day.series || []) {
+          const sid = String(s.seriesId || '');
+          if (!sid) continue;
+          let a = agg.get(sid);
+          if (!a) {
+            a = { name: '', start: null, end: null, counts: {}, teams: null, category: s.category || '', count: 0, seen: new Set() };
+            agg.set(sid, a);
+          }
+          if (!a.category && s.category) a.category = s.category;
+          if (!a.name && s.seriesName) a.name = s.seriesName;
+          for (const mt of s.matches || []) {
+            // A multi-day Test is repeated under every day header — count each
+            // real match (by id) only once so formats/counts stay accurate.
+            const mid = String(mt.matchId || '');
+            if (mid && a.seen.has(mid)) continue;
+            if (mid) a.seen.add(mid);
+            a.count += 1;
+            const fmt = String(mt.matchFormat || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (fmt) a.counts[fmt] = (a.counts[fmt] || 0) + 1;
+            const st = Number(mt.startTime) || null;
+            const en = Number(mt.endTime) || null;
+            if (st && (a.start === null || st < a.start)) a.start = st;
+            if (en && (a.end === null || en > a.end)) a.end = en;
+            if (!a.teams && mt.team1?.name && mt.team2?.name) {
+              a.teams = [
+                { name: mt.team1.name, shortName: mt.team1.shortName || '', logoUrl: mt.team1.logoUrl || '' },
+                { name: mt.team2.name, shortName: mt.team2.shortName || '', logoUrl: mt.team2.logoUrl || '' },
+              ];
+            }
+          }
+        }
+      }
+    }
+
+    if (liveRes.status === 'fulfilled') {
+      for (const m of liveRes.value?.data || []) {
+        const sid = String(m.source_series_id || m.series_id || '');
+        if (sid) liveSeries.add(sid);
+      }
+    }
+
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+
+    return baseRaw.map((s) => {
+      const sid = String(s.series_id || s.seriesId || s.id || '');
+      const a = agg.get(sid);
+      let startMs = s.start_date ? Date.parse(s.start_date) : null;
+      let endMs = s.end_date ? Date.parse(s.end_date) : null;
+      let format = '';
+      let teams = [];
+      let matchCount = null;
+      let name = s.name || s.seriesName || '';
+      if (a) {
+        if (a.start) startMs = a.start;
+        if (a.end) endMs = a.end;
+        format = buildFormatLabel(a.counts, a.category);
+        teams = a.teams || [];
+        matchCount = a.count || null;
+        if (a.name) name = a.name;
+      }
+
+      let status = '';
+      if (liveSeries.has(sid)) {
+        status = 'ongoing';
+      } else if (startMs && endMs && startMs <= now && now <= endMs) {
+        status = 'ongoing';
+      } else if (startMs && startMs <= now + dayMs && (!endMs || endMs >= now)) {
+        status = 'ongoing';
+      } else if (startMs && startMs > now) {
+        status = 'upcoming';
+      } else if (endMs && endMs < now) {
+        status = 'completed';
+      }
+
+      return {
+        series_id: sid,
+        name,
+        season: s.season || '',
+        status,
+        start_date: startMs ? new Date(startMs).toISOString() : null,
+        end_date: endMs ? new Date(endMs).toISOString() : null,
+        format,
+        matchCount,
+        teams,
+      };
+    });
+  }
+
   // GET /series
   fastify.get('/series', {
     schema: { description: 'Get all series', tags: ['Series'] },
-    preHandler: cacheMiddleware(KEYS.seriesList(), TTL.SERIES),
+    preHandler: cacheMiddleware('series:list:enriched:v2', TTL.SERIES),
   }, async (request, reply) => {
     const { data } = await cacheGetOrFetch(
-      KEYS.seriesList(),
+      'series:list:enriched:v2',
       TTL.SERIES,
-      async () => (await providerManager.execute('getSeriesList')).data
+      enrichSeriesList,
     );
     return { success: true, data: data || [] };
   });
@@ -806,8 +938,11 @@ export default async function seriesRoutes(fastify) {
     ];
     const mapped = players.map((p) => {
       const playerId = text(p.player_id || p.playerId);
-      const imageUrl = text(p.image_url || p.imageUrl)
-        || (playerId ? `https://static.cricbuzz.com/a/img/v1/i2/c${playerId}/i.jpg` : '');
+      // Only use a genuine Cricbuzz face image resolved at scrape time. We never
+      // synthesise an image URL from the player id (that produced wrong faces),
+      // so a missing image yields null and the app shows an initials avatar.
+      const imageUrl = text(p.image_url || p.imageUrl);
+      const hasImage = imageUrl.length > 0;
       return {
         playerId,
         name: text(p.name),
@@ -816,9 +951,9 @@ export default async function seriesRoutes(fastify) {
         isWicketKeeper: !!(p.is_wicketkeeper || p.isWicketKeeper),
         isSubstitute: !!(p.is_substitute || p.isSubstitute),
         isImpactPlayer: !!(p.is_impact_player || p.isImpactPlayer),
-        imageUrl,
+        imageUrl: hasImage ? imageUrl : null,
+        imageSource: hasImage ? 'cricbuzz' : 'none',
         profileUrl: playerId ? `https://www.cricbuzz.com/profiles/${playerId}` : '',
-        source: 'cricbuzz',
       };
     }).filter((p) => p.name);
 

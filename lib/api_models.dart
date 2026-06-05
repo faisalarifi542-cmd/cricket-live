@@ -715,6 +715,7 @@ class ApiSeries {
     this.format,
     this.country,
     this.matchCount,
+    this.teams = const [],
   });
   final String id;
   final String name;
@@ -724,6 +725,7 @@ class ApiSeries {
   final String? format;
   final String? country;
   final int? matchCount;
+  final List<dynamic> teams;
   factory ApiSeries.fromJson(dynamic value) {
     final json = apiMap(value);
     final id = cleanText(json['seriesId'] ??
@@ -780,6 +782,7 @@ class ApiSeries {
           : apiString(json['country'] ?? json['host']),
       matchCount: apiInt(
           json['matchCount'] ?? json['totalMatches'] ?? json['matchesCount']),
+      teams: apiList(json['teams']),
     );
   }
 }

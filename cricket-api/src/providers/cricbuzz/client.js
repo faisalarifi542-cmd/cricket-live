@@ -2563,12 +2563,46 @@ function cleanSquadRole(context = '', rawName = '') {
     .replace(/^Wicket Keeper$/i, 'WK-Batter');
 }
 
+// Extracts the player's real Cricbuzz face image from the squad anchor markup.
+// Player faces are served as `/a/img/v1/i1/c<faceImageId>/<player-slug>.jpg`
+// (no NxN dimension segment — that prefix is used for team flags). The face
+// image id is NOT the same as the player profile id, so it must be read from
+// the markup. Returns nulls when no genuine face image is present, so callers
+// can fall back to a neutral initials avatar instead of a wrong photo.
+// Cricbuzz serves a generic grey silhouette (image id 182026) for players that
+// have no real headshot. That is not a wrong face, but it is not a real photo
+// either, so we treat it as "no image" and let the app render initials.
+const CRICBUZZ_PLACEHOLDER_FACE_IDS = new Set(['182026']);
+
+function extractSquadFaceImage(anchorHtml = '') {
+  const matches = [...String(anchorHtml).matchAll(
+    /static\.cricbuzz\.com\/a\/img\/v1\/i1\/c(\d+)\/([a-z0-9][a-z0-9-]*)\.jpg/gi,
+  )];
+  for (const m of matches) {
+    const faceImageId = m[1];
+    const slug = m[2].toLowerCase();
+    // Skip team flag / generic placeholder slugs (defensive — flags normally
+    // carry a size prefix such as 25x18 and are excluded by the regex above).
+    if (slug === 'i' || /(?:^|[-_])flag(?:$|[-_])/.test(slug)) continue;
+    if (CRICBUZZ_PLACEHOLDER_FACE_IDS.has(faceImageId)) {
+      return { faceImageId: null, imageUrl: null };
+    }
+    return {
+      faceImageId,
+      // 192x192 is a crisp, square headshot crop that suits circular avatars.
+      imageUrl: `https://static.cricbuzz.com/a/img/v1/192x192/i1/c${faceImageId}/${slug}.jpg`,
+    };
+  }
+  return { faceImageId: null, imageUrl: null };
+}
+
 function normalizeSquadPlayer(p) {
   return {
     player_id: p.player_id,
     name: p.name,
     role: p.role || '',
-    image_url: p.image_url || '',
+    image_url: p.image_url || null,
+    face_image_id: p.face_image_id || null,
     is_captain: !!p.is_captain,
     is_wicketkeeper: !!p.is_wicketkeeper,
     is_impact_player: !!p.is_impact_player,
@@ -2656,17 +2690,27 @@ function parseMatchSquadsFromHtml_OLD(html, matchId) {
       const section = lastSectionMatch ? lastSectionMatch[1].toLowerCase() : 'unknown';
       
       const role = cleanSquadRole(context, rawPlayerName) || extractPlayerRole(context);
-      const captainMatch = `${rawPlayerName} ${context}`.match(/\((c|C)\s*(?:&\s*(?:wk|WK))?\)|captain/i);
-      const wkMatch = `${rawPlayerName} ${context}`.match(/\((?:wk|WK|w\.k\.)\s*(?:&\s*(?:c|C))?\)|wicket.?keeper|WK-Batter/i);
+      // Captain/keeper badges live inside the player's own anchor markup, so we
+      // detect them from that player's text only (rawPlayerName) instead of a
+      // wide character window, which would bleed badges from neighbouring cards.
+      const isCaptain = /\(\s*c\s*(?:&\s*wk)?\s*\)/i.test(rawPlayerName)
+        || /\(\s*wk\s*&\s*c\s*\)/i.test(rawPlayerName);
+      const isWicketkeeper = /\(\s*(?:wk|c\s*&\s*wk|wk\s*&\s*c)\s*\)/i.test(rawPlayerName)
+        || /wicket\.?keeper|WK-?Batter/i.test(rawPlayerName);
+      // Face image id is parsed from the same anchor; it differs from the player
+      // profile id, so we never synthesise it from the player id.
+      const face = extractSquadFaceImage(nameHtml);
       
       allPlayers.push({
         player_id: String(playerId),
         name: playerName,
         role,
-        is_captain: !!captainMatch,
-        is_wicketkeeper: !!wkMatch,
+        is_captain: isCaptain,
+        is_wicketkeeper: isWicketkeeper,
         is_impact_player: section.includes('impact'),
         is_substitute: section.includes('substitutes') || section.includes('bench'),
+        image_url: face.imageUrl,
+        face_image_id: face.faceImageId,
         section,
         index: playerMatch.index
       });
@@ -3143,17 +3187,27 @@ function parseMatchSquadsFromHtml_FIXED(html, matchId) {
       const section = lastSectionMatch ? lastSectionMatch[1].toLowerCase() : 'unknown';
       
       const role = cleanSquadRole(context, rawPlayerName) || extractPlayerRole(context);
-      const captainMatch = `${rawPlayerName} ${context}`.match(/\((c|C)\s*(?:&\s*(?:wk|WK))?\)|captain/i);
-      const wkMatch = `${rawPlayerName} ${context}`.match(/\((?:wk|WK|w\.k\.)\s*(?:&\s*(?:c|C))?\)|wicket.?keeper|WK-Batter/i);
+      // Captain/keeper badges live inside the player's own anchor markup, so we
+      // detect them from that player's text only (rawPlayerName) instead of a
+      // wide character window, which would bleed badges from neighbouring cards.
+      const isCaptain = /\(\s*c\s*(?:&\s*wk)?\s*\)/i.test(rawPlayerName)
+        || /\(\s*wk\s*&\s*c\s*\)/i.test(rawPlayerName);
+      const isWicketkeeper = /\(\s*(?:wk|c\s*&\s*wk|wk\s*&\s*c)\s*\)/i.test(rawPlayerName)
+        || /wicket\.?keeper|WK-?Batter/i.test(rawPlayerName);
+      // Face image id is parsed from the same anchor; it differs from the player
+      // profile id, so we never synthesise it from the player id.
+      const face = extractSquadFaceImage(nameHtml);
       
       allPlayers.push({
         player_id: String(playerId),
         name: playerName,
         role,
-        is_captain: !!captainMatch,
-        is_wicketkeeper: !!wkMatch,
+        is_captain: isCaptain,
+        is_wicketkeeper: isWicketkeeper,
         is_impact_player: section.includes('impact'),
         is_substitute: section.includes('substitutes') || section.includes('bench'),
+        image_url: face.imageUrl,
+        face_image_id: face.faceImageId,
         section,
         index: playerMatch.index
       });
