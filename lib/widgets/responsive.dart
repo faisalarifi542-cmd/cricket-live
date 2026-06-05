@@ -296,16 +296,16 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     // Scroll only the horizontal tab strip. Using Scrollable.ensureVisible here
     // also moves the parent ListView, which made Match Details open/jump down
     // to the tabs after load or tab selection.
-    final itemOffset = itemBox.localToGlobal(Offset.zero, ancestor: viewportBox);
-    final itemLeft = itemOffset.dx + _controller.offset;
+    final itemLeft = _itemScrollLeft(i, viewportBox);
+    if (itemLeft == null) return;
     final itemRight = itemLeft + itemBox.size.width;
     final viewportWidth = viewportBox.size.width;
     var target = _controller.offset;
-    if (itemLeft < _controller.offset) {
-      target = itemLeft - 8;
-    } else if (itemRight > _controller.offset + viewportWidth) {
-      target = itemRight - viewportWidth + 8;
+    if (itemLeft < _controller.offset ||
+        itemRight > _controller.offset + viewportWidth) {
+      target = itemLeft - ((viewportWidth - itemBox.size.width) / 2);
     }
+    target = _alignToVisibleItemStart(target, viewportWidth);
     target = target.clamp(
       _controller.position.minScrollExtent,
       _controller.position.maxScrollExtent,
@@ -314,6 +314,35 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
     _controller.animateTo(target,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic);
+  }
+
+  double? _itemScrollLeft(int index, RenderBox viewportBox) {
+    if (index < 0 || index >= _keys.length) return null;
+    final box = _keys[index].currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return null;
+    final offset = box.localToGlobal(Offset.zero, ancestor: viewportBox);
+    return offset.dx + _controller.offset;
+  }
+
+  double _alignToVisibleItemStart(double proposed, double viewportWidth) {
+    var target = proposed.clamp(
+      _controller.position.minScrollExtent,
+      _controller.position.maxScrollExtent,
+    );
+    final viewportObject = _scrollViewKey.currentContext?.findRenderObject();
+    if (viewportObject is! RenderBox) return target;
+    for (var i = 0; i < _keys.length; i++) {
+      final left = _itemScrollLeft(i, viewportObject);
+      if (left == null) continue;
+      if (left >= target - 1 && left <= target + 22) {
+        target = left;
+        break;
+      }
+    }
+    return target.clamp(
+      _controller.position.minScrollExtent,
+      _controller.position.maxScrollExtent,
+    );
   }
 
   @override
@@ -329,7 +358,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
       height: widget.height,
       padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .015),
+        color: c.card.withValues(alpha: c.isDark ? .20 : .86),
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: c.border),
       ),
@@ -338,7 +367,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         controller: _controller,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
           children: [
             for (var i = 0; i < widget.items.length; i++) ...[
@@ -361,7 +390,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
         key: _keys[i],
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        padding: EdgeInsets.symmetric(horizontal: context.w <= 420 ? 10 : 12),
+        padding: EdgeInsets.symmetric(horizontal: context.w <= 420 ? 9 : 12),
         decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
           borderRadius: BorderRadius.circular(28),
@@ -391,7 +420,7 @@ class _ScrollableSegmentedTabsState extends State<ScrollableSegmentedTabs> {
           style: TextStyle(
             color: selected ? Colors.white : c.text,
             fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-            fontSize: context.sp(14.5),
+            fontSize: context.sp(context.w <= 420 ? 13.5 : 14.5),
           ),
         ),
       ),

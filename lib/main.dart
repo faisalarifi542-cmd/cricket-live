@@ -8,7 +8,6 @@ import 'package:cricpro_flutter/models/ad_config.dart';
 import 'package:cricpro_flutter/sheets.dart';
 import 'package:cricpro_flutter/screens/home/home_screen.dart';
 import 'package:cricpro_flutter/screens/matches/matches_screen.dart';
-import 'package:cricpro_flutter/screens/news/news_screen.dart';
 import 'package:cricpro_flutter/screens/news/news_detail_screen.dart';
 import 'package:cricpro_flutter/screens/more/more_screen.dart';
 import 'package:cricpro_flutter/screens/more/contact_us_screen.dart';
@@ -237,6 +236,7 @@ class _RootShellState extends State<RootShell> {
   void _openSeries({int initialTab = 0}) {
     AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.series);
     _push(SeriesListScreen(
+      showBack: true,
       onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
         seriesId: seriesId,
         initialTab: initialTab,
@@ -252,11 +252,6 @@ class _RootShellState extends State<RootShell> {
   void _openFilters() => showFilterSheet(context);
 
   void _openReminders() => showReminderSheet(context);
-
-  void _openArticle(NewsArticle article) {
-    AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.news);
-    _push(NewsDetailScreen(article: article));
-  }
 
   void _openHighlights() => _push(HighlightsScreen(
         onOpenNotifications: _openNotifications,
@@ -292,10 +287,14 @@ class _RootShellState extends State<RootShell> {
           onOpenSeries: _openSeries,
           onOpenMatch: _openMatch,
         );
-      case AppTab.news:
-        return NewsScreen(
-          onOpenFilters: _openFilters,
-          onOpenArticle: _openArticle,
+      case AppTab.series:
+        return SeriesListScreen(
+          onOpenSeries: (seriesId) => _push(SeriesDetailScreen(
+            seriesId: seriesId,
+            onOpenReminders: () => showReminderSheet(context),
+            onOpenCalendar: () => showCalendarSheet(context),
+            onOpenPlayer: () => _push(const PlayerDetailScreen()),
+          )),
         );
       case AppTab.more:
         return MoreScreen(
@@ -351,8 +350,8 @@ class _RootShellState extends State<RootShell> {
         return AdPlacement.matches;
       case AppTab.schedule:
         return AdPlacement.schedule;
-      case AppTab.news:
-        return AdPlacement.news;
+      case AppTab.series:
+        return AdPlacement.series;
       case AppTab.more:
         return null;
     }

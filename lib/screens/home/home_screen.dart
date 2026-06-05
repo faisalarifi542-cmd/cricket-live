@@ -8,8 +8,6 @@ import '../../models/api_response.dart';
 import '../../models.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
-import '../../models/ad_config.dart';
-import '../../widgets/ads/banner_ad_widget.dart';
 import '../../screens.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -668,7 +666,6 @@ class _HomeTabContent extends StatelessWidget {
                             onReminder: onReminder,
                           ),
               ),
-            const BannerAdWidget(placement: AdPlacement.home),
           ],
         );
       },

@@ -17,13 +17,13 @@ export 'widgets/responsive.dart'
         ResponsiveStatTile,
         computeGridChildWidth;
 
-enum AppTab { home, matches, schedule, news, more }
+enum AppTab { home, matches, schedule, series, more }
 
 String tabLabel(AppTab tab) => switch (tab) {
       AppTab.home => 'Home',
       AppTab.matches => 'Matches',
       AppTab.schedule => 'Schedule',
-      AppTab.news => 'News',
+      AppTab.series => 'Series',
       AppTab.more => 'More',
     };
 
@@ -31,7 +31,7 @@ IconData tabIcon(AppTab tab) => switch (tab) {
       AppTab.home => Icons.home_rounded,
       AppTab.matches => Icons.sports_cricket_rounded,
       AppTab.schedule => Icons.calendar_month_rounded,
-      AppTab.news => Icons.newspaper_rounded,
+      AppTab.series => Icons.emoji_events_rounded,
       AppTab.more => Icons.more_horiz_rounded,
     };
 
@@ -612,7 +612,7 @@ class SegmentedTabs extends StatelessWidget {
       height: height,
       padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .015),
+        color: c.card.withValues(alpha: c.isDark ? .20 : .86),
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: c.border),
       ),

@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
 import 'package:cricpro_flutter/components.dart';
-import 'package:cricpro_flutter/models.dart';
 import 'package:cricpro_flutter/models/api_response.dart';
 import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
-import 'package:cricpro_flutter/screens/match_details/match_details_screen.dart' hide apiMap;
-import 'package:cricpro_flutter/screens/teams/team_detail_screen.dart';
-import 'package:cricpro_flutter/widgets/squad.dart';
+import 'package:cricpro_flutter/screens/match_details/match_details_screen.dart'
+    hide apiMap;
+import 'package:cricpro_flutter/screens/series/series_components.dart';
 
+/// Premium Series Details screen with a shared hero and four redesigned tabs:
+/// Overview, Matches, Squads, Stats. All series-level metadata (teams,
+/// formats, dates, status, counts) is derived from the rich match list since
+/// the `/series` list endpoint is intentionally lightweight.
 class SeriesDetailScreen extends StatefulWidget {
   const SeriesDetailScreen({
     super.key,
@@ -36,11 +38,15 @@ class SeriesDetailScreen extends StatefulWidget {
 
 class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   late int tab = widget.initialTab;
-  int squadTeam = 0;
   final CricketRepository _repository = CricketRepository();
+
+  String _seriesId = '';
+  String _seriesName = '';
+
+  // Shared, loaded-once series context (detail + match list).
+  Future<_SeriesContext>? _contextFuture;
+  // Per-tab futures, cached so switching tabs never reloads / blinks.
   final Map<int, Future<dynamic>> _tabFutures = {};
-  String _resolvedSeriesId = '';
-  String _resolvedSeriesName = '';
 
   String _resolveSeriesId() {
     final arg = ModalRoute.of(context)?.settings.arguments;
@@ -67,13 +73,11 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       final name = apiString(arg['seriesName'] ??
           arg['series_name'] ??
           arg['name'] ??
-          arg['source_series_name'] ??
-          arg['sourceSeriesName'] ??
           arg['title']);
-      if (name.isNotEmpty) return cleanText(name);
+      if (name.isNotEmpty) return cleanSeriesText(name);
     }
     if (widget.initialSeries != null && widget.initialSeries!.name.isNotEmpty) {
-      return cleanText(widget.initialSeries!.name);
+      return cleanSeriesText(widget.initialSeries!.name);
     }
     return '';
   }
@@ -81,31 +85,41 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final nextSeriesId = _resolveSeriesId();
-    if (nextSeriesId.isNotEmpty && nextSeriesId != _resolvedSeriesId) {
-      _resolvedSeriesId = nextSeriesId;
-      _resolvedSeriesName = _resolveSeriesName();
+    final next = _resolveSeriesId();
+    if (next.isNotEmpty && next != _seriesId) {
+      _seriesId = next;
+      _seriesName = _resolveSeriesName();
       _tabFutures.clear();
-      if (kDebugMode) {
-        debugPrint(
-            'SeriesDetail opened with seriesId=$_resolvedSeriesId seriesName=$_resolvedSeriesName');
-      }
+      _contextFuture = _loadContext();
       _tabFutures[tab] = _loadTab(tab);
     }
   }
 
-  Future<dynamic> _loadTab(int index, {bool forceRefresh = true}) {
-    final id = _resolvedSeriesId;
+  Future<_SeriesContext> _loadContext({bool forceRefresh = false}) async {
+    final results = await Future.wait([
+      _repository.seriesDetail(_seriesId, forceRefresh: forceRefresh),
+      _repository.seriesMatchList(_seriesId, forceRefresh: forceRefresh),
+    ]);
+    final detail =
+        apiMap((results[0] as ApiEnvelope<Map<String, dynamic>>).data);
+    final matches = (results[1] as ApiEnvelope<List<CricketMatch>>).data;
+    return _SeriesContext(
+      seriesId: _seriesId,
+      fallbackName: _seriesName.isNotEmpty
+          ? _seriesName
+          : widget.initialSeries?.name ?? 'Series',
+      detail: detail,
+      matches: matches,
+      initialSeries: widget.initialSeries,
+    );
+  }
+
+  Future<dynamic> _loadTab(int index, {bool forceRefresh = false}) {
+    final id = _seriesId;
     return switch (index) {
-      0 => Future.wait([
-          _repository.seriesDetail(id, forceRefresh: forceRefresh),
-          _repository.seriesMatchList(id, forceRefresh: forceRefresh),
-        ]),
+      0 => _loadContext(forceRefresh: forceRefresh),
       1 => _repository.seriesMatchList(id, forceRefresh: forceRefresh),
-      2 => Future.wait([
-          _repository.seriesTeams(id, forceRefresh: forceRefresh),
-          _repository.seriesMatchList(id, forceRefresh: forceRefresh),
-        ]),
+      2 => _loadSquads(forceRefresh: forceRefresh),
       _ => Future.wait([
           _repository.pointsTable(id, forceRefresh: forceRefresh),
           _repository.seriesStats(id, forceRefresh: forceRefresh),
@@ -113,13 +127,64 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     };
   }
 
+  /// Loads squads from `/series/:id/squads`. If that endpoint is unavailable
+  /// (older backend) or returns no players, falls back to deriving squads from
+  /// a representative match's squad page.
+  Future<List<SquadTeam>> _loadSquads({bool forceRefresh = false}) async {
+    final id = _seriesId;
+    try {
+      final res = await _repository.seriesSquads(id, forceRefresh: forceRefresh);
+      final teams = _parseSquadTeams(res.data);
+      if (teams.any((t) => t.players.isNotEmpty)) return teams;
+    } catch (_) {
+      // Fall through to match-based fallback.
+    }
+
+    // Fallback: pick a match and read its squad directly.
+    try {
+      final matchesEnv = await _repository.seriesMatchList(id);
+      final match = _pickSquadMatch(matchesEnv.data);
+      if (match == null) return const [];
+      final squadRes =
+          await _repository.matchSquads(match.id, forceRefresh: forceRefresh);
+      return _parseMatchSquadTeams(squadRes.data, match);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  CricketMatch? _pickSquadMatch(List<CricketMatch> matches) {
+    if (matches.isEmpty) return null;
+    final live = matches.where((m) => m.isLive);
+    if (live.isNotEmpty) return live.first;
+    final upcoming = matches.where((m) => m.isUpcoming).toList()
+      ..sort((a, b) => (a.startDateTime ?? DateTime(2100))
+          .compareTo(b.startDateTime ?? DateTime(2100)));
+    if (upcoming.isNotEmpty) return upcoming.first;
+    final completed = matches.where((m) => m.isFinished).toList()
+      ..sort((a, b) => (b.startDateTime ?? DateTime(1970))
+          .compareTo(a.startDateTime ?? DateTime(1970)));
+    if (completed.isNotEmpty) return completed.first;
+    return matches.first;
+  }
+
   void _setTab(int value) {
+    if (value == tab) return;
     setState(() {
       tab = value;
-      if (_resolvedSeriesId.isNotEmpty) {
-        _tabFutures[value] = _loadTab(value);
+      if (_seriesId.isNotEmpty) {
+        _tabFutures.putIfAbsent(value, () => _loadTab(value));
       }
     });
+  }
+
+  Future<void> _refresh() async {
+    if (_seriesId.isEmpty) return;
+    setState(() {
+      _contextFuture = _loadContext(forceRefresh: true);
+      _tabFutures[tab] = _loadTab(tab, forceRefresh: true);
+    });
+    await _tabFutures[tab];
   }
 
   @override
@@ -129,61 +194,77 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),
         child: SafeArea(
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(context.horizontalPadding, 18,
-                context.horizontalPadding, context.detailBottomPadding),
-            children: [
-              AppHeader(
-                leading: IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: Icon(Icons.arrow_back_rounded, color: c.text)),
-                showLogo: true,
-                trailing: const [
-                  GlowIconButton(
-                      icon: Icons.notifications_none_rounded, badge: '3'),
-                  SizedBox(width: 8),
-                  GlowIconButton(icon: Icons.more_vert_rounded),
-                ],
-              ),
-              const SizedBox(height: 14),
-              // Hero card removed - was showing hardcoded "India vs Australia" mock data
-              // Real series info shown in Overview tab from API
-              const SizedBox(height: 4),
-              SegmentedTabs(
-                items: const [
-                  ('Overview', null),
-                  ('Matches', null),
-                  ('Squads', null),
-                  ('Stats', null)
-                ],
-                selected: tab,
-                onChanged: _setTab,
-                height: 58,
-              ),
-              const SizedBox(height: 18),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 280),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                transitionBuilder: (child, anim) => FadeTransition(
-                  opacity: anim,
-                  child: child,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            color: c.cyan,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(context.horizontalPadding, 14,
+                  context.horizontalPadding, context.detailBottomPadding),
+              children: [
+                AppHeader(
+                  leading: IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(Icons.arrow_back_rounded, color: c.text)),
+                  showLogo: true,
+                  trailing: const [
+                    GlowIconButton(
+                        icon: Icons.notifications_none_rounded, badge: '3'),
+                    SizedBox(width: 8),
+                    GlowIconButton(icon: Icons.more_vert_rounded),
+                  ],
                 ),
-                child: KeyedSubtree(
-                  key: ValueKey(tab),
-                  child: _resolvedSeriesId.isNotEmpty &&
-                          _tabFutures[tab] != null
-                      ? _SeriesApiPanel(
-                          tab: tab,
-                          future: _tabFutures[tab]!,
-                          seriesId: _resolvedSeriesId,
-                          seriesName: _resolvedSeriesName,
-                        )
-                      : const _SeriesEmptyState(
-                          message: 'Please select a series to view details.'),
+                const SizedBox(height: 14),
+                FutureBuilder<_SeriesContext>(
+                  future: _contextFuture,
+                  builder: (context, snapshot) {
+                    final ctx = snapshot.data;
+                    return SeriesHeroCard(
+                      tourLabel: ctx?.tourLabel,
+                      title: ctx?.title ??
+                          (_seriesName.isNotEmpty ? _seriesName : 'Series'),
+                      season: ctx?.season,
+                      dateRange: ctx?.dateRange ?? '',
+                      formats: ctx?.formats ?? const [],
+                      status: ctx?.statusLabel ?? '',
+                      left: ctx?.teamA,
+                      right: ctx?.teamB,
+                    );
+                  },
                 ),
-              ),
-            ],
+                const SizedBox(height: 14),
+                SeriesTabBar(
+                  items: const ['Overview', 'Matches', 'Squads', 'Stats'],
+                  selected: tab,
+                  onChanged: _setTab,
+                ),
+                const SizedBox(height: 18),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, anim) =>
+                      FadeTransition(opacity: anim, child: child),
+                  child: KeyedSubtree(
+                    key: ValueKey(tab),
+                    child: _seriesId.isEmpty || _tabFutures[tab] == null
+                        ? const SeriesStateCard(
+                            title: 'Select a series',
+                            message:
+                                'Open a series from the list to view details.',
+                          )
+                        : _SeriesTabPanel(
+                            tab: tab,
+                            future: _tabFutures[tab]!,
+                            seriesId: _seriesId,
+                            onOpenMatch: (id) =>
+                                Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) => MatchDetailsScreen(matchId: id),
+                            )),
+                          ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -191,18 +272,205 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   }
 }
 
-class _SeriesApiPanel extends StatelessWidget {
-  const _SeriesApiPanel({
+// ---------------------------------------------------------------------------
+// Series context — derived series-level metadata
+// ---------------------------------------------------------------------------
+
+class _SeriesContext {
+  _SeriesContext({
+    required this.seriesId,
+    required this.fallbackName,
+    required this.detail,
+    required this.matches,
+    this.initialSeries,
+  });
+
+  final String seriesId;
+  final String fallbackName;
+  final Map<String, dynamic> detail;
+  final List<CricketMatch> matches;
+  final ApiSeries? initialSeries;
+
+  String get title {
+    final name = apiString(
+      detail['seriesName'] ??
+          detail['series_name'] ??
+          detail['name'] ??
+          detail['title'],
+      fallbackName,
+    );
+    return cleanSeriesText(name);
+  }
+
+  /// Year/season suffix, e.g. "2024-25" extracted from the title.
+  String? get season {
+    final match = RegExp(r'(\d{4}(?:[-/]\d{2,4})?)\s*$').firstMatch(title);
+    return match?.group(1);
+  }
+
+  /// "India Tour of Australia" without the trailing year.
+  String? get tourLabel {
+    final s = season;
+    if (s == null) return null;
+    final base = title.replaceFirst(RegExp(r'\s*$s\s*$'), '').trim();
+    return base.isEmpty ? null : base;
+  }
+
+  List<CricketMatch> get _ordered {
+    final list = [...matches];
+    list.sort((a, b) => (a.startDateTime ?? DateTime(2100))
+        .compareTo(b.startDateTime ?? DateTime(2100)));
+    return list;
+  }
+
+  DateTime? get startDate => _ordered.isNotEmpty
+      ? _ordered.first.startDateTime
+      : SeriesView.fromApi(initialSeries ?? _emptySeries).startDate;
+
+  DateTime? get endDate =>
+      _ordered.isNotEmpty ? _ordered.last.startDateTime : null;
+
+  String get dateRange {
+    final s = startDate;
+    final e = endDate;
+    if (s == null) return '';
+    String fmt(DateTime d) {
+      const m = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      return '${d.day} ${m[d.month - 1]} ${d.year}';
+    }
+
+    if (e == null || (e.difference(s).inDays).abs() < 1) return fmt(s);
+    return '${fmt(s)} – ${fmt(e)}';
+  }
+
+  /// Distinct match formats present in the series, e.g. ["Test", "ODI"].
+  List<String> get formats {
+    final counts = <String, int>{};
+    final re = RegExp(r'\b(Test|ODI|T20I|T20|Match|Final)\b',
+        caseSensitive: false);
+    for (final m in matches) {
+      final hit = re.firstMatch(m.matchDesc);
+      if (hit == null) continue;
+      var f = hit.group(0)!;
+      f = switch (f.toLowerCase()) {
+        'test' => 'Test',
+        'odi' => 'ODI',
+        't20i' => 'T20I',
+        't20' => 'T20',
+        _ => f,
+      };
+      counts[f] = (counts[f] ?? 0) + 1;
+    }
+    if (counts.isEmpty) return const [];
+    // Order by typical priority.
+    const order = ['Test', 'ODI', 'T20I', 'T20'];
+    final keys = counts.keys.toList()
+      ..sort((a, b) => order.indexOf(a).compareTo(order.indexOf(b)));
+    return [
+      for (final k in keys)
+        if (order.contains(k)) '${counts[k]} $k${counts[k]! > 1 ? 's' : ''}',
+    ];
+  }
+
+  String get host {
+    final fromDetail = apiString(detail['country'] ?? detail['host']);
+    if (fromDetail.isNotEmpty) return fromDetail;
+    // Heuristic: "X Tour of Y" → host is Y.
+    final m = RegExp(r'tour of ([a-z ]+)', caseSensitive: false)
+        .firstMatch(title);
+    if (m != null) return _titleCase(m.group(1)!.trim());
+    return '';
+  }
+
+  int get totalMatches {
+    final explicit = apiInt(detail['matchCount']) ?? apiInt(detail['totalMatches']);
+    if (explicit != null && explicit > 0) return explicit;
+    return matches.length;
+  }
+
+  int get liveCount => matches.where((m) => m.isLive).length;
+  int get upcomingCount => matches.where((m) => m.isUpcoming).length;
+  int get completedCount => matches.where((m) => m.isFinished).length;
+
+  SeriesStatus get status {
+    if (liveCount > 0) return SeriesStatus.ongoing;
+    if (completedCount > 0 && upcomingCount == 0) return SeriesStatus.completed;
+    return SeriesStatus.upcoming;
+  }
+
+  String get statusLabel => switch (status) {
+        SeriesStatus.ongoing => 'In Progress',
+        SeriesStatus.upcoming => 'Upcoming',
+        SeriesStatus.completed => 'Completed',
+      };
+
+  /// The two primary teams (bilateral) for the hero, derived from matches.
+  List<SeriesTeamRef> get _bilateralTeams {
+    final byKey = <String, SeriesTeamRef>{};
+    for (final m in matches) {
+      for (final t in [
+        SeriesTeamRef(name: m.teamA, shortName: m.teamAShort, logoUrl: m.teamALogo),
+        SeriesTeamRef(name: m.teamB, shortName: m.teamBShort, logoUrl: m.teamBLogo),
+      ]) {
+        final key = (t.shortName.isNotEmpty ? t.shortName : t.name).toUpperCase();
+        if (key.trim().isEmpty) continue;
+        byKey.putIfAbsent(key, () => t);
+      }
+    }
+    return byKey.values.toList();
+  }
+
+  SeriesTeamRef? get teamA =>
+      _bilateralTeams.isNotEmpty ? _bilateralTeams.first : null;
+  SeriesTeamRef? get teamB =>
+      _bilateralTeams.length > 1 ? _bilateralTeams[1] : null;
+
+  List<SeriesTeamRef> get allTeams => _bilateralTeams;
+
+  List<String> get venues {
+    final set = <String>{};
+    for (final m in matches) {
+      final v = m.venue.trim();
+      if (v.isNotEmpty && v.toLowerCase() != 'venue tbd') set.add(v);
+    }
+    return set.toList();
+  }
+
+  CricketMatch? get nextMatch {
+    for (final m in _ordered) {
+      if (m.isLive || m.isUpcoming) return m;
+    }
+    return _ordered.isNotEmpty ? _ordered.first : null;
+  }
+
+  static const _emptySeries = ApiSeries(id: '', name: '', status: '');
+}
+
+String _titleCase(String s) => s
+    .split(' ')
+    .where((w) => w.isNotEmpty)
+    .map((w) => w[0].toUpperCase() + w.substring(1))
+    .join(' ');
+
+// ---------------------------------------------------------------------------
+// Tab router
+// ---------------------------------------------------------------------------
+
+class _SeriesTabPanel extends StatelessWidget {
+  const _SeriesTabPanel({
     required this.tab,
     required this.future,
     required this.seriesId,
-    required this.seriesName,
+    required this.onOpenMatch,
   });
 
   final int tab;
   final Future<dynamic> future;
   final String seriesId;
-  final String seriesName;
+  final ValueChanged<String> onOpenMatch;
 
   @override
   Widget build(BuildContext context) {
@@ -210,545 +478,212 @@ class _SeriesApiPanel extends StatelessWidget {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const LinearProgressIndicator();
+          return const SeriesLoading();
         }
         if (snapshot.hasError) {
-          return const _SeriesInfoCard(
+          return const SeriesStateCard(
+            title: 'Temporarily unavailable',
+            message: 'This section could not load. Pull down to refresh.',
             icon: Icons.cloud_off_rounded,
-            text:
-                'This series section is temporarily unavailable. Pull back and try again.',
           );
         }
-        if (tab == 1) {
-          final response = snapshot.data as ApiEnvelope<List<CricketMatch>>?;
-          final matches = response?.data ?? const <CricketMatch>[];
-          if (kDebugMode) {
-            debugPrint(
-                'SERIES_DETAIL selectedId=$seriesId selectedName=$seriesName matchesCount=${matches.length}');
-          }
-          if (matches.isEmpty) {
-            return const _SeriesInfoCard(
-              icon: Icons.event_busy_rounded,
-              text: 'No matches are available for this series yet.',
+        switch (tab) {
+          case 1:
+            final env = snapshot.data as ApiEnvelope<List<CricketMatch>>?;
+            return _MatchesTab(
+              matches: env?.data ?? const [],
+              onOpenMatch: onOpenMatch,
             );
-          }
-          return _SeriesMatchesPanel(matches: matches);
+          case 2:
+            final teams = (snapshot.data as List<SquadTeam>?) ?? const [];
+            return _SquadsTab(teams: teams);
+          case 3:
+            final responses = snapshot.data as List<dynamic>?;
+            final points = responses != null && responses.isNotEmpty
+                ? apiMap((responses[0] as ApiEnvelope<Map<String, dynamic>>).data)
+                : const <String, dynamic>{};
+            final stats = responses != null && responses.length > 1
+                ? apiMap((responses[1] as ApiEnvelope<Map<String, dynamic>>).data)
+                : const <String, dynamic>{};
+            return _StatsTab(points: points, stats: stats);
+          default:
+            final ctx = snapshot.data as _SeriesContext?;
+            if (ctx == null) {
+              return const SeriesLoading();
+            }
+            return _OverviewTab(ctx: ctx, onOpenMatch: onOpenMatch);
         }
-        if (tab == 2) {
-          final responses = snapshot.data as List<dynamic>?;
-          final teamsResponse = responses != null && responses.isNotEmpty
-              ? responses.first as ApiEnvelope<List<dynamic>>
-              : null;
-          final matchesResponse = responses != null && responses.length > 1
-              ? responses[1] as ApiEnvelope<List<CricketMatch>>
-              : null;
-          final rawTeams = teamsResponse?.data ?? const [];
-          // Defensive filter: drop empty team objects that have neither a
-          // teamId nor a teamName. The deployed backend currently returns
-          // 10 empty placeholders for some series; this guarantees the UI
-          // doesn't render "Team / TEA" placeholder rows even when the
-          // API still returns stale empty entries.
-          final teams = rawTeams.where((entry) {
-            final map = apiMap(entry);
-            final id =
-                apiString(map['teamId'] ?? map['team_id'] ?? map['id']);
-            final name = apiString(
-                map['teamName'] ?? map['team_name'] ?? map['name']);
-            return id.isNotEmpty || name.isNotEmpty;
-          }).toList(growable: false);
-          final matches = matchesResponse?.data ?? const <CricketMatch>[];
-          final resolvedTeams =
-              teams.isNotEmpty ? teams : teamsFromSeriesMatches(matches);
-          if (kDebugMode) {
-            debugPrint(
-                'SERIES_DETAIL selectedId=$seriesId selectedName=$seriesName teamsCount=${resolvedTeams.length} source=${teams.isNotEmpty ? 'teams-endpoint' : 'matches-derived'}');
-          }
-          if (resolvedTeams.isEmpty) {
-            return const _SeriesInfoCard(
-              icon: Icons.groups_rounded,
-              text: 'Teams and squads are not available yet.',
-            );
-          }
-          return _SeriesTeamsPanel(teams: resolvedTeams);
-        }
-        if (tab == 3) {
-          final responses = snapshot.data as List<dynamic>?;
-          final points = responses != null && responses.isNotEmpty
-              ? apiMap(
-                  (responses.first as ApiEnvelope<Map<String, dynamic>>).data)
-              : const <String, dynamic>{};
-          final stats = responses != null && responses.length > 1
-              ? apiMap((responses[1] as ApiEnvelope<Map<String, dynamic>>).data)
-              : const <String, dynamic>{};
-          if (kDebugMode) {
-            debugPrint(
-                'SERIES_DETAIL selectedId=$seriesId selectedName=$seriesName pointsRows=${seriesPointsRows(points).length} battingRows=${seriesStatsRows(stats, 'batting').length} bowlingRows=${seriesStatsRows(stats, 'bowling').length}');
-          }
-          return _SeriesStatsApiPanel(points: points, stats: stats);
-        }
-        final responses = snapshot.data as List<dynamic>?;
-        final detail = responses != null && responses.isNotEmpty
-            ? apiMap(
-                (responses.first as ApiEnvelope<Map<String, dynamic>>).data)
-            : const <String, dynamic>{};
-        final schedule = responses != null && responses.length > 1
-            ? (responses[1] as ApiEnvelope<List<CricketMatch>>).data
-            : const <CricketMatch>[];
-        if (kDebugMode) {
-          debugPrint(
-              'SERIES_DETAIL selectedId=$seriesId selectedName=$seriesName overviewMatches=${schedule.length}');
-        }
-        return _SeriesOverviewApiPanel(detail: detail, schedule: schedule);
       },
     );
   }
 }
 
-class _SeriesOverviewApiPanel extends StatelessWidget {
-  const _SeriesOverviewApiPanel({required this.detail, required this.schedule});
+// ---------------------------------------------------------------------------
+// Overview tab
+// ---------------------------------------------------------------------------
 
-  final Map<String, dynamic> detail;
-  final List<CricketMatch> schedule;
+class _OverviewTab extends StatelessWidget {
+  const _OverviewTab({required this.ctx, required this.onOpenMatch});
+
+  final _SeriesContext ctx;
+  final ValueChanged<String> onOpenMatch;
 
   @override
   Widget build(BuildContext context) {
-    CricketMatch? next;
-    for (final match in schedule) {
-      if (match.isLive || match.isUpcoming) {
-        next = match;
-        break;
-      }
-    }
-    next ??= schedule.isNotEmpty ? schedule.first : null;
-    final liveCount = schedule.where((m) => m.isLive).length;
-    final upcomingCount = schedule.where((m) => m.isUpcoming).length;
-    final completedCount = schedule.where((m) => m.isFinished).length;
-    final teamSet = <String>{
-      for (final match in schedule) ...[match.teamA, match.teamB]
-    }..removeWhere((team) => team.trim().isEmpty);
-    final teamsCount = teamSet.length;
-    final firstStart =
-        schedule.isNotEmpty ? schedule.first.startDateTime : null;
-    final lastStart =
-        schedule.isNotEmpty ? schedule.last.startDateTime : null;
-    final formatLabels = <String>{
-      for (final match in schedule)
-        if (match.matchDesc.trim().isNotEmpty &&
-            RegExp(r'\b(Test|ODI|T20I?|Match|Final)\b', caseSensitive: false)
-                .hasMatch(match.matchDesc))
-          match.matchDesc.trim()
-    };
-    final venueSet = <String>{
-      for (final match in schedule) match.venue.trim()
-    }..removeWhere((v) => v.isEmpty);
-    final detailDateRange = _dateRange(
-        detail['startDate'] ??
-            detail['start_date'] ??
-            detail['startTime'] ??
-            detail['start_time'],
-        detail['endDate'] ??
-            detail['end_date'] ??
-            detail['endTime'] ??
-            detail['end_time']);
-    final scheduleDateRange = _dateRange(firstStart, lastStart);
-    final dateRange =
-        detailDateRange.isNotEmpty ? detailDateRange : scheduleDateRange;
-    final seriesName = apiString(
-        detail['name'] ??
-            detail['seriesName'] ??
-            detail['series_name'] ??
-            detail['title'],
-        'Series');
-    final status = apiString(detail['status']);
-    final format = apiString(detail['format'] ??
-        detail['series_type'] ??
-        detail['type'] ??
-        (formatLabels.length <= 4 ? formatLabels.join(', ') : ''));
-    final host = apiString(detail['country'] ?? detail['host']);
-    final totalMatches = _seriesMatchCount(detail, schedule);
-    final bilateralTeams = _bilateralTeams(schedule, teamSet);
-    final topTeams =
-        _topTeams(schedule, teamSet, exclude: bilateralTeams ?? const []);
-    final formatChips = formatLabels.isNotEmpty
-        ? formatLabels.toList()
-        : (format.isNotEmpty ? [format] : const <String>[]);
-
+    final c = context.cric;
+    final next = ctx.nextMatch;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SeriesHero(
-          name: seriesName,
-          status: status,
-          dateRange: dateRange,
-          formats: formatChips,
-          teams: bilateralTeams,
-        ),
-        const SizedBox(height: 14),
-        _SeriesInfoGrid(items: [
-          if (format.isNotEmpty)
-            _InfoItem(Icons.style_rounded, 'Format', format),
-          if (host.isNotEmpty)
-            _InfoItem(Icons.public_rounded, 'Host', host),
-          if (firstStart != null)
-            _InfoItem(Icons.calendar_today_rounded, 'Start Date',
-                formatMatchDateTime(firstStart)),
-          if (lastStart != null)
-            _InfoItem(Icons.event_available_rounded, 'End Date',
-                formatMatchDateTime(lastStart)),
-          if (totalMatches > 0)
-            _InfoItem(Icons.sports_cricket_rounded, 'Total Matches',
-                totalMatches.toString()),
-          if (teamsCount > 0)
-            _InfoItem(Icons.groups_rounded, 'Teams', teamsCount.toString()),
-          if (status.isNotEmpty)
-            _InfoItem(Icons.bolt_rounded, 'Status', status),
-        ]),
-        const SizedBox(height: 14),
-        _SeriesCountStrip(
-          live: liveCount,
-          upcoming: upcomingCount,
-          completed: completedCount,
-        ),
-        const SizedBox(height: 14),
-        if (next != null) _SeriesMatchCard(match: next, title: 'Next Match'),
-        if (next == null)
-          const _SeriesInfoCard(
-              icon: Icons.event_busy_rounded,
-              text: 'Schedule summary is not available yet.'),
-        if (venueSet.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          _SeriesVenuesCard(venues: venueSet.toList()),
-        ],
-        if (topTeams.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          _SeriesTopTeamsCard(teams: topTeams),
-        ],
-      ],
-    );
-  }
-}
-
-class _SeriesHero extends StatelessWidget {
-  const _SeriesHero({
-    required this.name,
-    required this.status,
-    required this.dateRange,
-    required this.formats,
-    required this.teams,
-  });
-
-  final String name;
-  final String status;
-  final String dateRange;
-  final List<String> formats;
-  final List<CricketMatch>? teams;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            c.cyan.withValues(alpha: .22),
-            c.card,
-            c.card2,
-          ],
-        ),
-        border: Border.all(color: c.cyan.withValues(alpha: .55), width: 1.4),
-        boxShadow: [
-          BoxShadow(
-              color: c.cyan.withValues(alpha: .18),
-              blurRadius: 28,
-              offset: const Offset(0, 10)),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -50,
-              bottom: -30,
-              child: Icon(Icons.stadium_rounded,
-                  size: 200, color: c.cyan.withValues(alpha: .06)),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  if (status.isNotEmpty) _ChipText(text: status),
-                  if (teams != null && teams!.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    _BilateralTeamsHeader(teams: teams!),
-                  ],
-                  const SizedBox(height: 14),
-                  Text(
-                    name,
-                    textAlign: TextAlign.center,
-                    maxLines: 3,
-                    softWrap: true,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 22,
-                        height: 1.15),
-                  ),
-                  if (dateRange.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.calendar_today_rounded,
-                            color: c.cyan, size: 14),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            dateRange,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                                color: c.muted, fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (formats.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final f in formats.take(4))
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: c.cyan.withValues(alpha: .14),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                  color: c.cyan.withValues(alpha: .35)),
-                            ),
-                            child: Text(f,
-                                style: TextStyle(
-                                    color: c.cyan,
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 11)),
-                          ),
-                      ],
-                    ),
-                  ],
-                ],
+        SeriesSectionCard(
+          title: 'Series Info',
+          child: _SeriesInfoGrid(
+            items: [
+              if (ctx.formats.isNotEmpty)
+                _InfoRow(Icons.edit_note_rounded, 'Format',
+                    ctx.formats.join(' • ')),
+              if (ctx.host.isNotEmpty)
+                _InfoRow(Icons.shield_outlined, 'Host', ctx.host),
+              if (ctx.startDate != null)
+                _InfoRow(Icons.calendar_today_rounded, 'Start Date',
+                    _shortDate(ctx.startDate!)),
+              if (ctx.endDate != null)
+                _InfoRow(Icons.event_available_rounded, 'End Date',
+                    _shortDate(ctx.endDate!)),
+              if (ctx.totalMatches > 0)
+                _InfoRow(Icons.sports_cricket_rounded, 'Total Matches',
+                    '${ctx.totalMatches} Matches'),
+              _InfoRow(
+                Icons.monitor_heart_outlined,
+                'Series Status',
+                ctx.statusLabel,
+                valueColor: ctx.status == SeriesStatus.ongoing
+                    ? c.success
+                    : ctx.status == SeriesStatus.completed
+                        ? c.success
+                        : c.cyan,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BilateralTeamsHeader extends StatelessWidget {
-  const _BilateralTeamsHeader({required this.teams});
-
-  final List<CricketMatch> teams;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final match = teams.first;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        _HeroTeam(name: match.teamA, short: match.teamAShort, logo: match.teamALogo),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: c.card2,
-              border: Border.all(color: c.cyan.withValues(alpha: .5)),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text('VS',
-                style: TextStyle(
-                    color: c.cyan,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                    letterSpacing: 1)),
+            ],
           ),
         ),
-        _HeroTeam(name: match.teamB, short: match.teamBShort, logo: match.teamBLogo),
+        const SizedBox(height: 14),
+        _CountStrip(
+          live: ctx.liveCount,
+          upcoming: ctx.upcomingCount,
+          completed: ctx.completedCount,
+        ),
+        if (next != null) ...[
+          const SizedBox(height: 14),
+          _NextMatchCard(match: next, onOpen: () => onOpenMatch(next.id)),
+        ],
+        if (ctx.venues.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _VenuesCard(venues: ctx.venues),
+        ],
+        if (ctx.allTeams.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _ParticipatingTeamsCard(teams: ctx.allTeams),
+        ],
       ],
     );
   }
 }
 
-class _HeroTeam extends StatelessWidget {
-  const _HeroTeam({required this.name, required this.short, required this.logo});
-
-  final String name;
-  final String short;
-  final String? logo;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return SizedBox(
-      width: 96,
-      child: Column(
-        children: [
-          TeamBadge(
-            TeamInfo(
-              code: short,
-              name: name,
-              shortName: short,
-              color: c.cyan,
-              asset: logo,
-            ),
-            size: 56,
-            borderColor: c.cyan.withValues(alpha: .5),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            short.isNotEmpty ? short : safeTeamInitials(name),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: c.text, fontWeight: FontWeight.w900, fontSize: 14),
-          ),
-          if (name.isNotEmpty)
-            Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: c.muted,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 10),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoItem {
-  const _InfoItem(this.icon, this.label, this.value);
+class _InfoRow {
+  const _InfoRow(this.icon, this.label, this.value, {this.valueColor});
   final IconData icon;
   final String label;
   final String value;
+  final Color? valueColor;
 }
 
 class _SeriesInfoGrid extends StatelessWidget {
   const _SeriesInfoGrid({required this.items});
 
-  final List<_InfoItem> items;
+  final List<_InfoRow> items;
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.info_outline_rounded, color: c.cyan, size: 20),
-            const SizedBox(width: 8),
-            Text('SERIES INFO',
-                style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                    letterSpacing: .5)),
-          ]),
-          const SizedBox(height: 14),
-          LayoutBuilder(builder: (context, constraints) {
-            final cols = constraints.maxWidth >= 520 ? 3 : 2;
-            final tileWidth =
-                (constraints.maxWidth - (cols - 1) * 10) / cols;
-            return Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final item in items)
-                  SizedBox(
-                      width: tileWidth, child: _InfoItemTile(item: item)),
-              ],
-            );
-          }),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoCol = constraints.maxWidth >= 360;
+        final colWidth =
+            twoCol ? (constraints.maxWidth - 14) / 2 : constraints.maxWidth;
+        return Wrap(
+          spacing: 14,
+          runSpacing: 16,
+          children: [
+            for (final item in items)
+              SizedBox(width: colWidth, child: _InfoTile(item: item)),
+          ],
+        );
+      },
     );
   }
 }
 
-class _InfoItemTile extends StatelessWidget {
-  const _InfoItemTile({required this.item});
+class _InfoTile extends StatelessWidget {
+  const _InfoTile({required this.item});
 
-  final _InfoItem item;
+  final _InfoRow item;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: c.card2.withValues(alpha: .55),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: c.border.withValues(alpha: .65)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: c.cyan.withValues(alpha: .10),
+            border: Border.all(color: c.cyan.withValues(alpha: .25)),
+          ),
+          child: Icon(item.icon, color: c.cyan, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(item.icon, color: c.cyan, size: 16),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  item.label.toUpperCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.muted,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 10,
-                      letterSpacing: .4),
+              Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.muted,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                item.value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: item.valueColor ?? c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14.5,
+                  height: 1.2,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(item.value,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              softWrap: true,
-              style: TextStyle(
-                  color: c.text, fontWeight: FontWeight.w900, fontSize: 13)),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-class _SeriesCountStrip extends StatelessWidget {
-  const _SeriesCountStrip(
-      {required this.live,
-      required this.upcoming,
-      required this.completed});
+class _CountStrip extends StatelessWidget {
+  const _CountStrip({
+    required this.live,
+    required this.upcoming,
+    required this.completed,
+  });
 
   final int live;
   final int upcoming;
@@ -757,31 +692,25 @@ class _SeriesCountStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    if (live == 0 && upcoming == 0 && completed == 0) {
-      return const SizedBox.shrink();
-    }
     return Row(
       children: [
         Expanded(
             child: _CountTile(
-                value: live,
-                label: 'Live',
-                color: c.live,
-                icon: Icons.flash_on_rounded)),
-        const SizedBox(width: 10),
+                label: 'Live', value: live, color: c.live, icon: Icons.sensors_rounded)),
+        const SizedBox(width: 12),
         Expanded(
             child: _CountTile(
-                value: upcoming,
                 label: 'Upcoming',
+                value: upcoming,
                 color: c.cyan,
-                icon: Icons.upcoming_rounded)),
-        const SizedBox(width: 10),
+                icon: Icons.schedule_rounded)),
+        const SizedBox(width: 12),
         Expanded(
             child: _CountTile(
-                value: completed,
                 label: 'Completed',
+                value: completed,
                 color: c.success,
-                icon: Icons.task_alt_rounded)),
+                icon: Icons.check_circle_rounded)),
       ],
     );
   }
@@ -789,14 +718,14 @@ class _SeriesCountStrip extends StatelessWidget {
 
 class _CountTile extends StatelessWidget {
   const _CountTile({
-    required this.value,
     required this.label,
+    required this.value,
     required this.color,
     required this.icon,
   });
 
-  final int value;
   final String label;
+  final int value;
   final Color color;
   final IconData icon;
 
@@ -806,73 +735,286 @@ class _CountTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
       decoration: BoxDecoration(
-        color: c.card.withValues(alpha: .65),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: .35)),
+        borderRadius: BorderRadius.circular(18),
+        color: c.card.withValues(alpha: .9),
+        border: Border.all(color: color.withValues(alpha: .3)),
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(height: 6),
-          Text(value.toString(),
-              style: TextStyle(
-                  color: c.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 22)),
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 8),
+          Text(
+            value.toString(),
+            style: TextStyle(
+                color: c.text, fontWeight: FontWeight.w900, fontSize: 22),
+          ),
           const SizedBox(height: 2),
-          Text(label.toUpperCase(),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: c.muted,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 10,
-                  letterSpacing: .4)),
+          Text(
+            label,
+            style: TextStyle(
+                color: c.muted, fontWeight: FontWeight.w700, fontSize: 12),
+          ),
         ],
       ),
     );
   }
 }
 
-class _SeriesVenuesCard extends StatelessWidget {
-  const _SeriesVenuesCard({required this.venues});
+class _NextMatchCard extends StatelessWidget {
+  const _NextMatchCard({required this.match, required this.onOpen});
+
+  final CricketMatch match;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return SeriesSectionCard(
+      title: 'Next Match',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SeriesPlayerAvatarless(
+                  logo: match.teamALogo,
+                  name: match.teamA,
+                  short: match.teamAShort),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text('vs',
+                    style: TextStyle(
+                        color: c.muted,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13)),
+              ),
+              SeriesPlayerAvatarless(
+                  logo: match.teamBLogo,
+                  name: match.teamB,
+                  short: match.teamBShort),
+              const Spacer(),
+              if (match.matchDesc.isNotEmpty)
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: c.cyan.withValues(alpha: .12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: c.cyan.withValues(alpha: .3)),
+                    ),
+                    child: Text(
+                      match.matchDesc,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.cyan,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _MetaLine(
+              icon: Icons.calendar_today_rounded,
+              text: match.startDateTime != null
+                  ? formatMatchDateTime(match.startDateTime)
+                  : 'Date to be confirmed'),
+          if (match.venue.isNotEmpty)
+            _MetaLine(icon: Icons.location_on_rounded, text: match.venue),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: GradientButton(
+              label: match.isLive ? 'View Match' : 'Set Reminder',
+              icon: match.isLive
+                  ? Icons.play_circle_fill_rounded
+                  : Icons.notifications_active_rounded,
+              onTap: onOpen,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetaLine extends StatelessWidget {
+  const _MetaLine({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: c.muted, size: 15),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: c.muted,
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VenuesCard extends StatelessWidget {
+  const _VenuesCard({required this.venues});
 
   final List<String> venues;
 
   @override
   Widget build(BuildContext context) {
+    return SeriesSectionCard(
+      title: 'Venues',
+      child: SizedBox(
+        height: 96,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          itemCount: venues.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (context, i) => _VenueTile(venue: venues[i]),
+        ),
+      ),
+    );
+  }
+}
+
+class _VenueTile extends StatelessWidget {
+  const _VenueTile({required this.venue});
+
+  final String venue;
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final parts = venue.split(',');
+    final name = parts.first.trim();
+    final city = parts.length > 1 ? parts.sublist(1).join(',').trim() : '';
+    return Container(
+      width: 132,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: c.border),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
         children: [
-          Row(children: [
-            Icon(Icons.location_on_rounded, color: c.cyan, size: 20),
-            const SizedBox(width: 8),
-            Text('VENUES',
-                style: TextStyle(
-                    color: c.text,
+          Image.asset(
+            'assets/images/stadium_live.png',
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                const ColoredBox(color: Color(0xff0a1f3a)),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.transparent,
+                  const Color(0xff05101f).withValues(alpha: .9),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                    letterSpacing: .5)),
-          ]),
-          const SizedBox(height: 12),
-          for (final v in venues.take(6))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+                    fontSize: 12,
+                    height: 1.1,
+                  ),
+                ),
+                if (city.isNotEmpty)
+                  Text(
+                    city,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.cyan,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ParticipatingTeamsCard extends StatelessWidget {
+  const _ParticipatingTeamsCard({required this.teams});
+
+  final List<SeriesTeamRef> teams;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return SeriesSectionCard(
+      title: 'Participating Teams',
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          for (final team in teams)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: c.card2.withValues(alpha: .6),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: c.border),
+              ),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.place_rounded, color: c.cyan, size: 16),
+                  TeamLogoWidget(
+                    logoUrl: team.logoUrl,
+                    teamName: team.name,
+                    abbreviation:
+                        team.shortName.isNotEmpty ? team.shortName : team.name,
+                    color: c.cyan,
+                    size: 24,
+                  ),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(v,
-                        softWrap: true,
-                        style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13)),
+                  Text(
+                    team.shortName.isNotEmpty ? team.shortName : team.name,
+                    style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ),
@@ -883,909 +1025,1086 @@ class _SeriesVenuesCard extends StatelessWidget {
   }
 }
 
-class _SeriesTopTeamsCard extends StatelessWidget {
-  const _SeriesTopTeamsCard({required this.teams});
+/// Small team logo + short label used in the Next Match card.
+class SeriesPlayerAvatarless extends StatelessWidget {
+  const SeriesPlayerAvatarless({
+    super.key,
+    required this.logo,
+    required this.name,
+    required this.short,
+  });
 
-  final List<Map<String, dynamic>> teams;
+  final String? logo;
+  final String name;
+  final String short;
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.groups_rounded, color: c.cyan, size: 20),
-            const SizedBox(width: 8),
-            Text('PARTICIPATING TEAMS',
-                style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13,
-                    letterSpacing: .5)),
-          ]),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final team in teams.take(12))
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: c.card2.withValues(alpha: .55),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                        color: c.cyan.withValues(alpha: .25)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TeamBadge(
-                        TeamInfo(
-                          code: apiString(team['shortName']),
-                          name: apiString(team['name']),
-                          shortName: apiString(team['shortName']),
-                          color: c.cyan,
-                          asset: team['logoUrl'] as String?,
-                        ),
-                        size: 22,
-                        borderColor: c.border,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                          apiString(team['shortName']).isNotEmpty
-                              ? apiString(team['shortName'])
-                              : apiString(team['name']),
-                          style: TextStyle(
-                              color: c.text,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 11)),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
+    return TeamLogoWidget(
+      logoUrl: logo,
+      teamName: name,
+      abbreviation: short.isNotEmpty ? short : name,
+      color: const Color(0xff22d3ee),
+      size: 40,
     );
   }
 }
 
-List<CricketMatch>? _bilateralTeams(
-    List<CricketMatch> schedule, Set<String> teamSet) {
-  if (teamSet.length != 2 || schedule.isEmpty) return null;
-  return [schedule.first];
-}
+// ---------------------------------------------------------------------------
+// Matches tab
+// ---------------------------------------------------------------------------
 
-List<Map<String, dynamic>> _topTeams(
-    List<CricketMatch> schedule, Set<String> teamSet,
-    {required Iterable exclude}) {
-  if (teamSet.length <= 2) return const [];
-  return teamsFromSeriesMatches(schedule);
-}
-
-class _SeriesMatchesPanel extends StatelessWidget {
-  const _SeriesMatchesPanel({required this.matches});
+class _MatchesTab extends StatelessWidget {
+  const _MatchesTab({required this.matches, required this.onOpenMatch});
 
   final List<CricketMatch> matches;
+  final ValueChanged<String> onOpenMatch;
 
   @override
   Widget build(BuildContext context) {
-    final live =
-        matches.where((m) => m.status.toLowerCase().contains('live')).toList();
-    final upcoming = matches
-        .where((m) =>
-            m.status.toLowerCase().contains('upcoming') ||
-            m.status.toLowerCase().contains('scheduled'))
-        .toList();
-    final completed = matches
-        .where((m) =>
-            m.status.toLowerCase().contains('complete') ||
-            m.status.toLowerCase().contains('finish'))
-        .toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (live.isNotEmpty) _MatchSection(title: 'Live', matches: live),
-        if (upcoming.isNotEmpty)
-          _MatchSection(title: 'Upcoming', matches: upcoming),
-        if (completed.isNotEmpty)
-          _MatchSection(title: 'Completed', matches: completed),
-        if (live.isEmpty && upcoming.isEmpty && completed.isEmpty)
-          _MatchSection(title: 'Matches', matches: matches),
-      ],
-    );
-  }
-}
-
-class _MatchSection extends StatelessWidget {
-  const _MatchSection({required this.title, required this.matches});
-
-  final String title;
-  final List<CricketMatch> matches;
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10, top: 4),
-            child: Text(title,
-                style: TextStyle(
-                    color: context.cric.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18)),
-          ),
-          for (final match in matches)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _SeriesMatchCard(match: match),
-            ),
-        ],
-      );
-}
-
-class _SeriesMatchCard extends StatelessWidget {
-  const _SeriesMatchCard({required this.match, this.title});
-
-  final CricketMatch match;
-  final String? title;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final startText =
-        formatMatchDateTime(match.startDateTime ?? match.startTime);
-    return PremiumCard(
-      onTap: match.id.isEmpty
-          ? null
-          : () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => MatchDetailsScreen(matchId: match.id))),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (title != null) ...[
-            Row(
-              children: [
-                Text(
-                  title!,
-                  style: TextStyle(
-                      color: c.cyan, fontWeight: FontWeight.w900, fontSize: 13),
-                ),
-                const Spacer(),
-                _ChipText(text: formatStatusChip(match.status)),
-              ],
-            ),
-            const SizedBox(height: 8),
-          ],
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              TeamBadge(
-                TeamInfo(
-                  code: match.teamAShort,
-                  name: match.teamA,
-                  shortName: match.teamAShort,
-                  color: c.cyan,
-                  asset: match.teamALogo,
-                ),
-                size: 42,
-                borderColor: c.border,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${match.teamA} vs ${match.teamB}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15.5),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      match.venue,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              TeamBadge(
-                TeamInfo(
-                  code: match.teamBShort,
-                  name: match.teamB,
-                  shortName: match.teamBShort,
-                  color: c.warning,
-                  asset: match.teamBLogo,
-                ),
-                size: 42,
-                borderColor: c.border,
-              ),
-            ],
-          ),
-          if (startText.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(startText, style: TextStyle(color: c.muted, fontSize: 12)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SeriesTeamsPanel extends StatelessWidget {
-  const _SeriesTeamsPanel({required this.teams});
-
-  final List<dynamic> teams;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    final items = teams.map(apiMap).where((m) => m.isNotEmpty).toList();
-    if (items.isEmpty) {
-      return const _SeriesInfoCard(
-        icon: Icons.groups_rounded,
-        text: 'Teams and squads are not available yet.',
+    if (matches.isEmpty) {
+      return const SeriesStateCard(
+        title: 'No matches yet',
+        message: 'Matches for this series have not been announced yet.',
+        icon: Icons.event_busy_rounded,
       );
     }
-    final hasInlineSquads = items.any((data) =>
-        apiList(data['players']).isNotEmpty ||
-        apiList(data['squad']).isNotEmpty);
+    final live = matches.where((m) => m.isLive).toList();
+    final upcoming = matches.where((m) => m.isUpcoming).toList();
+    final completed = matches.where((m) => m.isFinished).toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10, left: 4),
-          child: Row(
-            children: [
-              Icon(Icons.groups_rounded, color: c.cyan, size: 18),
-              const SizedBox(width: 8),
-              Text('TEAMS (${items.length})',
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 13,
-                      letterSpacing: .5)),
-            ],
-          ),
-        ),
-        if (hasInlineSquads)
-          _SeriesInlineSquads(items: items)
-        else
-          LayoutBuilder(builder: (context, constraints) {
-            final cols = constraints.maxWidth >= 520 ? 2 : 1;
-            final tileWidth =
-                (constraints.maxWidth - (cols - 1) * 10) / cols;
-            return Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final data in items)
-                  SizedBox(
-                      width: tileWidth, child: _TeamCard(data: data)),
-              ],
-            );
-          }),
+        if (live.isNotEmpty) ...[
+          const _SectionLabel('Live Matches'),
+          for (final m in live)
+            _SeriesMatchTile(match: m, onTap: () => onOpenMatch(m.id)),
+        ],
+        if (upcoming.isNotEmpty) ...[
+          const _SectionLabel('Upcoming Matches'),
+          for (final m in upcoming)
+            _SeriesMatchTile(match: m, onTap: () => onOpenMatch(m.id)),
+        ],
+        if (completed.isNotEmpty) ...[
+          const _SectionLabel('Completed Matches'),
+          for (final m in completed)
+            _SeriesMatchTile(match: m, onTap: () => onOpenMatch(m.id)),
+        ],
       ],
     );
   }
 }
 
-class _SeriesInlineSquads extends StatefulWidget {
-  const _SeriesInlineSquads({required this.items});
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
 
-  final List<Map<String, dynamic>> items;
-
-  @override
-  State<_SeriesInlineSquads> createState() => _SeriesInlineSquadsState();
-}
-
-class _SeriesInlineSquadsState extends State<_SeriesInlineSquads> {
-  int _selected = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    final teams = widget.items;
-    if (teams.isEmpty) return const SizedBox.shrink();
-    final selected = _selected.clamp(0, teams.length - 1);
-    final current = teams[selected];
-    final players = apiList(current['players'] ?? current['squad']);
-    final bench = apiList(current['bench'] ?? current['reserve']);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ScrollableSegmentedTabs(
-          items: [
-            for (final t in teams)
-              apiString(t['teamShort'] ??
-                  t['teamShortName'] ??
-                  t['shortName'] ??
-                  t['short_name'] ??
-                  t['teamName'] ??
-                  t['name']),
-          ],
-          selected: selected,
-          onChanged: (value) => setState(() => _selected = value),
-          height: 44,
-        ),
-        const SizedBox(height: 14),
-        _TeamCard(data: current),
-        const SizedBox(height: 12),
-        PremiumSquad(playingXi: players, bench: bench, title: 'Squad'),
-      ],
-    );
-  }
-}
-
-class _TeamCard extends StatelessWidget {
-  const _TeamCard({required this.data});
-
-  final Map<String, dynamic> data;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final id = apiString(data['teamId'] ?? data['team_id'] ?? data['id']);
-    final name = apiString(
-        data['teamName'] ?? data['team_name'] ?? data['name'], 'Team');
-    final short = apiString(
-        data['teamShort'] ??
-            data['teamShortName'] ??
-            data['shortName'] ??
-            data['short_name'] ??
-            data['team_short'],
-        name);
-    final team = ApiTeam.fromJson({
-      ...data,
-      'id': id,
-      'name': name,
-      'shortName': short,
-    });
-    final players = apiList(data['players'] ?? data['squad']);
-    final subtitle = [
-      apiString(data['country']),
-      players.isNotEmpty ? '${players.length} players' : '',
-    ].where((value) => value.isNotEmpty).join(' • ');
-    return PremiumCard(
-      onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => TeamDetailScreen(
-              teamId: id,
-              initialName: name,
-              initialShortName: short,
-              initialLogoUrl: team.logo,
-              initialSquad: players,
-              sourceSeriesId: apiString(
-                  data['seriesId'] ??
-                      data['series_id'] ??
-                      data['source_series_id'],
-                  ''),
-            ),
-          )),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          TeamBadge(
-            TeamInfo(
-              code: team.shortName,
-              name: team.name,
-              shortName: team.shortName,
-              color: c.cyan,
-              asset: team.logo,
-            ),
-            size: 46,
-            borderColor: c.border,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-              child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(name,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-              if (subtitle.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(subtitle,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.muted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12)),
-              ],
-            ],
-          )),
-          Icon(Icons.chevron_right_rounded, color: c.muted),
-        ],
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 10, left: 2),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(
+          color: c.cyan,
+          fontWeight: FontWeight.w900,
+          fontSize: 12.5,
+          letterSpacing: .6,
+        ),
       ),
     );
   }
 }
 
-class _SeriesStatsApiPanel extends StatelessWidget {
-  const _SeriesStatsApiPanel({required this.points, required this.stats});
+class _SeriesMatchTile extends StatelessWidget {
+  const _SeriesMatchTile({required this.match, required this.onTap});
+
+  final CricketMatch match;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final statusColor = match.isLive
+        ? c.live
+        : match.isFinished
+            ? c.success
+            : c.cyan;
+    final statusLabel = match.isLive
+        ? 'LIVE'
+        : match.isFinished
+            ? _winnerTag(match)
+            : 'UPCOMING';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TapScale(
+        onTap: onTap,
+        borderRadius: 18,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: c.card.withValues(alpha: .92),
+            border: Border.all(color: c.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    match.matchDesc.isNotEmpty ? match.matchDesc : 'Match',
+                    style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: .15),
+                      borderRadius: BorderRadius.circular(7),
+                      border:
+                          Border.all(color: statusColor.withValues(alpha: .5)),
+                    ),
+                    child: Text(
+                      statusLabel,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 10,
+                        letterSpacing: .4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _TeamLine(
+                          logo: match.teamALogo,
+                          name: match.teamA,
+                          short: match.teamAShort,
+                          score: match.teamAScoreText,
+                        ),
+                        const SizedBox(height: 8),
+                        _TeamLine(
+                          logo: match.teamBLogo,
+                          name: match.teamB,
+                          short: match.teamBShort,
+                          score: match.teamBScoreText,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(width: 1, height: 44, color: c.border),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 96,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        if (match.startDateTime != null)
+                          Text(
+                            _dateOnly(match.startDateTime!),
+                            textAlign: TextAlign.right,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.muted,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        if (match.isUpcoming)
+                          Text(
+                            _countdown(match.startDateTime),
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: c.cyan,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
+                          )
+                        else if (match.isFinished &&
+                            match.resultText.isNotEmpty)
+                          Text(
+                            match.resultText,
+                            textAlign: TextAlign.right,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.success,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 11.5,
+                              height: 1.2,
+                            ),
+                          )
+                        else if (match.isLive)
+                          Text(
+                            match.statusText.isNotEmpty
+                                ? match.statusText
+                                : 'Live now',
+                            textAlign: TextAlign.right,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.live,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (match.venue.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Icon(Icons.location_on_rounded, color: c.muted, size: 13),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        match.venue,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.muted,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                    if (match.hasLiveStream && match.watchLiveEnabled) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: c.live.withValues(alpha: .15),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: c.live.withValues(alpha: .5)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.play_arrow_rounded, color: c.live, size: 12),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Watch',
+                              style: TextStyle(
+                                color: c.live,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _winnerTag(CricketMatch m) {
+    final r = m.resultText.toLowerCase();
+    if (r.contains('${m.teamAShort.toLowerCase()} won') ||
+        r.startsWith(m.teamA.toLowerCase())) {
+      return '${m.teamAShort} WON';
+    }
+    if (r.contains('${m.teamBShort.toLowerCase()} won') ||
+        r.startsWith(m.teamB.toLowerCase())) {
+      return '${m.teamBShort} WON';
+    }
+    return 'RESULT';
+  }
+}
+
+class _TeamLine extends StatelessWidget {
+  const _TeamLine({
+    required this.logo,
+    required this.name,
+    required this.short,
+    required this.score,
+  });
+
+  final String? logo;
+  final String name;
+  final String short;
+  final String score;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Row(
+      children: [
+        TeamLogoWidget(
+          logoUrl: logo,
+          teamName: name,
+          abbreviation: short.isNotEmpty ? short : name,
+          color: c.cyan,
+          size: 26,
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            short.isNotEmpty ? short : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+            ),
+          ),
+        ),
+        if (score.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Text(
+            score,
+            style: TextStyle(
+              color: c.cyan,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Squads tab
+// ---------------------------------------------------------------------------
+
+class _SquadsTab extends StatefulWidget {
+  const _SquadsTab({required this.teams});
+
+  final List<SquadTeam> teams;
+
+  @override
+  State<_SquadsTab> createState() => _SquadsTabState();
+}
+
+class _SquadsTabState extends State<_SquadsTab> {
+  int _team = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.teams.isEmpty) {
+      return const SeriesStateCard(
+        title: 'Squads not announced',
+        message:
+            'Squads for this series are not available from the provider yet.',
+        icon: Icons.groups_rounded,
+      );
+    }
+    final teams = widget.teams;
+    final selected = _team.clamp(0, teams.length - 1);
+    final team = teams[selected];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (teams.length > 1)
+          SeriesTabBar(
+            items: [
+              for (final t in teams)
+                t.shortName.isNotEmpty ? t.shortName : t.name
+            ],
+            selected: selected,
+            onChanged: (v) => setState(() => _team = v),
+          ),
+        const SizedBox(height: 16),
+        _SquadGroups(team: team),
+      ],
+    );
+  }
+}
+
+class _SquadGroups extends StatelessWidget {
+  const _SquadGroups({required this.team});
+
+  final SquadTeam team;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _group(team.players);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final entry in groups.entries)
+          if (entry.value.isNotEmpty) ...[
+            _SectionLabel(entry.key),
+            _PlayerGrid(players: entry.value),
+            const SizedBox(height: 8),
+          ],
+      ],
+    );
+  }
+
+  Map<String, List<SquadPlayer>> _group(List<SquadPlayer> players) {
+    final top = <SquadPlayer>[];
+    final allRounders = <SquadPlayer>[];
+    final bowlers = <SquadPlayer>[];
+    final keepers = <SquadPlayer>[];
+    final bench = <SquadPlayer>[];
+    for (final p in players) {
+      if (p.isSubstitute) {
+        bench.add(p);
+        continue;
+      }
+      final role = p.role.toLowerCase();
+      if (p.isWicketKeeper || role.contains('wk') || role.contains('keeper')) {
+        keepers.add(p);
+      } else if (role.contains('all') && role.contains('round')) {
+        allRounders.add(p);
+      } else if (role.contains('bowl')) {
+        bowlers.add(p);
+      } else {
+        top.add(p);
+      }
+    }
+    return {
+      'Batters': top,
+      'Wicketkeepers': keepers,
+      'All-Rounders': allRounders,
+      'Bowlers': bowlers,
+      'Reserves / Bench': bench,
+    };
+  }
+}
+
+class _PlayerGrid extends StatelessWidget {
+  const _PlayerGrid({required this.players});
+
+  final List<SquadPlayer> players;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 10.0;
+        final cols = constraints.maxWidth >= 420 ? 4 : 3;
+        final width = (constraints.maxWidth - (cols - 1) * spacing) / cols;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final p in players)
+              SizedBox(width: width, child: _SquadPlayerCard(player: p)),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SquadPlayerCard extends StatelessWidget {
+  const _SquadPlayerCard({required this.player});
+
+  final SquadPlayer player;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final roleTag = _roleTag(player);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: c.card.withValues(alpha: .9),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              SeriesPlayerAvatar(
+                name: player.name,
+                imageUrl: player.imageUrl,
+                size: 58,
+              ),
+              if (roleTag != null)
+                Positioned(
+                  right: -4,
+                  bottom: -2,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: roleTag.$2,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: c.bg, width: 1.5),
+                    ),
+                    child: Text(
+                      roleTag.$1,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 8.5,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            player.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+              height: 1.15,
+            ),
+          ),
+          if (player.isCaptain || player.isWicketKeeper) ...[
+            const SizedBox(height: 3),
+            Text(
+              player.isCaptain ? '(C) Captain' : 'WK',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.cyan,
+                fontWeight: FontWeight.w700,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  (String, Color)? _roleTag(SquadPlayer p) {
+    final role = p.role.toLowerCase();
+    if (p.isWicketKeeper || role.contains('wk') || role.contains('keeper')) {
+      return ('WK', const Color(0xfff59e0b));
+    }
+    if (role.contains('all') && role.contains('round')) {
+      return ('AR', const Color(0xff14b8a6));
+    }
+    if (role.contains('bowl')) {
+      return ('BOWL', const Color(0xff60a5fa));
+    }
+    if (role.contains('bat')) {
+      return ('BAT', const Color(0xff22d3ee));
+    }
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats tab
+// ---------------------------------------------------------------------------
+
+class _StatsTab extends StatelessWidget {
+  const _StatsTab({required this.points, required this.stats});
 
   final Map<String, dynamic> points;
   final Map<String, dynamic> stats;
 
   @override
   Widget build(BuildContext context) {
-    final rows = seriesPointsRows(points);
-    final batting = seriesStatsRows(stats, 'batting');
-    final bowling = seriesStatsRows(stats, 'bowling');
-    final fallbackStats = seriesStatsItems(stats);
+    final pointsRows = _pointsRows(points);
+    final batting = _statRows(stats, 'batting');
+    final bowling = _statRows(stats, 'bowling');
+
+    final hasAny =
+        pointsRows.isNotEmpty || batting.isNotEmpty || bowling.isNotEmpty;
+    if (!hasAny) {
+      return const SeriesStateCard(
+        title: 'Stats not available',
+        message:
+            'Points table and player stats are not available for this series yet.',
+        icon: Icons.bar_chart_rounded,
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PremiumCard(
-          padding: const EdgeInsets.all(16),
-          child: rows.isEmpty
-              ? const _InlineMuted(
-                  text: 'Points table is not available for this series.')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Points Table',
-                        style: TextStyle(
-                            color: context.cric.text,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18)),
-                    const SizedBox(height: 6),
-                    Text('${rows.length} teams',
-                        style: TextStyle(
-                            color: context.cric.muted,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12)),
-                    const SizedBox(height: 12),
-                    const _PointsTableHeader(),
-                    for (final row in rows.take(12))
-                      _PointsTableRow(data: apiMap(row)),
-                  ],
-                ),
-        ),
-        const SizedBox(height: 12),
-        PremiumCard(
-          padding: const EdgeInsets.all(16),
-          child: batting.isEmpty && bowling.isEmpty && fallbackStats.isEmpty
-              ? const _InlineMuted(text: 'Series stats are not available yet.')
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (batting.isNotEmpty) ...[
-                      _StatsSection(title: 'Top Run Scorers', rows: batting),
-                      if (bowling.isNotEmpty) const SizedBox(height: 16),
-                    ],
-                    if (bowling.isNotEmpty) ...[
-                      _StatsSection(title: 'Top Wicket Takers', rows: bowling),
-                    ],
-                    if (batting.isEmpty && bowling.isEmpty)
-                      _StatsSection(title: 'Series Stats', rows: fallbackStats),
-                  ],
-                ),
-        ),
+        if (pointsRows.isNotEmpty) ...[
+          _PointsTableCard(rows: pointsRows),
+          const SizedBox(height: 14),
+        ],
+        if (batting.isNotEmpty) ...[
+          _TopPlayersCard(
+            title: 'Top Run Scorers',
+            rows: batting.take(5).toList(),
+            metricLabel: 'Runs',
+            isBowling: false,
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (bowling.isNotEmpty) ...[
+          _TopPlayersCard(
+            title: 'Top Wicket Takers',
+            rows: bowling.take(5).toList(),
+            metricLabel: 'Wickets',
+            isBowling: true,
+          ),
+        ],
       ],
     );
   }
+
+  List<Map<String, dynamic>> _pointsRows(Map<String, dynamic> value) {
+    final root = value['data'] is Map ? apiMap(value['data']) : value;
+    final groups = apiList(root['groups'] ?? root['pointsTable']);
+    final rows = <dynamic>[];
+    for (final g in groups) {
+      final m = apiMap(g);
+      rows.addAll(apiList(m['rows'] ?? m['teams'] ?? m['pointsTableInfo']));
+    }
+    if (rows.isEmpty) rows.addAll(apiList(root['rows']));
+    return rows.map(apiMap).where((m) => m.isNotEmpty).toList();
+  }
+
+  List<Map<String, dynamic>> _statRows(Map<String, dynamic> value, String key) {
+    final root = value['data'] is Map ? apiMap(value['data']) : value;
+    final section = apiMap(root[key]);
+    final rows = apiList(section['rows'] ?? section['players'] ?? section['items']);
+    return rows.map(apiMap).where((m) => m.isNotEmpty).toList();
+  }
 }
 
-class _PointsTableHeader extends StatelessWidget {
-  const _PointsTableHeader();
+class _PointsTableCard extends StatelessWidget {
+  const _PointsTableCard({required this.rows});
+
+  final List<Map<String, dynamic>> rows;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+    return SeriesSectionCard(
+      title: 'Points Table',
+      child: Column(
         children: [
-          SizedBox(width: 28, child: Text('#', style: _headerStyle(c))),
-          Expanded(flex: 3, child: Text('Team', style: _headerStyle(c))),
-          for (final label in const ['P', 'W', 'L', 'NR', 'Pts', 'NRR'])
-            Expanded(
-              child: Text(label,
-                  textAlign: TextAlign.center, style: _headerStyle(c)),
+          // Header row
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                const SizedBox(width: 22),
+                Expanded(
+                    child: Text('TEAM', style: _hStyle(c))),
+                for (final h in const ['P', 'W', 'L', 'Pts', 'NRR'])
+                  SizedBox(
+                      width: h == 'NRR' ? 46 : 30,
+                      child: Text(h, textAlign: TextAlign.center, style: _hStyle(c))),
+              ],
             ),
+          ),
+          for (var i = 0; i < rows.length; i++)
+            _PointsRow(rank: i + 1, row: rows[i]),
         ],
       ),
     );
   }
 
-  TextStyle _headerStyle(CricColors c) =>
-      TextStyle(color: c.muted, fontWeight: FontWeight.w900, fontSize: 11);
+  TextStyle _hStyle(CricColors c) => TextStyle(
+      color: c.muted, fontWeight: FontWeight.w900, fontSize: 11);
 }
 
-class _PointsTableRow extends StatelessWidget {
-  const _PointsTableRow({required this.data});
+class _PointsRow extends StatelessWidget {
+  const _PointsRow({required this.rank, required this.row});
 
-  final Map<String, dynamic> data;
+  final int rank;
+  final Map<String, dynamic> row;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final teamName =
-        apiString(data['teamName'] ?? data['team'] ?? data['name'], 'Team');
+    final name = apiString(
+        row['teamName'] ?? row['team_name'] ?? row['teamShort'] ?? row['team'],
+        'Team');
     final short = apiString(
-        data['teamShort'] ??
-            data['teamShortName'] ??
-            data['shortName'] ??
-            data['short_name'],
-        teamName);
-    final team = ApiTeam.fromJson({
-      ...data,
-      'name': teamName,
-      'shortName': short,
-    });
+        row['teamShort'] ?? row['teamShortName'] ?? row['team_short'], name);
+    final logo = apiString(row['logoUrl'] ?? row['logo_url']);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 9),
       decoration: BoxDecoration(
-        border:
-            Border(top: BorderSide(color: c.border.withValues(alpha: 0.45))),
+        border: Border(top: BorderSide(color: c.border.withValues(alpha: .5))),
       ),
       child: Row(
         children: [
           SizedBox(
-              width: 28,
-              child: Text(apiString(data['position'] ?? data['rank'], '-'),
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 12))),
+            width: 22,
+            child: Text('$rank',
+                style: TextStyle(
+                    color: c.muted,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12)),
+          ),
+          TeamLogoWidget(
+            logoUrl: logo.isEmpty ? null : logo,
+            teamName: name,
+            abbreviation: short,
+            color: c.cyan,
+            size: 22,
+          ),
+          const SizedBox(width: 8),
           Expanded(
-            flex: 3,
-            child: Row(
-              children: [
-                TeamBadge(
-                  TeamInfo(
-                      code: team.shortName,
-                      name: team.name,
-                      shortName: team.shortName,
-                      color: c.cyan,
-                      asset: team.logo),
-                  size: 28,
-                  borderColor: c.border,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    short,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 12),
-                  ),
-                ),
-              ],
+            child: Text(
+              short,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: c.text, fontWeight: FontWeight.w800, fontSize: 12.5),
             ),
           ),
-          for (final value in [
-            data['played'] ?? data['matches'],
-            data['won'],
-            data['lost'],
-            data['noResult'] ?? data['nr'],
-            data['points'],
-            data['nrr'],
-          ])
-            Expanded(
-              child: Text(apiString(value, '-'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 11)),
+          _val(c, row['played'] ?? row['matches'], 30),
+          _val(c, row['won'], 30),
+          _val(c, row['lost'], 30),
+          _val(c, row['points'], 30, bold: true, color: c.cyan),
+          _val(c, row['nrr'], 46),
+        ],
+      ),
+    );
+  }
+
+  Widget _val(CricColors c, dynamic value, double width,
+      {bool bold = false, Color? color}) {
+    return SizedBox(
+      width: width,
+      child: Text(
+        apiString(value, '-'),
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: color ?? c.text,
+          fontWeight: bold ? FontWeight.w900 : FontWeight.w700,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+class _TopPlayersCard extends StatelessWidget {
+  const _TopPlayersCard({
+    required this.title,
+    required this.rows,
+    required this.metricLabel,
+    required this.isBowling,
+  });
+
+  final String title;
+  final List<Map<String, dynamic>> rows;
+  final String metricLabel;
+  final bool isBowling;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return SeriesSectionCard(
+      title: title,
+      child: Column(
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i != 0)
+              Divider(color: c.border.withValues(alpha: .5), height: 1),
+            _StatPlayerRow(
+              row: rows[i],
+              metricLabel: metricLabel,
+              isBowling: isBowling,
             ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _StatsSection extends StatelessWidget {
-  const _StatsSection({required this.title, required this.rows});
+class _StatPlayerRow extends StatelessWidget {
+  const _StatPlayerRow({
+    required this.row,
+    required this.metricLabel,
+    required this.isBowling,
+  });
 
-  final String title;
-  final List<dynamic> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(title,
-            style: TextStyle(
-                color: c.text, fontWeight: FontWeight.w900, fontSize: 18)),
-        const SizedBox(height: 10),
-        for (final item in rows.take(8)) _PlayerStatRow(data: apiMap(item)),
-      ],
-    );
-  }
-}
-
-class _PlayerStatRow extends StatelessWidget {
-  const _PlayerStatRow({required this.data});
-
-  final Map<String, dynamic> data;
+  final Map<String, dynamic> row;
+  final String metricLabel;
+  final bool isBowling;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final name = apiString(data['playerName'] ?? data['name'], 'Player');
-    final image = apiString(data['imageUrl'] ?? data['image_url']);
-    final value = apiString(data['runs'] ?? data['wickets'] ?? data['value']);
-    final sub = [
-      if (apiString(data['matches']).isNotEmpty) '${data['matches']} matches',
-      if (apiString(data['average']).isNotEmpty) 'Avg ${data['average']}',
-      if (apiString(data['strikeRate'] ?? data['economy']).isNotEmpty)
-        apiString(data['strikeRate']).isNotEmpty
-            ? 'SR ${data['strikeRate']}'
-            : 'Eco ${data['economy']}',
-    ].join(' • ');
-    return Container(
+    final name = apiString(row['playerName'] ?? row['name'], 'Player');
+    final team = apiString(row['team']);
+    final playerId = apiString(row['playerId'] ?? row['player_id']);
+    var image = apiString(row['imageUrl'] ?? row['image_url']);
+    if (image.isEmpty && playerId.isNotEmpty) {
+      image = 'https://static.cricbuzz.com/a/img/v1/i2/c$playerId/i.jpg';
+    }
+    final metric = isBowling
+        ? apiString(row['wickets'], '0')
+        : apiString(row['runs'], '0');
+    final sub = isBowling
+        ? _bowlSub(row)
+        : _batSub(row);
+
+    return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        border:
-            Border(top: BorderSide(color: c.border.withValues(alpha: 0.45))),
-      ),
       child: Row(
         children: [
-          _NetworkAvatar(imageUrl: image, label: name),
+          SeriesPlayerAvatar(
+              name: name, imageUrl: image.isEmpty ? null : image, size: 38),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5),
+                ),
+                if (team.isNotEmpty || sub.isNotEmpty)
+                  Text(
+                    [if (team.isNotEmpty) team, if (sub.isNotEmpty) sub]
+                        .join(' • '),
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style:
-                        TextStyle(color: c.text, fontWeight: FontWeight.w900)),
-                if (sub.isNotEmpty)
-                  Text(sub,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12)),
+                    style: TextStyle(
+                        color: c.muted,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11.5),
+                  ),
               ],
             ),
           ),
-          if (value.isNotEmpty)
-            Text(value,
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                metric,
                 style: TextStyle(
-                    color: c.cyan, fontWeight: FontWeight.w900, fontSize: 16)),
-        ],
-      ),
-    );
-  }
-}
-
-class _NetworkAvatar extends StatelessWidget {
-  const _NetworkAvatar({required this.imageUrl, required this.label});
-
-  final String imageUrl;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      width: 38,
-      height: 38,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: c.cyan.withValues(alpha: 0.16),
-        border: Border.all(color: c.border),
-      ),
-      child: imageUrl.isEmpty
-          ? _fallback(c)
-          : Image.network(
-              imageUrl,
-              fit: BoxFit.cover,
-              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-              errorBuilder: (_, __, ___) => _fallback(c),
-            ),
-    );
-  }
-
-  Widget _fallback(CricColors c) => Center(
-        child: Text(
-          safeTeamInitials(label),
-          style: TextStyle(
-              color: c.text, fontWeight: FontWeight.w900, fontSize: 12),
-        ),
-      );
-}
-
-
-
-class _InlineMuted extends StatelessWidget {
-  const _InlineMuted({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Text(text,
-      style: TextStyle(color: context.cric.muted, fontWeight: FontWeight.w700));
-}
-
-class _ChipText extends StatelessWidget {
-  const _ChipText({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-          color: c.cyan.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: c.cyan.withValues(alpha: 0.28))),
-      child: Text(text.isEmpty ? 'Unknown' : text,
-          style: TextStyle(
-              color: c.cyan, fontWeight: FontWeight.w900, fontSize: 11)),
-    );
-  }
-}
-
-String _dateRange(dynamic start, dynamic end) {
-  final left = formatMatchDateTime(start);
-  final right = formatMatchDateTime(end);
-  if (left.isEmpty && right.isEmpty) return '';
-  if (right.isEmpty) return left;
-  if (left.isEmpty) return right;
-  return '$left - $right';
-}
-
-int _seriesMatchCount(
-    Map<String, dynamic> detail, List<CricketMatch> schedule) {
-  final explicit =
-      apiInt(detail['matchCount']) ?? apiInt(detail['totalMatches']);
-  if (explicit != null && explicit > 0) return explicit;
-  final matches = apiList(detail['matches']);
-  if (matches.isNotEmpty) return matches.length;
-  return schedule.length;
-}
-
-List<dynamic> seriesPointsRows(Map<String, dynamic> value) {
-  final root = _seriesPayload(value);
-  final groups = apiList(root['groups'] ?? root['pointsTable'] ?? value['groups']);
-  final rows = <dynamic>[];
-  for (final group in groups) {
-    final map = apiMap(group);
-    rows.addAll(apiList(map['rows'] ??
-        map['pointsTableInfo'] ??
-        map['teams'] ??
-        map['table'] ??
-        map['items']));
-  }
-  if (rows.isNotEmpty) return rows;
-  final direct = apiList(root['rows'] ?? root['table'] ?? root['items']);
-  if (direct.isNotEmpty) return direct;
-  return rows;
-}
-
-List<dynamic> seriesStatsRows(Map<String, dynamic> value, String key) {
-  final root = _seriesPayload(value);
-  final section = apiMap(root[key]);
-  final direct =
-      apiList(section['rows'] ?? section['items'] ?? section['players']);
-  if (direct.isNotEmpty) return direct;
-  return apiList(
-      root['rows'] ?? root['items'] ?? root['players'] ?? root['data']);
-}
-
-List<dynamic> seriesStatsItems(Map<String, dynamic> value) {
-  final root = _seriesPayload(value);
-  final direct =
-      apiList(root['items'] ?? root['stats'] ?? root['topRunScorers']);
-  if (direct.isNotEmpty) return direct;
-  return apiList(root['data']);
-}
-
-List<Map<String, dynamic>> teamsFromSeriesMatches(List<CricketMatch> matches) {
-  final teams = <String, Map<String, dynamic>>{};
-  void addTeam({
-    required String name,
-    required String shortName,
-    required String? logoUrl,
-  }) {
-    final cleanName = name.trim();
-    final cleanShort = shortName.trim();
-    final key = cleanName.isNotEmpty ? cleanName : cleanShort;
-    if (key.isEmpty || teams.containsKey(key)) return;
-    teams[key] = {
-      'name': cleanName.isNotEmpty ? cleanName : cleanShort,
-      'shortName': cleanShort.isNotEmpty ? cleanShort : safeTeamInitials(key),
-      'logoUrl': logoUrl,
-    };
-  }
-
-  for (final match in matches) {
-    addTeam(
-      name: match.teamA,
-      shortName: match.teamAShort,
-      logoUrl: match.teamALogo,
-    );
-    addTeam(
-      name: match.teamB,
-      shortName: match.teamBShort,
-      logoUrl: match.teamBLogo,
-    );
-  }
-  return teams.values.toList();
-}
-
-Map<String, dynamic> _seriesPayload(Map<String, dynamic> value) {
-  final data = apiMap(value['data']);
-  if (data.isNotEmpty) return data;
-  return value;
-}
-
-class _SeriesInfoCard extends StatelessWidget {
-  const _SeriesInfoCard({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Icon(icon, color: c.cyan),
-          const SizedBox(width: 12),
-          Expanded(
-              child: Text(text,
-                  style:
-                      TextStyle(color: c.muted, fontWeight: FontWeight.w700))),
-        ],
-      ),
-    );
-  }
-}
-
-class _SeriesEmptyState extends StatelessWidget {
-  const _SeriesEmptyState({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return PremiumCard(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        children: [
-          Icon(Icons.emoji_events_outlined, color: c.cyan, size: 64),
-          const SizedBox(height: 16),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: c.muted, fontWeight: FontWeight.w700, fontSize: 16),
+                    color: c.cyan,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18),
+              ),
+              Text(
+                metricLabel,
+                style: TextStyle(
+                    color: c.muted,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 10),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  String _batSub(Map<String, dynamic> row) {
+    final matches = apiInt(row['matches']);
+    final avg = apiDouble(row['average']);
+    final parts = <String>[];
+    if (matches != null && matches > 0) parts.add('$matches Mat');
+    if (avg != null && avg > 0) parts.add('Avg ${avg.toStringAsFixed(1)}');
+    return parts.join(' • ');
+  }
+
+  String _bowlSub(Map<String, dynamic> row) {
+    final matches = apiInt(row['matches']);
+    final econ = apiDouble(row['economy']);
+    final parts = <String>[];
+    if (matches != null && matches > 0) parts.add('$matches Mat');
+    if (econ != null && econ > 0) parts.add('Econ ${econ.toStringAsFixed(2)}');
+    return parts.join(' • ');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Squad data models + parsers
+// ---------------------------------------------------------------------------
+
+class SquadTeam {
+  const SquadTeam({
+    required this.name,
+    required this.shortName,
+    this.logoUrl,
+    this.players = const [],
+  });
+
+  final String name;
+  final String shortName;
+  final String? logoUrl;
+  final List<SquadPlayer> players;
+}
+
+class SquadPlayer {
+  const SquadPlayer({
+    required this.id,
+    required this.name,
+    required this.role,
+    this.imageUrl,
+    this.isCaptain = false,
+    this.isWicketKeeper = false,
+    this.isSubstitute = false,
+  });
+
+  final String id;
+  final String name;
+  final String role;
+  final String? imageUrl;
+  final bool isCaptain;
+  final bool isWicketKeeper;
+  final bool isSubstitute;
+}
+
+/// Parses the `/series/:id/squads` payload (teams[].players[]).
+List<SquadTeam> _parseSquadTeams(Map<String, dynamic> data) {
+  final root = data['data'] is Map ? apiMap(data['data']) : data;
+  final rawTeams = apiList(root['teams']);
+  final teams = <SquadTeam>[];
+  for (final raw in rawTeams) {
+    final t = apiMap(raw);
+    final players = apiList(t['players']).map(_parseSquadPlayer).toList();
+    if (players.isEmpty) continue;
+    teams.add(SquadTeam(
+      name: apiString(t['teamName'] ?? t['team_name'], 'Team'),
+      shortName: apiString(t['teamShortName'] ?? t['teamShort'] ?? t['team_short']),
+      logoUrl: apiString(t['logoUrl'] ?? t['logo_url']).isEmpty
+          ? null
+          : apiString(t['logoUrl'] ?? t['logo_url']),
+      players: players,
+    ));
+  }
+  return teams;
+}
+
+SquadPlayer _parseSquadPlayer(dynamic raw) {
+  final p = apiMap(raw);
+  final id = apiString(p['playerId'] ?? p['player_id'] ?? p['id']);
+  var image = apiString(p['imageUrl'] ?? p['image_url']);
+  if (image.isEmpty && id.isNotEmpty) {
+    image = 'https://static.cricbuzz.com/a/img/v1/i2/c$id/i.jpg';
+  }
+  return SquadPlayer(
+    id: id,
+    name: apiString(p['name'] ?? p['playerName'] ?? p['player_name'], 'Player'),
+    role: apiString(p['role'] ?? p['playerRole']),
+    imageUrl: image.isEmpty ? null : image,
+    isCaptain: apiBool(p['isCaptain'] ?? p['is_captain']),
+    isWicketKeeper: apiBool(p['isWicketKeeper'] ?? p['is_wicketkeeper']),
+    isSubstitute: apiBool(p['isSubstitute'] ?? p['is_substitute']),
+  );
+}
+
+/// Parses the match-squads payload (team1/team2 with playing_xi + bench) into
+/// the same SquadTeam shape, used as a fallback source.
+List<SquadTeam> _parseMatchSquadTeams(
+    Map<String, dynamic> data, CricketMatch match) {
+  final root = data['data'] is Map ? apiMap(data['data']) : data;
+  final teams = <SquadTeam>[];
+
+  SquadTeam? buildTeam(dynamic rawTeam, String fallbackName,
+      String fallbackShort, String? fallbackLogo) {
+    final t = apiMap(rawTeam);
+    if (t.isEmpty) return null;
+    final players = <SquadPlayer>[];
+    for (final key in const ['playing_xi', 'playingXI', 'playingXi']) {
+      for (final raw in apiList(t[key])) {
+        players.add(_parseSquadPlayer(raw));
+      }
+      if (players.isNotEmpty) break;
+    }
+    for (final raw in apiList(t['bench'] ?? t['substitutes'])) {
+      final p = _parseSquadPlayer(raw);
+      players.add(SquadPlayer(
+        id: p.id,
+        name: p.name,
+        role: p.role,
+        imageUrl: p.imageUrl,
+        isCaptain: p.isCaptain,
+        isWicketKeeper: p.isWicketKeeper,
+        isSubstitute: true,
+      ));
+    }
+    if (players.isEmpty) return null;
+    return SquadTeam(
+      name: apiString(t['team_name'] ?? t['teamName'], fallbackName),
+      shortName: apiString(t['team_short'] ?? t['teamShort'], fallbackShort),
+      logoUrl: apiString(t['logoUrl'] ?? t['logo_url']).isEmpty
+          ? fallbackLogo
+          : apiString(t['logoUrl'] ?? t['logo_url']),
+      players: players,
+    );
+  }
+
+  final t1 = buildTeam(
+      root['team1'], match.teamA, match.teamAShort, match.teamALogo);
+  final t2 = buildTeam(
+      root['team2'], match.teamB, match.teamBShort, match.teamBLogo);
+  if (t1 != null) teams.add(t1);
+  if (t2 != null) teams.add(t2);
+  return teams;
+}
+
+// ---------------------------------------------------------------------------
+// Small shared helpers
+// ---------------------------------------------------------------------------
+
+String _shortDate(DateTime d) {
+  const m = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  return '${d.day} ${m[d.month - 1]} ${d.year}';
+}
+
+String _dateOnly(DateTime d) {
+  const m = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  return '${d.day} ${m[d.month - 1]}';
+}
+
+String _countdown(DateTime? start) {
+  if (start == null) return 'TBC';
+  final now = DateTime.now();
+  final diff = start.difference(now);
+  if (diff.isNegative) return 'Soon';
+  if (diff.inDays >= 1) {
+    return 'In ${diff.inDays} Day${diff.inDays > 1 ? 's' : ''}';
+  }
+  if (diff.inHours >= 1) return 'In ${diff.inHours}h';
+  if (diff.inMinutes >= 1) return 'In ${diff.inMinutes}m';
+  return 'Soon';
 }

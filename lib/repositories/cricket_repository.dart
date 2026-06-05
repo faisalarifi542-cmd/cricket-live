@@ -238,6 +238,20 @@ class CricketRepository {
           () => _service.seriesTeams(seriesId),
           forceRefresh: forceRefresh);
 
+  /// Series squads (players with face images). Cached for an hour because
+  /// squad data changes rarely once announced.
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesSquads(String seriesId,
+          {bool forceRefresh = false}) =>
+      _cached('series:$seriesId:squads', const Duration(hours: 1),
+          () => _service.seriesSquads(seriesId),
+          forceRefresh: forceRefresh);
+
+  /// Match squads — used as a fallback source for series squads on backends
+  /// that do not yet expose `/series/:id/squads`.
+  Future<ApiEnvelope<Map<String, dynamic>>> matchSquadsFor(String matchId,
+          {bool forceRefresh = false}) =>
+      matchSquads(matchId, forceRefresh: forceRefresh);
+
   Future<ApiEnvelope<List<CricketMatch>>> seriesSchedule(String seriesId,
       {bool forceRefresh = false}) async {
     final response = await _cached('series:$seriesId:schedule',

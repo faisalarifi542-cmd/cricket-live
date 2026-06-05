@@ -36,10 +36,12 @@ class CricColors extends ThemeExtension<CricColors> {
       colors: [cyan, primary],
       begin: Alignment.centerLeft,
       end: Alignment.centerRight);
-  LinearGradient get bgGradient => const LinearGradient(
+  LinearGradient get bgGradient => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
-      colors: [Color(0xff020b1b), Color(0xff03142a), Color(0xff061c36)]);
+      colors: isDark
+          ? const [Color(0xff020b1b), Color(0xff03142a), Color(0xff061c36)]
+          : [bg, bg2, card2]);
   LinearGradient get cardGradient => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,

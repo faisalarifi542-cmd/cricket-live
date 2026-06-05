@@ -771,4 +771,142 @@ export default async function seriesRoutes(fastify) {
       };
     }
   });
+
+  // --- Series squads helpers ------------------------------------------------
+
+  // Picks the match in a series most likely to have an announced squad:
+  // prefer live, then the nearest upcoming, then the most recent completed.
+  function pickSquadMatch(matches = []) {
+    if (!matches.length) return null;
+    const byStatus = (s) => matches.filter((m) => m.status === s);
+    const live = byStatus('live');
+    if (live.length) return live[0];
+    const upcoming = byStatus('upcoming').sort((a, b) =>
+      Number(a.start_time || a.startTime || 0) - Number(b.start_time || b.startTime || 0));
+    if (upcoming.length) return upcoming[0];
+    const completed = byStatus('completed').sort((a, b) =>
+      Number(b.start_time || b.startTime || 0) - Number(a.start_time || a.startTime || 0));
+    if (completed.length) return completed[0];
+    return matches[0];
+  }
+
+  function teamLogoFromMatchTeam(team) {
+    if (!team) return '';
+    return text(team.logo_url || team.logoUrl)
+      || cricbuzzImageUrl(text(team.image_id || team.imageId));
+  }
+
+  // Normalizes a squad team (from match squads) into the app-friendly shape
+  // with face image URLs resolved by player id.
+  function normalizeSquadTeam(squadTeam, matchTeam) {
+    if (!squadTeam) return null;
+    const players = [
+      ...(Array.isArray(squadTeam.playing_xi) ? squadTeam.playing_xi : []),
+      ...(Array.isArray(squadTeam.bench) ? squadTeam.bench : []),
+    ];
+    const mapped = players.map((p) => {
+      const playerId = text(p.player_id || p.playerId);
+      const imageUrl = text(p.image_url || p.imageUrl)
+        || (playerId ? `https://static.cricbuzz.com/a/img/v1/i2/c${playerId}/i.jpg` : '');
+      return {
+        playerId,
+        name: text(p.name),
+        role: text(p.role),
+        isCaptain: !!(p.is_captain || p.isCaptain),
+        isWicketKeeper: !!(p.is_wicketkeeper || p.isWicketKeeper),
+        isSubstitute: !!(p.is_substitute || p.isSubstitute),
+        isImpactPlayer: !!(p.is_impact_player || p.isImpactPlayer),
+        imageUrl,
+        profileUrl: playerId ? `https://www.cricbuzz.com/profiles/${playerId}` : '',
+        source: 'cricbuzz',
+      };
+    }).filter((p) => p.name);
+
+    const teamName = text(squadTeam.team_name || squadTeam.teamName || matchTeam?.name);
+    const teamShort = text(squadTeam.team_short || squadTeam.teamShort || matchTeam?.short_name);
+    return {
+      teamId: text(squadTeam.teamId || matchTeam?.id),
+      teamName,
+      teamShortName: teamShort,
+      logoUrl: text(squadTeam.logoUrl) || teamLogoFromMatchTeam(matchTeam),
+      players: mapped,
+      playerCount: mapped.length,
+    };
+  }
+
+  // GET /series/:id/squads — real player squads (with face images) for the
+  // two teams in the series, sourced from the match squads page.
+  fastify.get('/series/:id/squads', {
+    schema: {
+      description: 'Get squads (players with face images) for the teams in a series',
+      tags: ['Series'],
+      params: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    },
+  }, async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const cached = await cacheGet(KEYS.seriesSquads(id));
+      if (cached?.teams?.some((t) => (t.players || []).length > 0)) {
+        reply.header('X-Cache', 'HIT');
+        return { success: true, seriesId: id, ...cached, data: cached, fromCache: true };
+      }
+
+      const series = await fetchSeriesMatches(id);
+      const matches = series.matches || [];
+      const squadMatch = pickSquadMatch(matches);
+
+      if (!squadMatch) {
+        return {
+          success: true,
+          seriesId: id,
+          seriesName: series.seriesName || '',
+          teams: [],
+          data: { teams: [] },
+          message: 'Squads are not available for this series yet.',
+        };
+      }
+
+      const matchId = text(squadMatch.match_id || squadMatch.matchId);
+      const squadResult = await providerManager.execute('getMatchSquads', matchId).catch(() => null);
+      const squad = squadResult?.data || null;
+
+      const teams = [];
+      const t1 = normalizeSquadTeam(squad?.team1, squadMatch.team1);
+      const t2 = normalizeSquadTeam(squad?.team2, squadMatch.team2);
+      if (t1 && t1.players.length) teams.push(t1);
+      if (t2 && t2.players.length) teams.push(t2);
+
+      const payload = {
+        seriesId: id,
+        seriesName: series.seriesName || '',
+        sourceMatchId: matchId,
+        teams,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (teams.some((t) => t.players.length > 0)) {
+        await cacheSet(KEYS.seriesSquads(id), payload, TTL.SQUADS);
+      }
+
+      reply.header('X-Cache', 'MISS');
+      return {
+        success: true,
+        ...payload,
+        data: payload,
+        fromCache: false,
+        message: teams.length === 0
+          ? 'Squads have not been announced for this series yet.'
+          : null,
+      };
+    } catch (err) {
+      logger.warn({ msg: 'Failed to fetch series squads', seriesId: id, error: err.message });
+      return {
+        success: true,
+        seriesId: id,
+        teams: [],
+        data: { teams: [] },
+        message: 'Squads are not available for this series yet.',
+      };
+    }
+  });
 }

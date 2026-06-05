@@ -165,6 +165,30 @@ String? resolveCricbuzzImageUrl(dynamic value) {
   }
   final json = apiMap(value);
   final imageDetails = apiMap(json['imageDetails'] ?? json['image_details']);
+  final hasPlayerIdentity = apiString(json['playerId'] ??
+          json['player_id'] ??
+          json['batId'] ??
+          json['bowlId'])
+      .isNotEmpty;
+  if (!hasPlayerIdentity) {
+    final stableTeamLogo = resolveKnownTeamLogoUrl(
+      id: json['team_id'] ?? json['teamId'] ?? json['teamID'] ?? json['id'],
+      name: json['teamName'] ??
+          json['team_name'] ??
+          json['fullName'] ??
+          json['name'],
+      shortName: json['teamSName'] ??
+          json['team_s_name'] ??
+          json['teamShort'] ??
+          json['team_short'] ??
+          json['shortName'] ??
+          json['short_name'] ??
+          json['abbr'] ??
+          json['code'],
+    );
+    if (stableTeamLogo != null) return stableTeamLogo;
+  }
+
   final resolved = resolveCricbuzzImageUrlFromFields(
     logoUrl: json['logo_url'] ??
         json['logoUrl'] ??
@@ -188,16 +212,7 @@ String? resolveCricbuzzImageUrl(dynamic value) {
   );
   if (resolved != null) return resolved;
 
-  return resolveKnownTeamLogoUrl(
-    id: json['id'] ?? json['team_id'] ?? json['teamId'],
-    name: json['name'] ?? json['teamName'] ?? json['fullName'],
-    shortName: json['short_name'] ??
-        json['shortName'] ??
-        json['teamShort'] ??
-        json['team_short'] ??
-        json['abbr'] ??
-        json['code'],
-  );
+  return null;
 }
 
 String? resolveCricbuzzImageUrlFromFields({
@@ -220,13 +235,11 @@ String? resolveKnownTeamLogoUrl({
   dynamic name,
   dynamic shortName,
 }) {
-  final candidates = [
-    apiString(id),
-    apiString(shortName),
-    apiString(name),
-  ].map(_normalizeTeamKey).where((value) => value.isNotEmpty);
-
-  for (final key in candidates) {
+  for (final raw in [apiString(id), apiString(shortName), apiString(name)]) {
+    final key = _normalizeTeamKey(raw);
+    if (key.isEmpty) continue;
+    final asset = _knownTeamLogoAssets[key];
+    if (asset != null) return asset;
     final imageId = _knownTeamImageIds[key];
     if (imageId != null) {
       return resolveCricbuzzImageUrlFromFields(imageId: imageId);
@@ -273,6 +286,21 @@ const Map<String, String> _knownTeamImageIds = {
   '6': '776210',
   'BAN': '776210',
   'BANGLADESH': '776210',
+};
+
+const Map<String, String> _knownTeamLogoAssets = {
+  '13': 'assets/images/team_nz.png',
+  'NZ': 'assets/images/team_nz.png',
+  'NEW ZEALAND': 'assets/images/team_nz.png',
+  '10': 'assets/images/team_wi.png',
+  'WI': 'assets/images/team_wi.png',
+  'WEST INDIES': 'assets/images/team_wi.png',
+  '11': 'assets/images/team_sa.png',
+  'SA': 'assets/images/team_sa.png',
+  'SOUTH AFRICA': 'assets/images/team_sa.png',
+  '6': 'assets/images/team_ban.png',
+  'BAN': 'assets/images/team_ban.png',
+  'BANGLADESH': 'assets/images/team_ban.png',
 };
 
 /// Normalizes cricket overs format.

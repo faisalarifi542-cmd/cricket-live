@@ -9,7 +9,6 @@ import '../../models.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 import '../../models/ad_config.dart';
-import '../../widgets/ads/banner_ad_widget.dart';
 import '../../widgets/ads/native_ad_card.dart';
 import '../../screens.dart';
 
@@ -314,7 +313,6 @@ class _MatchesScreenState extends State<MatchesScreen>
                             child: NativeAdCard(placement: AdPlacement.matches),
                           ),
                       ],
-                      const BannerAdWidget(placement: AdPlacement.matches),
                     ],
                   );
                 },

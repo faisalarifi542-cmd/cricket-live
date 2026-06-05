@@ -3,7 +3,7 @@
  * NEVER expose raw Cricbuzz data to clients.
  */
 
-import { getCricbuzzImageUrl, getTeamLogoUrl, getMatchImageUrl, getPlayerImageUrl } from '../../lib/image-helper.js';
+import { getCricbuzzImageUrl, getTeamLogoUrl, getMatchImageUrl } from '../../lib/image-helper.js';
 
 /**
  * Normalize the /api/home response into categorized match lists.
@@ -703,7 +703,7 @@ export function normalizeMatchSquads(raw, matchId) {
       is_wicketkeeper: player.isWicketkeeper || player.is_wicketkeeper || /\((WK|wk|Wk)\)|WK-?Batter/i.test(player.name || ''),
       is_impact_player: player.isImpactPlayer || false,
       is_substitute: player.isSubstitute || false,
-      image_url: (player.playerId || player.player_id) ? getPlayerImageUrl(player.playerId || player.player_id) : '',
+      image_url: player.imageUrl || player.image_url || '',
     });
 
     const playingXI = (team.playingXi || team.playing_xi || []).map(normalizePlayer);
@@ -1240,7 +1240,7 @@ export function normalizeSeriesStatsTable(raw, statType) {
     return {
       playerId: String(playerId),
       playerName,
-      imageUrl: getPlayerImageUrl(playerId),
+      imageUrl: '',
       ...stats,
     };
   });

@@ -116,6 +116,16 @@ class CricketApiService {
     return _list('/series/$seriesId/teams');
   }
 
+  /// Series squads — real players (with face images) for the series teams.
+  /// `allowFailure` so older backends without this endpoint degrade gracefully
+  /// (the repository then falls back to deriving squads from a match).
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesSquads(String seriesId) {
+    if (kDebugMode) {
+      debugPrint('API GET /series/$seriesId/squads');
+    }
+    return _map('/series/$seriesId/squads', allowFailure: true);
+  }
+
   Future<ApiEnvelope<List<dynamic>>> schedule({String type = 'upcoming'}) =>
       _list('/schedule/upcoming${type == 'upcoming' ? '' : '/$type'}');
 
