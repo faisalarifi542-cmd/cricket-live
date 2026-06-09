@@ -51,6 +51,13 @@ class CricketApiService {
     });
   }
 
+  /// Combined, server-normalized commentary feed (`{ matchId, innings, items }`).
+  /// Each item is already classified (type/label/isBall) so the app never
+  /// guesses event types.
+  Future<ApiEnvelope<Map<String, dynamic>>> matchFullCommentary(
+          String matchId) =>
+      _map('/match/$matchId/full-commentary', allowFailure: true);
+
   Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId) =>
       _map('/match/$matchId/overs');
 

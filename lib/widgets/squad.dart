@@ -66,8 +66,7 @@ class PremiumSquad extends StatelessWidget {
             _SquadSection(title: group, players: groups[group]!),
             const SizedBox(height: 12),
           ],
-        if (bench.isNotEmpty)
-          _ReservePlayersCard(reserve: bench),
+        if (bench.isNotEmpty) _ReservePlayersCard(reserve: bench),
       ],
     );
   }
@@ -186,9 +185,8 @@ class _ReserveChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final id = apiString(row['playerId'] ?? row['player_id'] ?? row['id']);
-    final name =
-        apiString(row['name'] ?? row['playerName'] ?? row['player_name'],
-            'Player');
+    final name = decodeHtmlEntities(
+        row['name'] ?? row['playerName'] ?? row['player_name'], 'Player');
     final image = resolvePlayerImageUrl(row);
     return InkWell(
       onTap: id.isEmpty
@@ -228,7 +226,8 @@ class _ReserveChip extends StatelessWidget {
                 style: TextStyle(
                     color: c.text,
                     fontWeight: FontWeight.w800,
-                    fontSize: 12)),
+                    fontSize: 12.5,
+                    letterSpacing: .2)),
           ],
         ),
       ),
@@ -245,10 +244,9 @@ class PremiumPlayerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final id = apiString(row['playerId'] ?? row['player_id'] ?? row['id']);
-    final name =
-        apiString(row['name'] ?? row['playerName'] ?? row['player_name'],
-            'Player');
-    final role = apiString(row['role'] ?? row['playerRole']);
+    final name = decodeHtmlEntities(
+        row['name'] ?? row['playerName'] ?? row['player_name'], 'Player');
+    final role = decodeHtmlEntities(row['role'] ?? row['playerRole']);
     final image = resolvePlayerImageUrl(row);
     final isCaptain = _truthy(row['isCaptain']) ||
         _truthy(row['is_captain']) ||
@@ -289,8 +287,10 @@ class PremiumPlayerCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                                 color: c.text,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14)),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14.5,
+                                letterSpacing: .2,
+                                height: 1.05)),
                       ),
                       if (isCaptain) ...[
                         const SizedBox(width: 6),
@@ -313,8 +313,9 @@ class PremiumPlayerCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                             color: c.muted,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12)),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                            letterSpacing: .1)),
                   ],
                 ],
               ),

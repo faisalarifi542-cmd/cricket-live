@@ -535,6 +535,17 @@ export async function buildPublicAppConfig() {
       adsValue?.minimum_seconds_between_app_open_ads,
       120,
     ),
+    // Strict app-open cooldown (AdMob best practice). Default 240 min = 4 hours.
+    appOpenMinIntervalMinutes: toNumber(
+      adsValue?.app_open_min_interval_minutes,
+      240,
+    ),
+    // Minimum real background time before an app-open may show on resume.
+    // Guards notification-shade / quick-resume. Default 30s.
+    appOpenMinBackgroundSeconds: toNumber(
+      adsValue?.app_open_min_background_seconds,
+      30,
+    ),
     maxAppOpenAdsPerSession: toNumber(adsValue?.max_app_open_ads_per_session, 4),
     ...ads.frequencyConfig,
   };

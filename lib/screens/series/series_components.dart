@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
 import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/screens/series/series_premium.dart';
 
 /// Shared premium building blocks for the Series module (list + details).
 /// All widgets follow the CricPro dark-navy/cyan glassmorphism design.
@@ -74,6 +75,31 @@ class SeriesView {
     return _shortDate(s ?? e!);
   }
 
+  /// Compact, non-truncating range like "9 – 20 Jun 2026", "20 Jun – 31 Jul
+  /// 2025" or "28 Dec 2025 – 4 Jan 2026". Used on cards/carousels where space
+  /// is tight so the date never gets cut off mid-string.
+  String get shortDateRange {
+    const m = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' //
+    ];
+    final s = startDate;
+    final e = endDate;
+    if (s == null && e == null) return '';
+    if (s != null && e != null) {
+      if (s.year == e.year && s.month == e.month) {
+        return '${s.day} – ${e.day} ${m[e.month - 1]} ${e.year}';
+      }
+      if (s.year == e.year) {
+        return '${s.day} ${m[s.month - 1]} – ${e.day} ${m[e.month - 1]} ${e.year}';
+      }
+      return '${s.day} ${m[s.month - 1]} ${s.year} – '
+          '${e.day} ${m[e.month - 1]} ${e.year}';
+    }
+    final d = s ?? e!;
+    return '${d.day} ${m[d.month - 1]} ${d.year}';
+  }
+
   /// "3 ODIs • 3 T20Is" style chip text. Prefers the backend's count-aware
   /// label, falling back to the format tokens parsed from the name.
   String get formatSummary {
@@ -82,13 +108,15 @@ class SeriesView {
   }
 
   factory SeriesView.fromApi(ApiSeries series) {
+    final start = _parseDate(series.startDate);
+    final end = _parseDate(series.endDate);
     return SeriesView(
       id: series.id,
       name: cleanSeriesText(series.name),
-      status: _statusFromText(series.status),
+      status: _normalizeStatus(series.status, start, end),
       category: _categoryFor(series.name, series.format),
-      startDate: _parseDate(series.startDate),
-      endDate: _parseDate(series.endDate),
+      startDate: start,
+      endDate: end,
       formats: _formatsFromText('${series.format ?? ''} ${series.name}'),
       formatLabel: (series.format ?? '').trim(),
       matchCount: series.matchCount,
@@ -120,8 +148,18 @@ String cleanSeriesText(String value) {
 
 String _shortDate(DateTime date) {
   const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec'
   ];
   return '${date.day} ${months[date.month - 1]} ${date.year}';
 }
@@ -140,16 +178,32 @@ DateTime? _parseDate(dynamic value) {
   return null;
 }
 
-SeriesStatus _statusFromText(String? raw) {
+/// Normalizes a series status using the backend's status text first, then the
+/// date window. Mirrors the backend `computeSeriesStatus` rules so a finished
+/// edition (endDate in the past) is never shown as Upcoming — unless the API
+/// explicitly says it is live/ongoing.
+SeriesStatus _normalizeStatus(String? raw, DateTime? start, DateTime? end) {
   final low = (raw ?? '').toLowerCase();
-  if (low.contains('complete') || low.contains('finish') || low.contains('result')) {
-    return SeriesStatus.completed;
-  }
-  if (low.contains('live') ||
+  final saysLive = low.contains('live') ||
       low.contains('ongoing') ||
-      low.contains('progress')) {
+      low.contains('progress');
+  final saysDone = low.contains('complete') ||
+      low.contains('finish') ||
+      low.contains('result') ||
+      low.contains('concluded');
+  if (saysLive) return SeriesStatus.ongoing;
+  if (saysDone) return SeriesStatus.completed;
+
+  final now = DateTime.now();
+  if (end != null && end.isBefore(now)) return SeriesStatus.completed;
+  if (start != null && start.isAfter(now)) return SeriesStatus.upcoming;
+  if (start != null &&
+      end != null &&
+      !start.isAfter(now) &&
+      !end.isBefore(now)) {
     return SeriesStatus.ongoing;
   }
+  if (start != null && !start.isAfter(now)) return SeriesStatus.ongoing;
   return SeriesStatus.upcoming;
 }
 
@@ -203,6 +257,49 @@ List<String> _formatsFromText(String raw) {
   if (text.contains('ODI')) formats.add('ODI');
   if (text.contains('T20')) formats.add(text.contains('T20I') ? 'T20I' : 'T20');
   return formats;
+}
+
+/// Section header used on the Series landing ("Ongoing Series" + "View All").
+class SeriesSectionHeader extends StatelessWidget {
+  const SeriesSectionHeader({super.key, required this.title, this.onViewAll});
+
+  final String title;
+  final VoidCallback? onViewAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: c.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            letterSpacing: .2,
+          ),
+        ),
+        if (onViewAll != null)
+          TapScale(
+            onTap: onViewAll!,
+            borderRadius: 8,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                'View All',
+                style: TextStyle(
+                  color: c.cyan,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13.5,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,154 +388,165 @@ class SeriesListCard extends StatelessWidget {
       SeriesStatus.upcoming => c.cyan,
       SeriesStatus.completed => c.success,
     };
-    final formatLine = series.formatSummary;
-    final dateLine = series.dateRangeLabel;
+    final phone = context.w <= 430;
+    final tight = context.w <= 360;
+    final formatLine = series.formatSummary.isNotEmpty
+        ? series.formatSummary
+        : (series.matchCount != null && series.matchCount! > 0
+            ? '${series.matchCount} Matches'
+            : '');
+    final dateLine = series.shortDateRange;
     final left = series.teams.isNotEmpty ? series.teams.first : null;
     final right = series.teams.length > 1 ? series.teams[1] : null;
+    final logoSize = phone ? 42.0 : 46.0;
 
     return TapScale(
       onTap: onTap,
-      borderRadius: 24,
+      borderRadius: 22,
       child: Container(
-        padding: const EdgeInsets.all(16),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              const Color(0xff0a1f3a),
-              c.card.withValues(alpha: .96),
-              const Color(0xff071726),
-            ],
-          ),
-          border: Border.all(color: c.border),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: c.cyan.withValues(alpha: .42), width: 1),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: .30),
-              blurRadius: 22,
+              color: c.cyan.withValues(alpha: .1),
+              blurRadius: 18,
+              spreadRadius: -8,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .38),
+              blurRadius: 18,
               offset: const Offset(0, 10),
             ),
           ],
         ),
-        child: Row(
+        child: Stack(
           children: [
-            // Left mini matchup tile (flags) — premium stadium gradient.
-            _MatchupThumb(left: left, right: right),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    series.cleanName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16.5,
-                      height: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  if (formatLine.isNotEmpty)
-                    Text(
-                      formatLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.muted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  if (dateLine.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      dateLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.muted.withValues(alpha: .85),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      _MiniStatusChip(label: series.statusLabel, color: statusColor),
-                      const SizedBox(width: 8),
-                      _MiniTypeChip(label: series.categoryLabel),
-                    ],
-                  ),
-                ],
+            Positioned.fill(
+              child: Image.asset(
+                SAsset.listCardBg,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
-            const SizedBox(width: 8),
-            // Right side: team logos stacked like the reference.
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (left != null)
-                  _SeriesTeamLogo(team: left, size: 30),
-                if (right != null) ...[
-                  const SizedBox(height: 6),
-                  _SeriesTeamLogo(team: right, size: 30),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xff04142b).withValues(alpha: .7),
+                      const Color(0xff051226).withValues(alpha: .8),
+                      const Color(0xff020a18).withValues(alpha: .9),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const TopCyanHighlight(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+              child: Row(
+                children: [
+                  PremiumTeamLogo(
+                    name: left?.name ?? series.cleanName,
+                    short: left?.shortName ?? '',
+                    logo: left?.logoUrl,
+                    size: logoSize,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          series.cleanName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 14,
+                            height: 1.14,
+                          ),
+                        ),
+                        if (formatLine.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            formatLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .8),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                        if (dateLine.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.calendar_today_rounded,
+                                  color: c.cyan, size: 11),
+                              const SizedBox(width: 5),
+                              Flexible(
+                                child: Text(
+                                  dateLine,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: .7),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 7),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 5,
+                          children: [
+                            SeriesStatusPill(
+                              label: series.statusLabel,
+                              color: statusColor,
+                              live: series.status == SeriesStatus.ongoing,
+                              dense: true,
+                            ),
+                            SeriesOutlineChip(label: series.categoryLabel),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  PremiumVsBadge(
+                    width: tight ? 38 : 42,
+                    height: tight ? 26 : 28,
+                    intensity: .85,
+                  ),
+                  const SizedBox(width: 6),
+                  PremiumTeamLogo(
+                    name: right?.name ?? series.cleanName,
+                    short: right?.shortName ?? '',
+                    logo: right?.logoUrl,
+                    size: logoSize,
+                    accent: c.warning,
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      color: c.cyan, size: tight ? 18 : 20),
                 ],
-                const SizedBox(height: 6),
-                Icon(Icons.chevron_right_rounded, color: c.muted, size: 20),
-              ],
+              ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _MatchupThumb extends StatelessWidget {
-  const _MatchupThumb({this.left, this.right});
-
-  final SeriesTeamRef? left;
-  final SeriesTeamRef? right;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      width: 84,
-      height: 84,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xff123a5e), Color(0xff05101f)],
-        ),
-        border: Border.all(color: c.border),
-      ),
-      child: left == null && right == null
-          ? Icon(Icons.emoji_events_rounded, color: c.cyan.withValues(alpha: .7), size: 34)
-          : Stack(
-              children: [
-                if (left != null)
-                  Positioned(
-                    left: 10,
-                    top: 14,
-                    child: _SeriesTeamLogo(team: left!, size: 36),
-                  ),
-                if (right != null)
-                  Positioned(
-                    right: 10,
-                    bottom: 14,
-                    child: _SeriesTeamLogo(team: right!, size: 36),
-                  ),
-              ],
-            ),
     );
   }
 }
@@ -457,60 +565,6 @@ class _SeriesTeamLogo extends StatelessWidget {
       abbreviation: team.shortName.isNotEmpty ? team.shortName : team.name,
       color: const Color(0xff22d3ee),
       size: size,
-    );
-  }
-}
-
-class _MiniStatusChip extends StatelessWidget {
-  const _MiniStatusChip({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .16),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: .55)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w900,
-          fontSize: 11,
-        ),
-      ),
-    );
-  }
-}
-
-class _MiniTypeChip extends StatelessWidget {
-  const _MiniTypeChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .04),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: c.border),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: c.muted,
-          fontWeight: FontWeight.w800,
-          fontSize: 11,
-        ),
-      ),
     );
   }
 }
@@ -549,12 +603,12 @@ class SeriesHeroCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: c.cyan.withValues(alpha: .28)),
+        border: Border.all(color: c.cyan.withValues(alpha: .42)),
         boxShadow: [
           BoxShadow(
-            color: c.cyan.withValues(alpha: .12),
-            blurRadius: 28,
-            spreadRadius: -6,
+            color: c.cyan.withValues(alpha: .18),
+            blurRadius: 34,
+            spreadRadius: -7,
           ),
           BoxShadow(
             color: Colors.black.withValues(alpha: .34),
@@ -580,15 +634,30 @@ class SeriesHeroCard extends StatelessWidget {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    const Color(0xff04122a).withValues(alpha: .82),
-                    const Color(0xff05101f).withValues(alpha: .92),
+                    const Color(0xff031028).withValues(alpha: .76),
+                    const Color(0xff061934).withValues(alpha: .88),
+                    const Color(0xff020914).withValues(alpha: .96),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.center,
+                  radius: .78,
+                  colors: [
+                    c.cyan.withValues(alpha: .10),
+                    Colors.transparent,
                   ],
                 ),
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
             child: Row(
               children: [
                 _HeroTeamColumn(team: left),
@@ -596,20 +665,6 @@ class SeriesHeroCard extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (tourLabel != null && tourLabel!.isNotEmpty)
-                        Text(
-                          tourLabel!.toUpperCase(),
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 11,
-                            letterSpacing: .5,
-                          ),
-                        ),
-                      const SizedBox(height: 4),
                       Text(
                         title,
                         textAlign: TextAlign.center,
@@ -632,7 +687,7 @@ class SeriesHeroCard extends StatelessWidget {
                           style: TextStyle(
                             color: c.cyan,
                             fontWeight: FontWeight.w900,
-                            fontSize: 15,
+                            fontSize: 16,
                           ),
                         ),
                       ],
@@ -649,7 +704,7 @@ class SeriesHeroCard extends StatelessWidget {
                               child: Text(
                                 dateRange,
                                 textAlign: TextAlign.center,
-                                maxLines: 1,
+                                maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: c.cyan,
@@ -861,8 +916,10 @@ class SeriesPlayerAvatar extends StatelessWidget {
       child: hasImage
           ? Image.network(
               imageUrl!,
+              // Key by the URL so a changed image always rebuilds a fresh
+              // element — never displays a stale (previous player's) frame.
+              key: ValueKey(imageUrl),
               fit: BoxFit.cover,
-              gaplessPlayback: true,
               webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
               loadingBuilder: (context, child, progress) {
                 if (progress == null) return child;

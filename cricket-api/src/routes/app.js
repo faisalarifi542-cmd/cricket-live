@@ -13,6 +13,47 @@ import {
   manualMatchToDetail,
   mergeManualMatches,
 } from '../lib/manual-matches.js';
+import { loadHomeLayout } from '../lib/home-layout.js';
+
+/** Best-effort external id for a raw provider match object. */
+function rawMatchId(m) {
+  if (!m || typeof m !== 'object') return '';
+  return String(m.match_id ?? m.matchId ?? m.id ?? '').trim();
+}
+
+/** De-duplicated pool of matches in priority order, capped to `limit`. */
+function poolFrom(lists, limit) {
+  const out = [];
+  const seen = new Set();
+  for (const list of lists) {
+    for (const m of list || []) {
+      const id = rawMatchId(m);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(m);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/** Resolve manual external ids against available match pools, preserving order. */
+function resolveManual(ids, lists, limit) {
+  const byId = new Map();
+  for (const list of lists) {
+    for (const m of list || []) {
+      const id = rawMatchId(m);
+      if (id && !byId.has(id)) byId.set(id, m);
+    }
+  }
+  const out = [];
+  for (const id of ids || []) {
+    const m = byId.get(String(id));
+    if (m) out.push(m);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
 
 async function homeConfig() {
   const [sections, banners, featuredMatches, featuredSeries, featuredNews] = await Promise.all([
@@ -140,14 +181,76 @@ export default async function appRoutes(fastify) {
           enrichMatchListWithStreams(upcoming.data || [], { allowReplay: false }).catch(() => upcoming.data || []),
           enrichMatchListWithStreams(recent.data || [], { allowReplay: false }).catch(() => recent.data || []),
         ]);
+
+        // ---- Resolve the admin-managed home layout into section data --------
+        const layout = await loadHomeLayout();
+        const s = layout.sections;
+
+        // Top Featured carousel.
+        let topFeaturedMatches = [];
+        if (s.topFeatured.enabled) {
+          const max = Math.max(1, Number(s.topFeatured.maxItems) || 5);
+          if (s.topFeatured.source === 'manual') {
+            topFeaturedMatches = resolveManual(
+              s.topFeatured.manualMatchIds,
+              [liveMatches, upcomingMatches, recentMatches],
+              max,
+            );
+          } else {
+            const lists = s.topFeatured.filter === 'live'
+              ? [liveMatches]
+              : s.topFeatured.filter === 'upcoming'
+                ? [upcomingMatches]
+                : [liveMatches, upcomingMatches, recentMatches];
+            topFeaturedMatches = poolFrom(lists, max);
+          }
+        }
+
+        // Featured Matches showcase.
+        let featuredMatchesList = [];
+        if (s.featuredMatches.enabled) {
+          const max = Math.max(1, Number(s.featuredMatches.maxItems) || 6);
+          if (s.featuredMatches.source === 'manual') {
+            const tableIds = (home.featuredMatches || [])
+              .map((r) => String(r.match_external_id ?? r.external_id ?? '').trim())
+              .filter(Boolean);
+            const manualIds = s.featuredMatches.manualMatchIds?.length
+              ? s.featuredMatches.manualMatchIds
+              : tableIds;
+            featuredMatchesList = resolveManual(
+              manualIds,
+              [liveMatches, upcomingMatches, recentMatches],
+              max,
+            );
+          } else {
+            featuredMatchesList = poolFrom([liveMatches, upcomingMatches], max);
+          }
+        }
+
+        // Featured Series (manual admin entries).
+        const featuredSeriesList = s.featuredSeries.enabled
+          ? (home.featuredSeries || []).slice(0, Math.max(1, Number(s.featuredSeries.maxItems) || 10))
+          : [];
+
         const payload = {
+          // ---- New, predictable structure -------------------------------
+          homeConfig: {
+            sections: layout.sections,
+            sectionOrder: layout.sectionOrder,
+          },
+          topFeaturedMatches,
+          matches: liveMatches,
+          featuredMatches: featuredMatchesList,
+          featuredSeriesList,
+          // ---- Backward-compatible fields (existing Flutter parsing) -----
           liveMatches,
           upcomingMatches: upcomingMatches.slice(0, 10),
           recentMatches: recentMatches.slice(0, 10),
           featuredMatch: home.featuredMatches?.[0] || null,
-          featuredSeries: home.featuredSeries?.[0] || null,
+          featuredSeries: featuredSeriesList?.[0] || null,
           featuredNews: (news.data?.stories || []).slice(0, 5),
           quickAccess: home.sections || [],
+          sections: home.sections || [],
           banners: home.banners || [],
           config,
         };

@@ -72,6 +72,10 @@ export const PERMISSIONS = {
   'providers.write': 'Configure providers and provider API keys',
   'apiKeys.view': 'View public API keys',
   'apiKeys.write': 'Issue and revoke public API keys',
+
+  // API Security / Access Control
+  'apiSecurity.view': 'View API security (clients, origins, rules, blocklist, logs)',
+  'apiSecurity.write': 'Manage API security (clients, origins, rules, blocklist, mode)',
  
   // App settings
   'settings.view': 'View app settings',
@@ -123,6 +127,7 @@ export const ROLE_PERMISSIONS = {
     'streams.view', 'streams.write', 'streams.test',
     'providers.view', 'providers.write',
     'apiKeys.view', 'apiKeys.write',
+    'apiSecurity.view', 'apiSecurity.write',
     'settings.view', 'settings.write',
     'home.view', 'home.write',
     'series.view', 'series.write',

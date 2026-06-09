@@ -502,7 +502,38 @@ export function AdsSettingsForm({ canWrite }: { canWrite: boolean }) {
           ))}
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <Field label="Min seconds between app open ads">
+          <Field label="Min minutes between app open ads (cooldown)">
+            <Input
+              type="number"
+              min={0}
+              value={form.app_open_min_interval_minutes ?? 240}
+              disabled={!canWrite}
+              onChange={(e) =>
+                update('app_open_min_interval_minutes', Number(e.target.value))
+              }
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              AdMob best practice. Default 240 (4 hours). Prevents app-open ads
+              spamming on every foreground.
+            </p>
+          </Field>
+          <Field label="Min background seconds before resume ad">
+            <Input
+              type="number"
+              min={0}
+              value={form.app_open_min_background_seconds ?? 30}
+              disabled={!canWrite}
+              onChange={(e) =>
+                update('app_open_min_background_seconds', Number(e.target.value))
+              }
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              App must stay backgrounded at least this long before an app-open
+              shows on resume. Blocks notification-shade / screen-unlock quick
+              resumes.
+            </p>
+          </Field>
+          <Field label="Min seconds between app open ads (legacy floor)">
             <Input
               type="number"
               min={0}

@@ -220,6 +220,11 @@ export const adsSchema = z.object({
   app_open_cold_start: z.boolean().default(true),
   app_open_resume: z.boolean().default(true),
   minimum_seconds_between_app_open_ads: z.coerce.number().int().min(0).default(120),
+  // Strict app-open cooldown (AdMob best practice). Default 240 min = 4 hours.
+  app_open_min_interval_minutes: z.coerce.number().int().min(0).default(240),
+  // Minimum real background time before app-open may show on resume (guards
+  // notification-shade / screen-unlock quick resumes). Default 30s.
+  app_open_min_background_seconds: z.coerce.number().int().min(0).default(30),
   max_app_open_ads_per_session: z.coerce.number().int().min(0).default(4),
   // AdMob
   admob_android_app_id: z.string().optional().nullable(),

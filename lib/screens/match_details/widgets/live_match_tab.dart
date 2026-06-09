@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
 import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/screens/match_details/widgets/match_details_ui.dart';
 
 /// Premium compact "Live Center" tab for Match Details.
 ///
@@ -58,10 +59,12 @@ class LiveMatchTab extends StatelessWidget {
     final embeddedLc = _liveMap(summaryData['live_center'] ??
         summaryData['liveCenter'] ??
         summaryData['live_center_data']);
-    final effectiveLc = _mergeLiveCenterFallback(primary: lc, fallback: embeddedLc);
+    final effectiveLc =
+        _mergeLiveCenterFallback(primary: lc, fallback: embeddedLc);
 
     // Determine state primarily from the live-center, then the summary.
-    final lcState = _liveStr(_liveValue(effectiveLc, 'match_state', 'matchState'));
+    final lcState =
+        _liveStr(_liveValue(effectiveLc, 'match_state', 'matchState'));
     final _MatchState state;
     if (lcState == 'finished') {
       state = _MatchState.finished;
@@ -231,47 +234,90 @@ class _LiveMatchActiveView extends StatelessWidget {
       debugPrint('[LiveTab] commentary=${comms.length}');
     }
 
-    final recentOverLabel = recentBalls.isNotEmpty
-        ? _liveStr(recentBalls.first['over'])
-        : '';
+    final recentOverLabel =
+        recentBalls.isNotEmpty ? _liveStr(recentBalls.first['over']) : '';
     final lcRecentFromBalls = lcBalls.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (batters.isNotEmpty) ...[
-          const _LiveSectionTitle('Current Batters', color: null),
-          const SizedBox(height: 10),
-          _CurrentBattersCard(batters: batters),
-          const SizedBox(height: 18),
-        ],
-        if (bowler.isNotEmpty) ...[
-          const _LiveSectionTitle('Current Bowler', color: null),
-          const SizedBox(height: 10),
-          _CurrentBowlerCard(bowler: bowler),
-          const SizedBox(height: 18),
-        ],
-        if (partnership.isNotEmpty || lastWicket.isNotEmpty) ...[
-          _PartnershipLastWicketRow(
-            partnership: partnership,
-            lastWicket: lastWicket,
+          _CurrentBattersCard(
+            batters: batters,
+            inningsLine: _battingInningsLine(summary, lc),
           ),
-          const SizedBox(height: 18),
-        ],
-        if (recentBalls.isNotEmpty) ...[
-          _RecentOverHeader(over: recentOverLabel),
           const SizedBox(height: 10),
-          _RecentOverBubbles(balls: recentBalls, fromLiveCenter: lcRecentFromBalls),
-          const SizedBox(height: 18),
         ],
-        if (comms.isNotEmpty) ...[
-          const _LiveSectionTitle('Live Commentary', color: null),
+        if (bowler.isNotEmpty || partnership.isNotEmpty) ...[
+          _LiveTwoCol(
+            left: bowler.isNotEmpty ? _CurrentBowlerCard(bowler: bowler) : null,
+            right: partnership.isNotEmpty
+                ? _PartnershipCard(partnership: partnership, batters: batters)
+                : null,
+          ),
           const SizedBox(height: 10),
-          _LiveCommentaryTimeline(items: comms.take(8).toList()),
-          const SizedBox(height: 14),
         ],
-        const _LiveFooter(isLive: true),
+        if (lastWicket.isNotEmpty || recentBalls.isNotEmpty) ...[
+          _LiveTwoCol(
+            left: lastWicket.isNotEmpty
+                ? _LastWicketCard(text: lastWicket)
+                : null,
+            right: recentBalls.isNotEmpty
+                ? _RecentOverCard(
+                    balls: recentBalls,
+                    over: recentOverLabel,
+                    runs: _recentOverRuns(recentBalls, lcRecentFromBalls),
+                    fromLiveCenter: lcRecentFromBalls,
+                  )
+                : null,
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (comms.isNotEmpty)
+          _LiveCommentaryTimeline(items: comms.take(5).toList()),
       ],
+    );
+  }
+}
+
+/// Responsive two-column row: side-by-side on wide widths, stacked on narrow.
+class _LiveTwoCol extends StatelessWidget {
+  const _LiveTwoCol({this.left, this.right});
+
+  final Widget? left;
+  final Widget? right;
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = <Widget>[if (left != null) left!, if (right != null) right!];
+    if (cards.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Two-column grid whenever there's room for it. A 360px device has
+        // ~328px of content width (16px padding each side), so the breakpoint
+        // must sit comfortably below that or the cards wrongly stack.
+        if (constraints.maxWidth < 300 || cards.length == 1) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < cards.length; i++) ...[
+                cards[i],
+                if (i != cards.length - 1) const SizedBox(height: 10),
+              ],
+            ],
+          );
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 10),
+              Expanded(child: cards[1]),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -342,7 +388,8 @@ class _LiveMatchResultView extends StatelessWidget {
           const SizedBox(height: 18),
           _RecentOverHeader(over: _liveStr(finalOver.first['over'])),
           const SizedBox(height: 10),
-          _RecentOverBubbles(balls: finalOver, fromLiveCenter: lcRecentFromBalls),
+          _RecentOverBubbles(
+              balls: finalOver, fromLiveCenter: lcRecentFromBalls),
         ],
         if (comms.isNotEmpty) ...[
           const SizedBox(height: 18),
@@ -676,7 +723,8 @@ class _LiveMatchUpcomingView extends StatelessWidget {
       summary['start_time'] ?? summary['startTime'] ?? summary['date'],
     );
     final venue = _venueLine(summary);
-    final statusText = _liveStr(summary['status_text'] ?? summary['statusText']);
+    final statusText =
+        _liveStr(summary['status_text'] ?? summary['statusText']);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -696,7 +744,8 @@ class _LiveMatchUpcomingView extends StatelessWidget {
                 if (t1.isNotEmpty && t2.isNotEmpty) ...[
                   Row(
                     children: [
-                      Icon(Icons.sports_cricket_rounded, color: c.cyan, size: 18),
+                      Icon(Icons.sports_cricket_rounded,
+                          color: c.cyan, size: 18),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -735,10 +784,9 @@ class _LiveMatchUpcomingView extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _LiveSectionTitle extends StatelessWidget {
-  const _LiveSectionTitle(this.text, {this.color});
+  const _LiveSectionTitle(this.text);
 
   final String text;
-  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -746,7 +794,7 @@ class _LiveSectionTitle extends StatelessWidget {
     return Text(
       text.toUpperCase(),
       style: TextStyle(
-        color: color ?? c.cyan,
+        color: c.cyan,
         fontWeight: FontWeight.w900,
         fontSize: 13,
         letterSpacing: 0.6,
@@ -755,42 +803,99 @@ class _LiveSectionTitle extends StatelessWidget {
   }
 }
 
-class _CurrentBattersCard extends StatelessWidget {
-  const _CurrentBattersCard({required this.batters});
+/// In-card header row (cyan icon + title) used by the live dashboard panels.
+class _LiveHeader extends StatelessWidget {
+  const _LiveHeader(this.icon, this.title, {this.color, this.trailing, this.asset});
 
-  final List<dynamic> batters;
+  final IconData icon;
+  final String title;
+  final Color? color;
+  final Widget? trailing;
+  final String? asset;
 
   @override
   Widget build(BuildContext context) {
-    return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      radius: 18,
-      child: _LiveStatTable(
-        leadingHeader: 'Batter',
-        headers: const ['R', 'B', '4s', '6s', 'SR'],
-        rows: [
-          for (final raw in batters)
-            _battingRow(context, _liveMap(raw)),
+    final c = context.cric;
+    final col = color ?? c.cyan;
+    return Row(
+      children: [
+        asset != null
+            ? MDIcon(asset!, fallback: icon, size: 16, tint: color)
+            : Icon(icon, color: col, size: 15),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: col,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+        ),
+        if (trailing != null) trailing!,
+      ],
+    );
+  }
+}
+
+class _CurrentBattersCard extends StatelessWidget {
+  const _CurrentBattersCard({required this.batters, this.inningsLine});
+
+  final List<dynamic> batters;
+  final String? inningsLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _LiveStatTable(
+            leadingHeader: 'Batter',
+            headerIcon: Icons.sports_cricket_rounded,
+            headerTitle: 'Current Batters',
+            headerAsset: MDAsset.icCurrentBatters,
+            headers: const ['R', 'B', '4s', '6s', 'SR'],
+            rows: [
+              for (final raw in batters) _battingRow(context, _liveMap(raw)),
+            ],
+          ),
+          if (inningsLine != null && inningsLine!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Divider(color: c.cyan.withValues(alpha: .14), height: 1),
+            const SizedBox(height: 7),
+            Text(
+              inningsLine!,
+              style: TextStyle(
+                color: c.cyan,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
   _LiveRow _battingRow(BuildContext context, Map<String, dynamic> row) {
-    final striker = _truthyLive(row['is_striker']) ||
-        _truthyLive(row['isStriker']);
+    final striker =
+        _truthyLive(row['is_striker']) || _truthyLive(row['isStriker']);
     final runs = _liveStr(row['runs'], fallback: '0');
     return _LiveRow(
-      leading: _PlayerCell(
-        row: row,
-        striker: striker,
-      ),
+      leading: _PlayerCell(row: row, striker: striker),
       values: [
         striker ? '$runs*' : runs,
         _liveStr(row['balls'], fallback: '0'),
         _liveStr(row['fours'], fallback: '0'),
         _liveStr(row['sixes'], fallback: '0'),
-        _liveStr(row['strike_rate'] ?? row['strikeRate'], fallback: '—'),
+        formatStatNumber(
+            _liveStr(row['strike_rate'] ?? row['strikeRate'], fallback: '—')),
       ],
       boldFirstValue: true,
     );
@@ -804,24 +909,99 @@ class _CurrentBowlerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      radius: 18,
-      child: _LiveStatTable(
-        leadingHeader: 'Bowler',
-        headers: const ['O', 'M', 'R', 'W', 'Econ'],
-        dividerBeforeValues: true,
-        rows: [
-          _LiveRow(
-            leading: _PlayerCell(row: bowler, striker: false),
-            values: [
-              _liveStr(bowler['overs'], fallback: '0'),
-              _liveStr(bowler['maidens'], fallback: '0'),
-              _liveStr(bowler['runs'] ?? bowler['runs_conceded'],
-                  fallback: '0'),
-              _liveStr(bowler['wickets'], fallback: '0'),
-              _liveStr(bowler['economy'], fallback: '—'),
+    final c = context.cric;
+    final name = _liveStr(
+        bowler['name'] ?? bowler['player_name'] ?? bowler['fullName'],
+        fallback: 'Bowler');
+    final style = _liveStr(bowler['bowling_style'] ??
+        bowler['bowlingStyle'] ??
+        bowler['style'] ??
+        bowler['role']);
+    final o = _liveStr(bowler['overs'], fallback: '0');
+    final m = _liveStr(bowler['maidens'], fallback: '0');
+    final r =
+        _liveStr(bowler['runs'] ?? bowler['runs_conceded'], fallback: '0');
+    final w = _liveStr(bowler['wickets'], fallback: '0');
+    var econ = _liveStr(bowler['economy']);
+    if (econ.isEmpty) {
+      final oversNum = double.tryParse(o) ?? 0;
+      final runsNum = double.tryParse(r) ?? 0;
+      final whole = oversNum.floor();
+      final balls = ((oversNum - whole) * 10).round();
+      final trueOvers = whole + balls / 6.0;
+      if (trueOvers > 0) econ = (runsNum / trueOvers).toStringAsFixed(2);
+    }
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _LiveHeader(Icons.sports_baseball_outlined, 'Current Bowler',
+              asset: MDAsset.icCurrentBowler),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _PlayerAvatar(row: bowler, name: name),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(formatCompactPlayerName(name),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13)),
+                    if (style.isNotEmpty)
+                      Text(style,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: c.muted,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 10.5)),
+                  ],
+                ),
+              ),
             ],
+          ),
+          const SizedBox(height: 9),
+          Divider(color: c.cyan.withValues(alpha: .12), height: 1),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _bowlStat(context, 'O', o),
+              _bowlStat(context, 'M', m),
+              _bowlStat(context, 'R', r),
+              _bowlStat(context, 'W', w, accent: true),
+              _bowlStat(context, 'ECO', econ.isEmpty ? '—' : formatStatNumber(econ)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bowlStat(BuildContext context, String label, String value,
+      {bool accent = false}) {
+    final c = context.cric;
+    return Expanded(
+      child: Column(
+        children: [
+          Text(label,
+              style: TextStyle(
+                  color: c.muted, fontWeight: FontWeight.w700, fontSize: 9.5)),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(value,
+                style: TextStyle(
+                    color: accent ? c.cyan : c.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15)),
           ),
         ],
       ),
@@ -829,169 +1009,149 @@ class _CurrentBowlerCard extends StatelessWidget {
   }
 }
 
-class _PartnershipLastWicketRow extends StatelessWidget {
-  const _PartnershipLastWicketRow({
-    required this.partnership,
-    required this.lastWicket,
-  });
-
-  final Map<String, dynamic> partnership;
-  final String lastWicket;
-
-  @override
-  Widget build(BuildContext context) {
-    final showPartnership = partnership.isNotEmpty;
-    final showLastWicket = lastWicket.trim().isNotEmpty;
-    if (!showPartnership && !showLastWicket) {
-      return const SizedBox.shrink();
-    }
-
-    final cards = <Widget>[
-      if (showPartnership) _PartnershipCard(partnership: partnership),
-      if (showLastWicket) _LastWicketCard(text: lastWicket),
-    ];
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 380 || cards.length == 1) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < cards.length; i++) ...[
-                cards[i],
-                if (i != cards.length - 1) const SizedBox(height: 12),
-              ],
-            ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: cards[0]),
-            const SizedBox(width: 12),
-            Expanded(child: cards[1]),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class _PartnershipCard extends StatelessWidget {
-  const _PartnershipCard({required this.partnership});
+  const _PartnershipCard({required this.partnership, required this.batters});
 
   final Map<String, dynamic> partnership;
+  final List<dynamic> batters;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final runs = _liveStr(partnership['runs'], fallback: '—');
     final balls = _liveStr(partnership['balls']);
-    final overs = _oversFromBalls(balls);
-    return PremiumCard(
-      padding: const EdgeInsets.all(14),
-      radius: 18,
+    final ballsNum = int.tryParse(balls) ?? 0;
+    final runsNum = int.tryParse(runs) ?? 0;
+    final rr = ballsNum > 0 ? (runsNum * 6 / ballsNum).toStringAsFixed(2) : '';
+    final contributors = batters.map(_liveMap).take(2).toList();
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _LiveHeader(Icons.people_alt_rounded, 'Partnership',
+              asset: MDAsset.icPartnership),
+          const SizedBox(height: 8),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
             children: [
-              Icon(Icons.people_alt_rounded, color: c.cyan, size: 16),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  'PARTNERSHIP',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              Text(runs,
                   style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 22,
+                      height: 1)),
+              if (balls.isNotEmpty) ...[
+                const SizedBox(width: 5),
+                Text('($balls)',
+                    style: TextStyle(
+                        color: c.muted,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12.5)),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final b in contributors)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: _contribRow(context, b),
+            ),
+          if (rr.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text('Run Rate: $rr',
+                style: TextStyle(
                     color: c.cyan,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _StatBlock(
-                  value: runs,
-                  hint: balls.isEmpty ? null : '($balls)',
-                  label: 'Runs',
-                ),
-              ),
-              Expanded(
-                child: _StatBlock(
-                  value: overs.isEmpty ? '—' : overs,
-                  label: 'Overs',
-                ),
-              ),
-            ],
-          ),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 11.5)),
+          ],
         ],
       ),
     );
   }
+
+  Widget _contribRow(BuildContext context, Map<String, dynamic> b) {
+    final c = context.cric;
+    final name =
+        _liveStr(b['name'] ?? b['player_name'] ?? b['fullName'], fallback: '');
+    if (name.isEmpty) return const SizedBox.shrink();
+    final runs = _liveStr(b['runs'], fallback: '0');
+    final balls = _liveStr(b['balls']);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(formatCompactPlayerName(name, maxLen: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: c.text.withValues(alpha: .9),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 11.5)),
+        ),
+        const SizedBox(width: 6),
+        Text(balls.isEmpty ? runs : '$runs ($balls)',
+            style: TextStyle(
+                color: c.text, fontWeight: FontWeight.w900, fontSize: 11.5)),
+      ],
+    );
+  }
 }
 
-class _StatBlock extends StatelessWidget {
-  const _StatBlock({required this.value, required this.label, this.hint});
+/// Compact Recent Over panel: header + over label, ball bubbles, runs footer.
+class _RecentOverCard extends StatelessWidget {
+  const _RecentOverCard({
+    required this.balls,
+    required this.over,
+    required this.runs,
+    this.fromLiveCenter = false,
+  });
 
-  final String value;
-  final String? hint;
-  final String label;
+  final List<Map<String, dynamic>> balls;
+  final String over;
+  final int runs;
+  final bool fromLiveCenter;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Flexible(
-              child: Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: c.text,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 22,
-                  height: 1.0,
-                ),
-              ),
-            ),
-            if (hint != null && hint!.isNotEmpty) ...[
-              const SizedBox(width: 4),
-              Text(
-                hint!,
-                style: TextStyle(
-                  color: c.muted,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: TextStyle(
-            color: c.muted,
-            fontWeight: FontWeight.w700,
-            fontSize: 11,
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _LiveHeader(
+            Icons.timelapse_rounded,
+            'Recent Over',
+            asset: MDAsset.icRecentOver,
+            trailing: over.isEmpty
+                ? null
+                : Text('$over ov',
+                    style: TextStyle(
+                        color: c.muted,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10.5)),
           ),
-        ),
-      ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 4,
+            runSpacing: 5,
+            children: [
+              for (final b in balls)
+                _BallBubble(
+                  size: 20,
+                  outcome: fromLiveCenter
+                      ? _ballOutcomeFromLiveCenter(b)
+                      : _ballOutcome(b),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text('$runs ${runs == 1 ? 'run' : 'runs'} in this over',
+              style: TextStyle(
+                  color: c.muted, fontWeight: FontWeight.w700, fontSize: 11)),
+        ],
+      ),
     );
   }
 }
@@ -1005,32 +1165,14 @@ class _LastWicketCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final parsed = _parseLastWicket(text);
-    return PremiumCard(
-      padding: const EdgeInsets.all(14),
-      radius: 18,
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.cancel_rounded, color: c.live, size: 16),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  'LAST WICKET',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.live,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
+          _LiveHeader(Icons.dangerous_outlined, 'Last Wicket',
+              color: c.live, asset: MDAsset.icLastWicket),
+          const SizedBox(height: 9),
           Text(
             parsed.title.isEmpty ? '—' : parsed.title,
             maxLines: 2,
@@ -1038,12 +1180,12 @@ class _LastWicketCard extends StatelessWidget {
             style: TextStyle(
               color: c.text,
               fontWeight: FontWeight.w900,
-              fontSize: 14,
-              height: 1.25,
+              fontSize: 13,
+              height: 1.2,
             ),
           ),
           if (parsed.subtitle.isNotEmpty) ...[
-            const SizedBox(height: 4),
+            const SizedBox(height: 3),
             Text(
               parsed.subtitle,
               maxLines: 2,
@@ -1051,8 +1193,8 @@ class _LastWicketCard extends StatelessWidget {
               style: TextStyle(
                 color: c.muted,
                 fontWeight: FontWeight.w700,
-                fontSize: 12,
-                height: 1.25,
+                fontSize: 11,
+                height: 1.2,
               ),
             ),
           ],
@@ -1119,9 +1261,8 @@ class _BallPill extends StatelessWidget {
     final c = context.cric;
     final over = _liveStr(row['over']);
     final ball = _liveStr(row['ball']);
-    final label = over.isEmpty
-        ? '—'
-        : (ball.isEmpty ? over : '$over.$ball');
+    final cleaned = formatOverLabel(over, ball);
+    final label = cleaned.isEmpty ? '—' : cleaned;
     final outcome =
         fromLiveCenter ? _ballOutcomeFromLiveCenter(row) : _ballOutcome(row);
     return Container(
@@ -1153,9 +1294,10 @@ class _BallPill extends StatelessWidget {
 }
 
 class _BallBubble extends StatelessWidget {
-  const _BallBubble({required this.outcome});
+  const _BallBubble({required this.outcome, this.size = 28});
 
   final _BallOutcome outcome;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -1176,14 +1318,14 @@ class _BallBubble extends StatelessWidget {
         break;
     }
     return Container(
-      width: 28,
-      height: 28,
+      width: size,
+      height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(shape: BoxShape.circle, color: fill),
       child: outcome.kind == _BallKind.dot
           ? Container(
-              width: 6,
-              height: 6,
+              width: size * 0.21,
+              height: size * 0.21,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.white,
@@ -1191,10 +1333,10 @@ class _BallBubble extends StatelessWidget {
             )
           : Text(
               outcome.label,
-              style: const TextStyle(
+              style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: 12,
+                fontSize: size * 0.43,
               ),
             ),
     );
@@ -1208,17 +1350,40 @@ class _LiveCommentaryTimeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      radius: 18,
+    final c = context.cric;
+    return MDGlassPanel(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const _LiveHeader(
+              Icons.chat_bubble_outline_rounded, 'Live Commentary',
+              asset: MDAsset.tabCommentary),
+          const SizedBox(height: 10),
           for (var i = 0; i < items.length; i++)
             _CommentaryRow(
               row: _liveMap(items[i]),
               isFirst: i == 0,
               isLast: i == items.length - 1,
             ),
+          const SizedBox(height: 4),
+          Divider(color: c.cyan.withValues(alpha: .14), height: 1),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('View More Commentary',
+                    style: TextStyle(
+                        color: c.cyan,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13)),
+                const SizedBox(width: 4),
+                Icon(Icons.keyboard_arrow_down_rounded,
+                    color: c.cyan, size: 20),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1241,8 +1406,7 @@ class _CommentaryRow extends StatelessWidget {
     final c = context.cric;
     final over = _liveStr(row['over']);
     final ball = _liveStr(row['ball']);
-    final label =
-        over.isEmpty ? '' : (ball.isEmpty ? over : '$over.$ball');
+    final label = formatOverLabel(over, ball);
     final text = _liveStr(row['text'] ?? row['commentary']);
 
     return IntrinsicHeight(
@@ -1251,13 +1415,13 @@ class _CommentaryRow extends StatelessWidget {
         children: [
           // Timeline rail (dot + connector line).
           SizedBox(
-            width: 18,
+            width: 16,
             child: Column(
               children: [
                 Container(
-                  margin: const EdgeInsets.only(top: 4),
-                  width: 12,
-                  height: 12,
+                  margin: const EdgeInsets.only(top: 3),
+                  width: 10,
+                  height: 10,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: c.card,
@@ -1274,17 +1438,20 @@ class _CommentaryRow extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           SizedBox(
-            width: 40,
+            width: 44,
             child: Padding(
               padding: const EdgeInsets.only(top: 1),
               child: Text(
                 label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
                 style: TextStyle(
                   color: c.cyan,
                   fontWeight: FontWeight.w900,
-                  fontSize: 13,
+                  fontSize: 12,
                 ),
               ),
             ),
@@ -1292,7 +1459,7 @@ class _CommentaryRow extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Padding(
-              padding: EdgeInsets.only(top: 1, bottom: isLast ? 10 : 14),
+              padding: EdgeInsets.only(top: 1, bottom: isLast ? 8 : 11),
               child: _CommentaryText(row: row, text: text),
             ),
           ),
@@ -1319,8 +1486,8 @@ class _CommentaryText extends StatelessWidget {
     final base = TextStyle(
       color: c.text.withValues(alpha: 0.92),
       fontWeight: FontWeight.w600,
-      fontSize: 13.5,
-      height: 1.35,
+      fontSize: 12,
+      height: 1.3,
     );
 
     // Highlight a leading keyword (FOUR!/SIX!/OUT!) in colour when present.
@@ -1443,13 +1610,17 @@ class _LiveStatTable extends StatelessWidget {
     required this.leadingHeader,
     required this.headers,
     required this.rows,
-    this.dividerBeforeValues = false,
+    this.headerIcon,
+    this.headerTitle,
+    this.headerAsset,
   });
 
   final String leadingHeader;
   final List<String> headers;
   final List<_LiveRow> rows;
-  final bool dividerBeforeValues;
+  final IconData? headerIcon;
+  final String? headerTitle;
+  final String? headerAsset;
 
   @override
   Widget build(BuildContext context) {
@@ -1458,35 +1629,45 @@ class _LiveStatTable extends StatelessWidget {
       builder: (context, constraints) {
         // Drop the trailing column (SR/Econ) on very tight widths so values
         // never clip horizontally.
-        final dropLast = constraints.maxWidth < 320 && headers.length > 4;
+        final dropLast = constraints.maxWidth < 270 && headers.length > 4;
         final visibleHeaders =
             dropLast ? headers.take(headers.length - 1).toList() : headers;
-        final colWidth = constraints.maxWidth < 360 ? 38.0 : 44.0;
+        final narrow = constraints.maxWidth < 360;
 
-        Widget numericHeader(String h) => SizedBox(
-              width: colWidth,
+        // Fixed per-column widths. The last column (SR / Econ) is widest so
+        // values like "133.33" or "60.61" are shown in full — never "33....".
+        double widthFor(int index) {
+          final isLast = index == visibleHeaders.length - 1;
+          if (isLast) return narrow ? 44.0 : 50.0;
+          return narrow ? 28.0 : 32.0;
+        }
+
+        Widget numericHeader(int i, String h) => SizedBox(
+              width: widthFor(i),
               child: Text(
                 h,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: c.muted,
                   fontWeight: FontWeight.w800,
-                  fontSize: 12,
+                  fontSize: 11.5,
                 ),
               ),
             );
 
-        Widget numericValue(String v, bool bold) => SizedBox(
-              width: colWidth,
-              child: Text(
-                v,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: c.text,
-                  fontWeight: bold ? FontWeight.w900 : FontWeight.w700,
-                  fontSize: 13,
+        Widget numericValue(int i, String v, bool bold) => SizedBox(
+              width: widthFor(i),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.center,
+                child: Text(
+                  v,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: c.text,
+                    fontWeight: bold ? FontWeight.w900 : FontWeight.w700,
+                    fontSize: 13,
+                  ),
                 ),
               ),
             );
@@ -1494,40 +1675,58 @@ class _LiveStatTable extends StatelessWidget {
         return Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      leadingHeader,
-                      style: TextStyle(
-                        color: c.muted,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
-                    ),
+                    child: headerTitle != null
+                        ? Row(
+                            children: [
+                              MDIcon(
+                                headerAsset ?? MDAsset.icCurrentBatters,
+                                fallback: headerIcon ??
+                                    Icons.sports_cricket_rounded,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 7),
+                              Flexible(
+                                child: Text(
+                                  headerTitle!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: c.cyan,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            leadingHeader,
+                            style: TextStyle(
+                              color: c.muted,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
                   ),
-                  if (dividerBeforeValues) const SizedBox(width: 13),
-                  for (final h in visibleHeaders) numericHeader(h),
+                  for (var i = 0; i < visibleHeaders.length; i++)
+                    numericHeader(i, visibleHeaders[i]),
                 ],
               ),
             ),
             Divider(color: c.border.withValues(alpha: 0.6), height: 1),
             for (final row in rows)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 9),
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
                   children: [
                     Expanded(child: row.leading),
-                    if (dividerBeforeValues)
-                      Container(
-                        width: 1,
-                        height: 26,
-                        margin: const EdgeInsets.only(right: 12),
-                        color: c.border.withValues(alpha: 0.6),
-                      ),
                     for (var i = 0; i < visibleHeaders.length; i++)
                       numericValue(
+                        i,
                         i < row.values.length ? row.values[i] : '—',
                         row.boldFirstValue && i == 0,
                       ),
@@ -1557,22 +1756,27 @@ class _PlayerCell extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: 14,
+          width: 9,
           child: striker
-              ? Icon(Icons.play_arrow_rounded, color: c.cyan, size: 14)
+              ? Container(
+                  width: 6,
+                  height: 6,
+                  decoration:
+                      BoxDecoration(shape: BoxShape.circle, color: c.cyan),
+                )
               : null,
         ),
         _PlayerAvatar(row: row, name: name),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
-            name,
+            formatCompactPlayerName(name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: c.text,
               fontWeight: FontWeight.w800,
-              fontSize: 14,
+              fontSize: 13,
             ),
           ),
         ),
@@ -1593,8 +1797,8 @@ class _PlayerAvatar extends StatelessWidget {
     final image = resolvePlayerImageUrl(row);
     if (image == null) {
       return Container(
-        width: 34,
-        height: 34,
+        width: 30,
+        height: 30,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
@@ -1603,20 +1807,20 @@ class _PlayerAvatar extends StatelessWidget {
             end: Alignment.bottomRight,
             colors: [c.cyan.withValues(alpha: 0.30), c.card2],
           ),
-          border: Border.all(color: c.border),
+          border: Border.all(color: c.cyan.withValues(alpha: .4)),
         ),
         child: Text(
           _initials(name),
           style: TextStyle(
             color: c.text,
             fontWeight: FontWeight.w900,
-            fontSize: 12,
+            fontSize: 11,
           ),
         ),
       );
     }
     return CircleAvatar(
-      radius: 17,
+      radius: 15,
       backgroundColor: c.card2,
       backgroundImage: NetworkImage(
         image,
@@ -1668,9 +1872,15 @@ class _BallOutcome {
 }
 
 _BallOutcome _ballOutcome(Map<String, dynamic> row) {
-  if (_truthyLive(row['is_wicket'])) return const _BallOutcome(_BallKind.wicket, 'W');
-  if (_truthyLive(row['is_six'])) return const _BallOutcome(_BallKind.boundary, '6');
-  if (_truthyLive(row['is_four'])) return const _BallOutcome(_BallKind.boundary, '4');
+  if (_truthyLive(row['is_wicket'])) {
+    return const _BallOutcome(_BallKind.wicket, 'W');
+  }
+  if (_truthyLive(row['is_six'])) {
+    return const _BallOutcome(_BallKind.boundary, '6');
+  }
+  if (_truthyLive(row['is_four'])) {
+    return const _BallOutcome(_BallKind.boundary, '4');
+  }
   final runs = _liveStr(row['runs'], fallback: '0');
   if (runs.isEmpty || runs == '0') {
     return const _BallOutcome(_BallKind.dot, '');
@@ -1700,6 +1910,55 @@ _BallOutcome _ballOutcomeFromLiveCenter(Map<String, dynamic> row) {
   }
 }
 
+/// Shortens long player names for compact tables/cards while keeping them
+/// readable. Mirrors the brief's rules:
+///   * fits within [maxLen] -> full name unchanged
+///   * otherwise -> first initial + last word (e.g. "S. Mukkamalla")
+///   * 3+ words -> first initial + last word (e.g. "M. Safi")
+/// Numeric stats are never passed through this.
+String formatCompactPlayerName(String name, {int maxLen = 14}) {
+  final n = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (n.isEmpty || n.length <= maxLen) return n;
+  final parts = n.split(' ');
+  if (parts.length < 2) return n;
+  final initial = parts.first.isNotEmpty ? parts.first[0].toUpperCase() : '';
+  final last = parts.last;
+  final candidate = '$initial. $last';
+  return candidate;
+}
+
+/// Formats a numeric stat (strike rate / economy) so it never overflows: at
+/// most [decimals] decimals, trailing ".0" dropped. Non-numeric values (e.g.
+/// the "—" fallback) pass straight through.
+String formatStatNumber(String raw, {int decimals = 2}) {
+  final s = raw.trim();
+  if (s.isEmpty) return s;
+  final d = double.tryParse(s);
+  if (d == null) return s;
+  if (d == d.roundToDouble()) return d.toInt().toString();
+  return d.toStringAsFixed(decimals);
+}
+
+/// Produces a clean over.ball label for the commentary timeline, stripping any
+/// trailing ball-id / sequence digits the provider may append (which caused
+/// labels like "17.6.108" to wrap onto two lines). Always one short token.
+String formatOverLabel(String over, [String ball = '']) {
+  final o = over.trim();
+  if (o.isNotEmpty) {
+    final m = RegExp(r'^(\d+)\.(\d+)').firstMatch(o);
+    if (m != null) return '${m.group(1)}.${m.group(2)}';
+    final intMatch = RegExp(r'^\d+').firstMatch(o);
+    final base = intMatch?.group(0) ?? o;
+    final b = ball.trim();
+    if (b.isNotEmpty) {
+      final bm = RegExp(r'^\d+').firstMatch(b);
+      if (bm != null) return '$base.${bm.group(0)}';
+    }
+    return base;
+  }
+  return '';
+}
+
 ({String title, String subtitle}) _parseLastWicket(String raw) {
   final s = raw.trim();
   if (s.isEmpty) return (title: '', subtitle: '');
@@ -1723,10 +1982,66 @@ _BallOutcome _ballOutcomeFromLiveCenter(Map<String, dynamic> row) {
   );
 }
 
-String _oversFromBalls(String balls) {
-  final n = int.tryParse(balls);
-  if (n == null || n <= 0) return '';
-  return '${n ~/ 6}.${n % 6}';
+/// Builds the batting innings line for the Current Batters footer, e.g.
+/// "IND 181/3 in 39.5 overs". Returns '' when it can't be derived.
+String _battingInningsLine(
+    Map<String, dynamic> summary, Map<String, dynamic> lc) {
+  final direct = _liveStr(lc['innings_summary'] ??
+      lc['current_innings'] ??
+      lc['batting_team_score'] ??
+      summary['current_score']);
+  if (direct.isNotEmpty) return direct;
+
+  final battingId = _liveStr(lc['batting_team_id'] ??
+      summary['curr_bat_team_id'] ??
+      summary['currentBatTeamId']);
+  for (final key in const ['team1', 'team2']) {
+    final t = _liveMap(summary[key]);
+    if (t.isEmpty) continue;
+    final id = _liveStr(t['id'] ?? t['team_id']);
+    if (battingId.isNotEmpty && id.isNotEmpty && id != battingId) continue;
+    final innings = _liveList(t['innings']);
+    if (innings.isEmpty) continue;
+    final inn = _liveMap(innings.last);
+    final runs = _liveStr(inn['runs']);
+    if (runs.isEmpty) continue;
+    final wkts = _liveStr(inn['wickets'], fallback: '0');
+    final short =
+        _liveStr(t['short_name'] ?? t['shortName'] ?? t['name'], fallback: '');
+    final oversRaw = _liveStr(inn['overs']);
+    final ov = oversRaw.isEmpty ? '' : normalizeOversText(oversRaw);
+    final scorePart = '$short $runs/$wkts'.trim();
+    return ov.isEmpty ? scorePart : '$scorePart in $ov overs';
+  }
+  return '';
+}
+
+/// Total runs scored across the supplied recent-over deliveries.
+int _recentOverRuns(List<Map<String, dynamic>> balls, bool fromLiveCenter) {
+  var total = 0;
+  for (final b in balls) {
+    if (fromLiveCenter) {
+      final type = _liveStr(b['type']).toLowerCase();
+      if (type == 'four') {
+        total += 4;
+      } else if (type == 'six') {
+        total += 6;
+      } else if (type == 'dot') {
+        continue;
+      } else {
+        total += int.tryParse(_liveStr(b['value'])) ?? 0;
+      }
+    } else {
+      if (_truthyLive(b['is_six'])) {
+        total += 6;
+      } else if (_truthyLive(b['is_four'])) {
+        total += 4;
+      } else {
+        total += int.tryParse(_liveStr(b['runs'])) ?? 0;
+      }
+    }
+  }
+  return total;
 }
 
 String _overOrdinal(String over) {
@@ -1744,11 +2059,8 @@ String _overOrdinal(String over) {
 }
 
 String _initials(String name) {
-  final parts = name
-      .trim()
-      .split(RegExp(r'\s+'))
-      .where((p) => p.isNotEmpty)
-      .toList();
+  final parts =
+      name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
   if (parts.isEmpty) return '?';
   if (parts.length == 1) {
     return parts.first.substring(0, 1).toUpperCase();
@@ -1848,7 +2160,8 @@ List<_Performer> _topPerformers(Map<String, dynamic> scorecard) {
 
   for (final raw in innings) {
     final inn = _liveMap(raw);
-    for (final b in _liveList(inn['batting'] ?? inn['batters'] ?? inn['batsmen'])) {
+    for (final b
+        in _liveList(inn['batting'] ?? inn['batters'] ?? inn['batsmen'])) {
       final row = _liveMap(b);
       if (!_hasRealName(row)) continue;
       final runs = _numLive(row['runs']);
@@ -1978,12 +2291,11 @@ bool _isLiveStatus(String status) {
 
 List<dynamic> _liveList(dynamic value) => apiList(value);
 
-Map<String, dynamic> _liveMap(dynamic value) =>
-    value is Map<String, dynamic>
-        ? value
-        : value is Map
-            ? Map<String, dynamic>.from(value)
-            : const <String, dynamic>{};
+Map<String, dynamic> _liveMap(dynamic value) => value is Map<String, dynamic>
+    ? value
+    : value is Map
+        ? Map<String, dynamic>.from(value)
+        : const <String, dynamic>{};
 
 dynamic _liveValue(Map<String, dynamic> map, String key,
     [String? altKey, String? thirdKey]) {

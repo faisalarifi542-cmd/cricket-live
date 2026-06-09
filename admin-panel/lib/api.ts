@@ -355,6 +355,13 @@ export const settingsApi = {
 };
 
 export const homeApi = {
+  getLayout: () =>
+    adminFetch<{ success: true; data: any }>('/admin/home-config/layout'),
+  saveLayout: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; data: any }>('/admin/home-config/layout', {
+      method: 'PUT',
+      body: j(body),
+    }),
   listSections: () =>
     adminFetch<{ success: true; data: any[] }>('/admin/home-config/sections'),
   createSection: (body: Record<string, unknown>) =>
@@ -387,6 +394,18 @@ export const homeApi = {
   ) =>
     adminFetch<{ success: true }>(`/admin/home-config/${kind}/${id}`, {
       method: 'DELETE',
+    }),
+  // Featured series support full manual fields (poster, name, date range,
+  // location) since the cricket provider has no featured-series feed.
+  addFeaturedSeries: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number }>('/admin/home-config/featured-series', {
+      method: 'POST',
+      body: j(body),
+    }),
+  updateFeaturedSeries: (id: number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/home-config/featured-series/${id}`, {
+      method: 'PUT',
+      body: j(body),
     }),
   listBanners: () =>
     adminFetch<{ success: true; data: any[] }>('/admin/home-config/banners'),
@@ -643,4 +662,78 @@ export const manualMatchesApi = {
     adminFetch<{ success: true; is_enabled: boolean }>(`/admin/manual-matches/${id}/toggle`, { method: 'POST' }),
   delete: (id: number | string) =>
     adminFetch<{ success: true }>(`/admin/manual-matches/${id}`, { method: 'DELETE' }),
+};
+
+// =====================================================
+// API Security / Access Control
+// =====================================================
+const qs = (params: Record<string, string | number | undefined> = {}) => {
+  const s = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][],
+  ).toString();
+  return s ? `?${s}` : '';
+};
+
+export const apiSecurityApi = {
+  // Clients
+  listClients: () => adminFetch<{ success: true; data: any[] }>('/admin/api-security/clients'),
+  createClient: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number; api_key: string; api_key_prefix: string; warning: string }>(
+      '/admin/api-security/clients',
+      { method: 'POST', body: j(body) },
+    ),
+  updateClient: (id: number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/api-security/clients/${id}`, { method: 'PUT', body: j(body) }),
+  regenerateClientKey: (id: number) =>
+    adminFetch<{ success: true; api_key: string; api_key_prefix: string; warning: string }>(
+      `/admin/api-security/clients/${id}/regenerate-key`,
+      { method: 'POST' },
+    ),
+  revokeClient: (id: number) =>
+    adminFetch<{ success: true }>(`/admin/api-security/clients/${id}/revoke`, { method: 'POST' }),
+
+  // Allowed origins / domains
+  listOrigins: () => adminFetch<{ success: true; data: any[] }>('/admin/api-security/origins'),
+  createOrigin: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number }>('/admin/api-security/origins', { method: 'POST', body: j(body) }),
+  updateOrigin: (id: number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/api-security/origins/${id}`, { method: 'PUT', body: j(body) }),
+  deleteOrigin: (id: number) =>
+    adminFetch<{ success: true }>(`/admin/api-security/origins/${id}`, { method: 'DELETE' }),
+
+  // Endpoint rules
+  listEndpointRules: () => adminFetch<{ success: true; data: any[] }>('/admin/api-security/endpoint-rules'),
+  createEndpointRule: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number }>('/admin/api-security/endpoint-rules', { method: 'POST', body: j(body) }),
+  updateEndpointRule: (id: number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/api-security/endpoint-rules/${id}`, { method: 'PUT', body: j(body) }),
+
+  // Blocklist
+  listBlocklist: () => adminFetch<{ success: true; data: any[] }>('/admin/api-security/blocklist'),
+  createBlock: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number }>('/admin/api-security/blocklist', { method: 'POST', body: j(body) }),
+  updateBlock: (id: number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/api-security/blocklist/${id}`, { method: 'PUT', body: j(body) }),
+  deleteBlock: (id: number) =>
+    adminFetch<{ success: true }>(`/admin/api-security/blocklist/${id}`, { method: 'DELETE' }),
+
+  // Logs
+  listLogs: (params: Record<string, string | number | undefined> = {}) =>
+    adminFetch<{ success: true; data: any[]; pagination: { page: number; limit: number; total: number } }>(
+      `/admin/api-security/logs${qs(params)}`,
+    ),
+  trimLogs: (days: number) =>
+    adminFetch<{ success: true; deleted: number }>('/admin/api-security/logs/trim', {
+      method: 'POST',
+      body: j({ days }),
+    }),
+
+  // Mode + dashboard
+  getMode: () => adminFetch<{ success: true; data: { mode: string } }>('/admin/api-security/mode'),
+  setMode: (mode: string) =>
+    adminFetch<{ success: true; data: { mode: string } }>('/admin/api-security/mode', {
+      method: 'PUT',
+      body: j({ mode }),
+    }),
+  dashboard: () => adminFetch<{ success: true; data: any }>('/admin/api-security/dashboard'),
 };

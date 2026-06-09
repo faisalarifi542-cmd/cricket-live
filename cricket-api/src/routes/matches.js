@@ -14,6 +14,7 @@ import {
   fetchManualMatchById,
   mergeManualMatches,
 } from '../lib/manual-matches.js';
+import { buildCommentaryFeed } from '../providers/cricbuzz/normalizer.js';
 
 /**
  * Match routes — /matches/*, /match/:id/*
@@ -1157,6 +1158,91 @@ export default async function matchRoutes(fastify) {
       };
     } catch {
       return { success: true, matchId: id, data: { stories: [], nextCursor: null }, message: 'Match news not available' };
+    }
+  });
+
+  // GET /match/:id/full-commentary  (combined, normalized, deduped feed)
+  // Fetches every innings' full commentary, classifies each entry on the
+  // server, removes duplicates and merges fragments. The app trusts the
+  // returned `type`/`label`/`isBall` fields directly.
+  fastify.get('/match/:id/full-commentary', {
+    schema: {
+      description: 'Combined normalized commentary feed for all innings',
+      tags: ['Matches'],
+      params: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+      },
+    },
+  }, async (request) => {
+    const { id } = request.params;
+    try {
+      const { data: feed } = await cacheGetOrFetch(
+        `match:${id}:commentary-feed`,
+        TTL.FULL_COMMENTARY_LIVE,
+        async () => {
+          // Only fetch innings we actually expect. Default to 2 (limited
+          // overs); a cached scorecard with more innings (Tests) bumps it up.
+          // This avoids hammering 404s that would trip the circuit breaker.
+          let inningsCount = 2;
+          try {
+            const sc = await cacheGet(KEYS.matchScorecard(id));
+            if (Array.isArray(sc?.innings) && sc.innings.length > 2) {
+              inningsCount = Math.min(4, sc.innings.length);
+            }
+          } catch { /* scorecard optional */ }
+
+          const nums = Array.from({ length: inningsCount }, (_, i) => i + 1);
+          const results = await Promise.allSettled(
+            nums.map((n) =>
+              providerManager.execute('getFullCommentary', id, String(n))),
+          );
+
+          const inningsList = [];
+          results.forEach((res, idx) => {
+            if (res.status !== 'fulfilled') return;
+            const data = res.value?.data || res.value;
+            const list = Array.isArray(data?.commentary) ? data.commentary : [];
+            if (!list.length) return;
+            inningsList.push({
+              inningsId: data.inningsId || nums[idx],
+              teamName: list[0]?.batTeamName || '',
+              commentary: list,
+            });
+          });
+
+          const built = buildCommentaryFeed(id, inningsList);
+          if (process.env.NODE_ENV !== 'production') {
+            logger.debug({
+              msg: 'commentary-feed built',
+              matchId: id,
+              innings: built.innings.map((i) => ({
+                n: i.inningsNumber,
+                items: i.items.length,
+              })),
+              total: built.items.length,
+            });
+          }
+          return built;
+        },
+      );
+
+      return {
+        success: true,
+        matchId: id,
+        data: feed || { matchId: id, innings: [], items: [] },
+        message: (!feed || !feed.items?.length)
+          ? 'Commentary not available for this match'
+          : null,
+      };
+    } catch {
+      return {
+        success: true,
+        matchId: id,
+        data: { matchId: id, innings: [], items: [] },
+        message: 'Commentary not available for this match',
+      };
     }
   });
 

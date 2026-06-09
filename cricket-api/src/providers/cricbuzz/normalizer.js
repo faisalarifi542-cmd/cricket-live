@@ -695,16 +695,35 @@ export function normalizeMatchSquads(raw, matchId) {
   const normalizeTeam = (team) => {
     if (!team) return null;
 
-    const normalizePlayer = (player) => ({
-      player_id: String(player.playerId || player.player_id || ''),
-      name: cleanPlayerName(player.name),
-      role: cleanRole(player),
-      is_captain: player.isCaptain || player.is_captain || /\((C|c)\)/.test(player.name || ''),
-      is_wicketkeeper: player.isWicketkeeper || player.is_wicketkeeper || /\((WK|wk|Wk)\)|WK-?Batter/i.test(player.name || ''),
-      is_impact_player: player.isImpactPlayer || false,
-      is_substitute: player.isSubstitute || false,
-      image_url: player.imageUrl || player.image_url || '',
-    });
+    const teamId = String(team.teamId || team.team_id || '');
+    const teamName = cleanTeamName(team, team.teamShort || team.team_short || '');
+    const teamShort = team.teamShort || team.team_short || '';
+
+    // Attach a player's face image ONLY by their own identity (playerId /
+    // profile link). A missing image stays null so the client renders a
+    // neutral initials avatar — never another player's face. Never mapped by
+    // list index.
+    const normalizePlayer = (player) => {
+      const realImage = player.imageUrl || player.image_url || '';
+      const profileUrl = player.profileUrl || player.profile_url
+        || (player.playerId || player.player_id
+          ? `https://www.cricbuzz.com/profiles/${player.playerId || player.player_id}`
+          : '');
+      return {
+        player_id: String(player.playerId || player.player_id || ''),
+        name: cleanPlayerName(player.name),
+        role: cleanRole(player),
+        team_id: teamId,
+        team_name: teamName,
+        profile_url: profileUrl,
+        is_captain: player.isCaptain || player.is_captain || /\((C|c)\)/.test(player.name || ''),
+        is_wicketkeeper: player.isWicketkeeper || player.is_wicketkeeper || /\((WK|wk|Wk)\)|WK-?Batter/i.test(player.name || ''),
+        is_impact_player: player.isImpactPlayer || false,
+        is_substitute: player.isSubstitute || false,
+        image_url: realImage || null,
+        image_source: realImage ? 'cricbuzz' : 'none',
+      };
+    };
 
     const playingXI = (team.playingXi || team.playing_xi || []).map(normalizePlayer);
     const bench = (team.bench || []).map((p) => ({ ...normalizePlayer(p), is_substitute: true }));
@@ -713,33 +732,34 @@ export function normalizeMatchSquads(raw, matchId) {
       is_impact_player: true,
     }));
 
+    const toCamel = (p) => ({
+      playerId: p.player_id,
+      name: p.name,
+      role: p.role,
+      teamId: p.team_id,
+      teamName: p.team_name,
+      profileUrl: p.profile_url,
+      imageUrl: p.image_url,
+      imageSource: p.image_source,
+      isCaptain: p.is_captain,
+      isWicketKeeper: p.is_wicketkeeper,
+      isImpactPlayer: p.is_impact_player,
+      isSubstitute: p.is_substitute,
+    });
+
     return {
-      team_name: cleanTeamName(team, team.teamShort || team.team_short || ''),
-      team_short: team.teamShort || team.team_short || '',
+      team_name: teamName,
+      team_short: teamShort,
       playing_xi: playingXI,
       bench,
       impact_player: impactPlayers[0] || null,
       substitutes: bench,
-      teamId: String(team.teamId || team.team_id || ''),
-      teamName: cleanTeamName(team, team.teamShort || team.team_short || ''),
-      teamShort: team.teamShort || team.team_short || '',
+      teamId,
+      teamName,
+      teamShort,
       logoUrl: team.logoUrl || team.logo_url || '',
-      playingXI: playingXI.map((p) => ({
-        playerId: p.player_id,
-        name: p.name,
-        role: p.role,
-        imageUrl: p.image_url,
-        isCaptain: p.is_captain,
-        isWicketKeeper: p.is_wicketkeeper,
-        isImpactPlayer: p.is_impact_player,
-        isSubstitute: p.is_substitute,
-      })),
-      impactPlayers: impactPlayers.map((p) => ({
-        playerId: p.player_id,
-        name: p.name,
-        role: p.role,
-        imageUrl: p.image_url,
-      })),
+      playingXI: playingXI.map(toCamel),
+      impactPlayers: impactPlayers.map(toCamel),
     };
   };
 
@@ -1442,6 +1462,238 @@ export function normalizeHighlights(raw, matchId, inningsId) {
   return { highlights };
 }
 
+// --- Combined, app-ready commentary feed ---------------------------------
+//
+// Takes the per-innings results of `normalizeFullCommentary` and produces a
+// single, de-duplicated, newest-first feed where every item is explicitly
+// classified. The Flutter app trusts these fields directly and never guesses
+// event types from text.
+//
+// Item shape:
+//   { id, innings, over, team, teamShort, score, type, label, title, text,
+//     isBall, isWicket, isBoundary, runs, timestamp }
+
+function _abbrevTeam(name = '') {
+  const n = String(name || '').trim();
+  if (!n) return '';
+  // Use an existing short code if the name already looks like one.
+  if (/^[A-Z]{2,4}$/.test(n)) return n;
+  const words = n.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words.map((w) => w[0]).join('').slice(0, 3).toUpperCase();
+}
+
+function _formatOver(overNumber) {
+  const n = Number(overNumber);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function _noteLabel(text = '') {
+  const t = String(text || '').toLowerCase();
+  if (/innings break|end of innings/.test(t)) return 'INNINGS BREAK';
+  if (/\bdrinks\b/.test(t)) return 'DRINKS';
+  if (/man of the (match|series)|player of the (match|series)|\bpotm\b|\bpom\b/.test(t)) {
+    return 'PRESENTATION';
+  }
+  if (/presentation|trophy|won the|lifts the|collects the|won by/.test(t)) return 'PRESENTATION';
+  if (/rain|delay|\btea\b|lunch|stumps|strategic|review|\bdrs\b/.test(t)) return 'UPDATE';
+  if (/comes to the crease|into the attack|back into the attack|on strike|open the attack/.test(t)) {
+    return 'INFO';
+  }
+  return 'COMMENTARY';
+}
+
+// Event flags that are NOT the delivery outcome (they decorate a ball).
+const _NON_OUTCOME_FLAGS = new Set([
+  'OVER-BREAK', 'HIGHSCORING_OVER', 'MAIDEN_OVER', 'NONE', '',
+  'FIFTY', 'HUNDRED', 'TEAM_FIFTY', 'TEAM_HUNDRED', 'TEAM_FIFTY_RUNS',
+  'TEAM_HUNDRED_RUNS', 'TEAM_TWO_HUNDRED', 'PARTNERSHIP',
+]);
+
+function _eventFlags(event) {
+  return String(event || '')
+    .toUpperCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/// True for notes that are genuine "key events" (innings break, drinks, rain,
+/// presentation, result …) — but NOT routine "X comes to the crease" lines.
+function _noteIsKeyEvent(text = '') {
+  const t = String(text || '').toLowerCase();
+  return /innings break|end of innings|drinks|rain|delay|\btea\b|lunch|stumps|strategic|presentation|trophy|won the|player of the (match|series)|man of the (match|series)|\bpotm\b|review|\bdrs\b|won by|match tied|no result/.test(t);
+}
+
+/**
+ * Classifies a normalized full-commentary entry into an app feed item.
+ * Real deliveries are detected by a positive ball number (notes are ballNbr 0).
+ * The `over-break` flag merely marks the last ball of an over; such entries are
+ * still real deliveries and must be classified by their true outcome.
+ */
+function classifyCommentaryItem(entry, inningsId, teamName, scoreLine) {
+  const flags = _eventFlags(entry.event);
+  const text = String(entry.text || entry.rawText || '').replace(/<[^>]*>/g, '').trim();
+  const ballNbr = entry.ballNumber || 0;
+  const over = _formatOver(entry.overNumber);
+  const isBall = ballNbr > 0 && over !== null;
+
+  if (!isBall) {
+    return {
+      innings: inningsId,
+      over: null,
+      team: null,
+      teamShort: null,
+      score: null,
+      type: 'note',
+      label: _noteLabel(text),
+      title: null,
+      text,
+      isBall: false,
+      isWicket: false,
+      isBoundary: false,
+      isKeyEvent: _noteIsKeyEvent(text),
+      runs: null,
+      ballNbr,
+      timestamp: entry.timestamp || 0,
+    };
+  }
+
+  const team = teamName || entry.batTeamName || '';
+  const teamShort = _abbrevTeam(team);
+  const totalRuns = Number((entry.runs && entry.runs.total) ?? 0);
+
+  const isWicket = !!entry.isWicket || flags.includes('WICKET');
+  const isSix = !!entry.isSix || flags.includes('SIX');
+  const isFour = !!entry.isFour || flags.includes('FOUR');
+  const hasMilestone = flags.some((f) =>
+    f === 'FIFTY' || f === 'HUNDRED' || f.startsWith('TEAM_'));
+
+  let type;
+  let label;
+  if (isWicket) {
+    type = 'wicket';
+    label = 'WICKET';
+  } else if (isSix) {
+    type = 'six';
+    label = 'SIX';
+  } else if (isFour) {
+    type = 'four';
+    label = 'FOUR';
+  } else if (totalRuns === 0) {
+    type = 'dot';
+    label = 'DOT BALL';
+  } else {
+    type = 'run';
+    label = `${totalRuns} RUN${totalRuns === 1 ? '' : 'S'}`;
+  }
+
+  return {
+    innings: inningsId,
+    over,
+    team,
+    teamShort,
+    score: scoreLine || null,
+    type,
+    label,
+    title: null,
+    text,
+    isBall: true,
+    isWicket,
+    isBoundary: isFour || isSix,
+    isKeyEvent: isWicket || isFour || isSix || hasMilestone,
+    runs: totalRuns,
+    ballNbr,
+    timestamp: entry.timestamp || 0,
+  };
+}
+
+/// Detects the redundant "THATS OUT!!" echo fragment that Cricbuzz emits with
+/// ballNbr 0 right after the real wicket delivery — we drop it to avoid dupes.
+function _isWicketEcho(entry) {
+  if ((entry.ballNumber || 0) !== 0) return false;
+  const t = String(entry.text || entry.rawText || '').toUpperCase();
+  return t.includes('THATS OUT') || t.includes("THAT'S OUT");
+}
+
+/**
+ * Builds the combined commentary feed from per-innings normalized commentary.
+ * @param {string} matchId
+ * @param {Array<{inningsId:number, teamName?:string, commentary:Array}>} inningsList
+ *        Each `commentary` is the array returned by `normalizeFullCommentary`
+ *        (newest-first).
+ */
+export function buildCommentaryFeed(matchId, inningsList = []) {
+  const innings = [];
+  const flat = [];
+  const seen = new Set();
+
+  // Highest innings first so the newest content (incl. post-match notes which
+  // sit at the top of the latest innings) leads the feed.
+  const ordered = [...inningsList]
+    .filter((inn) => inn && Array.isArray(inn.commentary) && inn.commentary.length)
+    .sort((a, b) => Number(b.inningsId || 0) - Number(a.inningsId || 0));
+
+  for (const inn of ordered) {
+    const inningsId = Number(inn.inningsId || 0);
+    const list = inn.commentary; // newest-first
+    const teamName = inn.teamName || (list[0] && list[0].batTeamName) || '';
+
+    // Forward pass (oldest-first) to compute the cumulative wicket count so we
+    // can show an accurate "runs/wkts" score on every delivery.
+    const scoreByIndex = new Array(list.length).fill(null);
+    let wkts = 0;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const e = list[i];
+      const isBall = (e.ballNumber || 0) > 0;
+      if (!isBall) continue;
+      if (_eventFlags(e.event).includes('WICKET') || e.isWicket) wkts += 1;
+      scoreByIndex[i] = `${e.batTeamScore || 0}/${wkts}`;
+    }
+
+    const items = [];
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (_isWicketEcho(entry)) continue; // drop redundant "THATS OUT!!" echo
+
+      const item = classifyCommentaryItem(entry, inningsId, teamName, scoreByIndex[i]);
+      const text = item.text || '';
+      if (!item.isBall && !text) continue; // skip empty notes
+
+      // Stable dedupe key. Balls include the timestamp so a no-ball + the
+      // re-bowled delivery (same ballNbr) are both kept, while exact resends
+      // collapse. Notes dedupe on normalized text.
+      const key = item.isBall
+        ? `b:${inningsId}:${item.ballNbr}:${item.timestamp}`
+        : `n:${inningsId}:${text.toLowerCase().replace(/\s+/g, ' ').slice(0, 80)}`;
+
+      if (seen.has(key)) {
+        const existing = flat.find((x) => x._key === key);
+        if (existing && text.length > (existing.text || '').length) existing.text = text;
+        continue;
+      }
+      seen.add(key);
+
+      const id = item.isBall
+        ? `${matchId}-${inningsId}-${item.over}-${item.ballNbr}-${item.timestamp}`
+        : `${matchId}-${inningsId}-note-${flat.length}`;
+      const enriched = { id, _key: key, ...item };
+      items.push(enriched);
+      flat.push(enriched);
+    }
+
+    innings.push({ inningsNumber: inningsId, teamName, team: _abbrevTeam(teamName), items });
+  }
+
+  const clean = flat.map(({ _key, ...rest }) => rest);
+  for (const inn of innings) {
+    inn.items = inn.items.map(({ _key, ...rest }) => rest);
+  }
+
+  return { matchId: matchId || null, innings, items: clean };
+}
+
 // --- Ball-by-ball Map normalizer ---
 
 export function normalizeBallsMap(raw, matchId, inningsId) {
@@ -1712,6 +1964,90 @@ export function normalizeMatchInfoDetailed(raw, matchId) {
     keyMoments: [],
     updated_at: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Normalizes a single Cricbuzz series-squad JSON response into a clean,
+ * role-grouped player list. The raw `player` array interleaves section
+ * headers ({name, isHeader:true}) with player objects that carry id, name,
+ * role, captain/keeper flags, and imageId. Support staff (coaches/managers)
+ * are excluded from the player list and returned separately.
+ */
+export function normalizeSeriesSquad(raw, seriesId, squadId) {
+  const list = Array.isArray(raw?.player) ? raw.player : [];
+  const players = [];
+  const supportStaff = [];
+
+  const supportPattern = /\b(?:head\s+coach|assistant\s+coach|batting\s+coach|bowling\s+coach|fielding\s+coach|fitness\s+coach|support\s+staff|team\s+manager|manager|physio(?:therapist)?|analyst|selector|mentor|trainer|coach)\b/i;
+
+  // Maps a Cricbuzz role string to a compact UI role code + category.
+  const classify = (role = '', keeper = false) => {
+    const r = String(role).toLowerCase();
+    if (keeper || /wk|keeper|wicket/.test(r)) {
+      return { code: 'WK', category: 'wicketkeepers' };
+    }
+    if (/all\s*-?rounder|allrounder/.test(r)) {
+      return { code: 'AR', category: 'allRounders' };
+    }
+    if (/bowler|bowl/.test(r)) {
+      return { code: 'BOWL', category: 'bowlers' };
+    }
+    // Batsman / Batter / Top order etc.
+    return { code: 'BAT', category: 'batters' };
+  };
+
+  let currentSection = '';
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry.isHeader) {
+      currentSection = String(entry.name || '').trim();
+      continue;
+    }
+    const name = String(entry.name || '').trim();
+    if (!name) continue;
+
+    const role = String(entry.role || '').trim();
+    // Skip support staff from the player squad.
+    if (supportPattern.test(role) || supportPattern.test(currentSection)) {
+      supportStaff.push({
+        playerId: String(entry.id || ''),
+        name,
+        role: role || currentSection,
+        imageUrl: entry.imageId ? getCricbuzzImageUrl(entry.imageId, 'i1') : null,
+      });
+      continue;
+    }
+
+    const keeper = entry.keeper === true;
+    const captain = entry.captain === true;
+    const viceCaptain = entry.viceCaptain === true || entry.vicecaptain === true;
+    const { code, category } = classify(role, keeper);
+
+    players.push({
+      playerId: String(entry.id || ''),
+      name,
+      role,
+      roleCode: code,
+      category,
+      isCaptain: captain,
+      isViceCaptain: viceCaptain,
+      isWicketKeeper: keeper || code === 'WK',
+      battingStyle: String(entry.battingStyle || ''),
+      bowlingStyle: String(entry.bowlingStyle || ''),
+      // Face image strictly by the player's own imageId — never reused.
+      imageId: entry.imageId ? String(entry.imageId) : null,
+      imageUrl: entry.imageId ? getCricbuzzImageUrl(entry.imageId, 'i1') : null,
+      imageSource: entry.imageId ? 'cricbuzz' : 'none',
+    });
+  }
+
+  return {
+    seriesId: String(seriesId || ''),
+    squadId: String(squadId || ''),
+    players,
+    supportStaff,
+    playerCount: players.length,
   };
 }
 

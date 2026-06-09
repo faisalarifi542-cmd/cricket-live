@@ -30,8 +30,9 @@ class ApiClient {
     try {
       response = await _httpClient.get(
         ApiConfig.uri(path, query),
-        headers: const {
+        headers: {
           'Accept': 'application/json',
+          ...ApiConfig.securityHeaders(),
         },
       ).timeout(const Duration(seconds: 12));
     } on TimeoutException {
@@ -100,9 +101,10 @@ class ApiClient {
     bool allowFailure = false,
   }) async {
     late final http.Response response;
-    const headers = {
+    final headers = {
       'Accept': 'application/json',
       'Content-Type': 'application/json',
+      ...ApiConfig.securityHeaders(),
     };
     try {
       final uri = ApiConfig.uri(path);

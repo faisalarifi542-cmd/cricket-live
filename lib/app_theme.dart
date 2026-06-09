@@ -164,7 +164,9 @@ ThemeData cricTheme(bool dark) {
 enum CricBreak { compact, mobile, tablet, desktop }
 
 extension CtxTheme on BuildContext {
-  CricColors get cric => Theme.of(this).extension<CricColors>()!;
+  CricColors get cric =>
+      Theme.of(this).extension<CricColors>() ??
+      (Theme.of(this).brightness == Brightness.dark ? darkCric : lightCric);
   double get w => MediaQuery.sizeOf(this).width;
 
   CricBreak get bp {
@@ -184,7 +186,11 @@ extension CtxTheme on BuildContext {
     return 28;
   }
 
-  double get mainBottomPadding => 108 + MediaQuery.paddingOf(this).bottom;
+  /// Bottom padding for the main tabbed screens. With `extendBody:false` the
+  /// bottom bar (sticky banner ad + nav) occupies real layout height and the
+  /// body sits above it, so content only needs a small breathing-room inset —
+  /// never a large reserve to clear a floating nav/ad.
+  double get mainBottomPadding => 20;
   double get detailBottomPadding => 32 + MediaQuery.paddingOf(this).bottom;
 
   double sp(double value) {

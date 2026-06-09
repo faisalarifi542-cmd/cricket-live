@@ -160,7 +160,7 @@ export const KEYS = Object.freeze({
   matchInfoDetailed: (id) => `match:${id}:info-detailed`,
   matchLiveCenter: (id) => `match:${id}:live-center`,
   seriesTeams: (id) => `series:${id}:teams`,
-  seriesSquads: (id) => `series:${id}:squads`,
+  seriesSquads: (id) => `series:${id}:squads:v2`,
   activeMatches: () => 'active:matches',
 });
 

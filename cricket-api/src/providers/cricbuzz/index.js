@@ -378,4 +378,31 @@ export class CricbuzzProvider extends BaseProvider {
       throw err;
     }
   }
+
+  // Discovers squad groups (team x format) for a series.
+  async getSeriesSquadGroups(seriesId) {
+    try {
+      const groups = await cricbuzzApi.getSeriesSquadGroups(seriesId);
+      this.recordSuccess();
+      return groups;
+    } catch (err) {
+      this.recordFailure();
+      logger.error({ msg: 'Cricbuzz getSeriesSquadGroups failed', seriesId, error: err.message });
+      throw err;
+    }
+  }
+
+  // Fetches and normalizes a single squad group's players.
+  async getSeriesSquad(seriesId, squadId) {
+    try {
+      const raw = await cricbuzzApi.getSeriesSquad(seriesId, squadId);
+      this.recordSuccess();
+      return norm.normalizeSeriesSquad(raw, seriesId, squadId);
+    } catch (err) {
+      this.recordFailure();
+      logger.error({ msg: 'Cricbuzz getSeriesSquad failed', seriesId, squadId, error: err.message });
+      throw err;
+    }
+  }
 }
+

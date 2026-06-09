@@ -11,11 +11,9 @@ class ContactUsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final options = [
-      ('Live Chat', 'Chat with our support team', Icons.forum_outlined),
-      ('Email Us', 'support@cricpro.app', Icons.mail_outline_rounded),
-      ('Call Us', '+91 98765 43210', Icons.call_outlined),
-      ('FAQs', 'Find answers to common questions', Icons.help_outline_rounded),
-      ('Share Feedback', 'Help us improve the app', Icons.rate_review_outlined),
+      ('Email Support', 'support@cricpro.app', Icons.mail_outline_rounded),
+      ('Website', 'cricpro.app', Icons.language_rounded),
+      ('Report a Problem', 'Tell us what is not working', Icons.report_outlined),
     ];
     return SimpleInfoScreen(
       title: 'Contact Us',

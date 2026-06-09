@@ -82,14 +82,14 @@ void main() {
         home: Scaffold(
           body: TeamLogoWidget(
             logoUrl: '',
-            teamName: 'West Indies',
-            abbreviation: 'WI',
+            teamName: 'Nowhere XI',
+            abbreviation: 'NW',
             color: Color(0xff22d3ee),
           ),
         ),
       ),
     );
 
-    expect(find.text('WI'), findsOneWidget);
+    expect(find.text('NW'), findsOneWidget);
   });
 }

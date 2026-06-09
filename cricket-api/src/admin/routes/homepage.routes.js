@@ -1,9 +1,25 @@
 import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
+import { loadHomeLayout, saveHomeLayout } from '../../lib/home-layout.js';
  
 export default async function homepageRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
+
+  // ---------- Global home layout (section toggles / order / sources) ----------
+  fastify.get('/layout', { preHandler: [requirePermissions('home.view')] }, async () => {
+    const data = await loadHomeLayout();
+    return { success: true, data };
+  });
+
+  fastify.put('/layout', { preHandler: [requirePermissions('home.write')] }, async (request) => {
+    const saved = await withAudit(
+      request,
+      { action: 'home.layout.update', entityType: 'home_layout', newValue: request.body },
+      async () => saveHomeLayout(request.body, request.adminUser.id),
+    );
+    return { success: true, data: saved };
+  });
  
   // ---------- Homepage sections ----------
   fastify.get('/sections', { preHandler: [requirePermissions('home.view')] }, async () => {
@@ -67,10 +83,105 @@ export default async function homepageRoutes(fastify) {
     return { success: true };
   });
  
-  // ---------- Featured matches / series / news ----------
+  // ---------- Featured series (manual, admin-managed) ----------
+  // The cricket provider has no "featured series" feed, so these are created
+  // by hand in the Admin Panel with a poster, name, date range and location.
+  // series_external_id is optional and only used when an operator wants the
+  // card to deep-link to a real provider series.
+  const SERIES_FIELDS = [
+    'series_external_id', 'title', 'subtitle', 'date_range', 'location',
+    'image_url', 'cta_label', 'cta_url', 'sort_order', 'is_active', 'note',
+    'starts_at', 'ends_at',
+  ];
+
+  fastify.get('/featured-series', { preHandler: [requirePermissions('home.view')] }, async () => {
+    const rows = await query(`SELECT * FROM featured_series ORDER BY sort_order ASC, id ASC`);
+    return { success: true, data: rows.map((r) => ({ ...r, is_active: !!r.is_active })) };
+  });
+
+  fastify.post('/featured-series', { preHandler: [requirePermissions('home.write')] }, async (request, reply) => {
+    const body = request.body || {};
+    const title = (body.title || '').trim();
+    const externalId = (body.series_external_id || '').trim();
+    // A manual series needs at least a title; a provider-linked one needs an id.
+    if (!title && !externalId) {
+      return reply.code(400).send({ success: false, error: 'title or series_external_id required' });
+    }
+    const cols = {
+      series_external_id: externalId || null,
+      title: title || null,
+      subtitle: body.subtitle || null,
+      date_range: body.date_range || null,
+      location: body.location || null,
+      image_url: body.image_url || null,
+      cta_label: body.cta_label || null,
+      cta_url: body.cta_url || null,
+      sort_order: body.sort_order ?? 100,
+      is_active: body.is_active === false ? 0 : 1,
+      note: body.note || null,
+      starts_at: body.starts_at || null,
+      ends_at: body.ends_at || null,
+      created_by: request.adminUser.id,
+    };
+    const keys = Object.keys(cols);
+    const r = await withAudit(
+      request,
+      { action: 'featured_series.create', entityType: 'featured_series', newValue: { title, externalId } },
+      async () => query(
+        `INSERT INTO featured_series (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`,
+        Object.values(cols),
+      ),
+    );
+    return reply.code(201).send({ success: true, id: r.insertId });
+  });
+
+  fastify.put('/featured-series/:id', { preHandler: [requirePermissions('home.write')] }, async (request, reply) => {
+    const id = request.params.id;
+    const old = await query(`SELECT * FROM featured_series WHERE id = ?`, [id]);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const data = {};
+    for (const k of SERIES_FIELDS) if (request.body[k] !== undefined) data[k] = request.body[k];
+    if ('is_active' in data) data.is_active = data.is_active ? 1 : 0;
+    if (!Object.keys(data).length) return reply.code(400).send({ success: false, error: 'No fields' });
+    const setClause = Object.keys(data).map((k) => `${k} = ?`).join(', ');
+    await withAudit(
+      request,
+      { action: 'featured_series.update', entityType: 'featured_series', entityId: id, oldValue: old[0], newValue: data },
+      async () => query(`UPDATE featured_series SET ${setClause} WHERE id = ?`, [...Object.values(data), id]),
+    );
+    return { success: true };
+  });
+
+  fastify.delete('/featured-series/:id', { preHandler: [requirePermissions('home.write')] }, async (request, reply) => {
+    const old = await query(`SELECT * FROM featured_series WHERE id = ?`, [request.params.id]);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    await withAudit(
+      request,
+      { action: 'featured_series.delete', entityType: 'featured_series', entityId: request.params.id, oldValue: old[0] },
+      async () => query(`DELETE FROM featured_series WHERE id = ?`, [request.params.id]),
+    );
+    return { success: true };
+  });
+
+  // Bulk reorder: body = { order: [id1, id2, ...] }
+  fastify.put('/featured-series-order', { preHandler: [requirePermissions('home.write')] }, async (request, reply) => {
+    const order = Array.isArray(request.body?.order) ? request.body.order : [];
+    if (!order.length) return reply.code(400).send({ success: false, error: 'order array required' });
+    await withAudit(
+      request,
+      { action: 'featured_series.reorder', entityType: 'featured_series', newValue: { order } },
+      async () => {
+        for (let i = 0; i < order.length; i += 1) {
+          await query(`UPDATE featured_series SET sort_order = ? WHERE id = ?`, [(i + 1) * 10, order[i]]);
+        }
+      },
+    );
+    return { success: true };
+  });
+
+  // ---------- Featured matches / news ----------
   for (const [path, table, idField] of [
     ['featured-matches', 'featured_matches', 'match_external_id'],
-    ['featured-series', 'featured_series', 'series_external_id'],
     ['featured-news', 'featured_news', 'news_id'],
   ]) {
     fastify.get(`/${path}`, { preHandler: [requirePermissions('home.view')] }, async () => {

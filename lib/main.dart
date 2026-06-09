@@ -26,6 +26,7 @@ import 'package:cricpro_flutter/screens/player/player_detail_screen.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 import 'package:cricpro_flutter/services/ad_service.dart';
 import 'package:cricpro_flutter/services/ads/ads_manager.dart';
+import 'package:cricpro_flutter/services/ads/app_open_ad_manager.dart';
 import 'package:cricpro_flutter/services/notification_service.dart';
 import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
 
@@ -48,30 +49,29 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
   final CricketRepository _repository = CricketRepository();
   AppConfig _appConfig = const AppConfig(values: {});
   bool _adsReady = false;
-  bool _appOpenColdStartDone = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // App-open lifecycle decisions live entirely in AppOpenAdManager so the
+    // notification-shade / quick-resume guards are enforced in one place.
+    AppOpenAdManager.instance.register();
     _loadAppConfig();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    AppOpenAdManager.instance.unregister();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // App Open on resume — only when enabled, config loaded, and safe.
-    if (state == AppLifecycleState.resumed &&
-        _adsReady &&
-        AdsManager.instance.config.appOpenAllowed &&
-        AdsManager.instance.config.appOpenShowOnResume) {
-      AdsManager.instance.maybeShowAppOpen();
-    }
+    // App-open-on-resume is handled exclusively by AppOpenAdManager (which
+    // distinguishes a real background return from a transient `inactive`
+    // notification-shade / dialog resume). Nothing to do here.
   }
 
   Future<void> _loadAppConfig() async {
@@ -79,8 +79,10 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
       final response = await _repository.appConfig();
       if (mounted) {
         final config = AppConfig.fromJson(response.data);
-        await AdService.instance.initialize(AdConfig.fromAppConfig(response.data));
+        await AdService.instance
+            .initialize(AdConfig.fromAppConfig(response.data));
         _adsReady = true;
+        AppOpenAdManager.instance.markReady();
         // Warm full-screen formats so the first eligible transition can show.
         AdsManager.instance.preloadInterstitial();
         AdsManager.instance.preloadAppOpen();
@@ -97,14 +99,11 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
   }
 
   /// Shows the cold-start App Open ad once, after the first frame so the UI is
-  /// visible first (policy-safe timing). No-op unless enabled in admin config.
+  /// visible first (policy-safe timing). All gating lives in AppOpenAdManager.
   void _maybeShowColdStartAppOpen() {
-    if (_appOpenColdStartDone) return;
-    final ads = AdsManager.instance.config;
-    if (!ads.appOpenAllowed || !ads.appOpenShowOnColdStart) return;
-    _appOpenColdStartDone = true;
+    if (!_adsReady) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      AdsManager.instance.maybeShowAppOpen();
+      AppOpenAdManager.instance.notifyColdStartReady();
     });
   }
 
@@ -185,7 +184,8 @@ class _MaintenanceScreen extends StatelessWidget {
           child: Text(
             'CRICPRO is under maintenance. Please check back shortly.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: c.text, fontWeight: FontWeight.w900, fontSize: 20),
+            style: TextStyle(
+                color: c.text, fontWeight: FontWeight.w900, fontSize: 20),
           ),
         ),
       ),
@@ -217,20 +217,127 @@ class _RootShellState extends State<RootShell> {
   /// strings are tolerated and surface the demo hero.
   void _openMatch([String matchId = '']) {
     // Interstitial on a natural transition (gated by admin toggle + frequency).
-    AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.matchDetails);
+    AdsManager.instance
+        .maybeShowInterstitial(placement: AdPlacement.matchDetails);
     _push(MatchDetailsScreen(
       matchId: matchId,
       onWatchLive: (id) => _openLivePlayer(matchId: id),
     ));
   }
 
-  void _openLivePlayer({String matchId = ''}) async {
-    await _push(LivePlayerScreen(matchId: matchId));
+  /// Guards against double taps on Watch Live while a pre-roll ad is resolving.
+  bool _watchLiveInProgress = false;
+  bool _watchLiveLoaderUp = false;
+
+  /// Central Watch Live entry point. Every "Watch Live" button (Home, Matches,
+  /// Match Details) routes here. It runs the admin-configured pre-roll ad
+  /// (primary network first, then fallback order) BEFORE opening the player,
+  /// then navigates regardless of ad outcome so the user is never blocked.
+  ///
+  /// One ad per tap. Premium per-stream reward unlock still happens inside the
+  /// player for locked premium streams.
+  Future<void> _openLivePlayer({String matchId = ''}) async {
+    if (_watchLiveInProgress) {
+      _watchLiveLog('debounced', matchId, {'reason': 'tap while ad resolving'});
+      return;
+    }
+    _watchLiveInProgress = true;
+
+    final ads = AdsManager.instance.config;
+    final type = ads.resolveWatchLivePreRoll();
+    final primary = adNetworkName(ads.primaryNetwork);
+    final order = ads.orderedNetworks.map(adNetworkName).join('>');
+
+    _watchLiveLog('tap', matchId, {
+      'placement': 'live_player_preroll',
+      'adEnabled': ads.enabled,
+      'format': type.name,
+      'primaryNetwork': primary,
+      'fallbackOrder': order.isEmpty ? '-' : order,
+      'adUnitIdExists': _preRollUnitExists(ads, type),
+    });
+
+    var preRollShown = false;
+    try {
+      if (type != StreamPreRollAdType.none) {
+        _watchLiveLog('loadStarted', matchId, {'format': type.name});
+        _showWatchLiveLoading();
+        // Tap-level pre-roll never hard-blocks entry (premium reward unlock is
+        // enforced per-stream inside the player). So we always proceed after.
+        final result = await AdsManager.instance.showStreamPreRoll(
+          type: type,
+          isRequiredForPremium: false,
+        );
+        _dismissWatchLiveLoading();
+        preRollShown = result == StreamAdResult.allowed;
+        _watchLiveLog('preRollResult', matchId, {
+          'result': result.name,
+          'shown': preRollShown,
+        });
+      } else {
+        _watchLiveLog('preRollSkipped', matchId, {
+          'reason': ads.enabled ? 'pre-roll type=none' : 'ads disabled',
+        });
+      }
+    } catch (e) {
+      _dismissWatchLiveLoading();
+      _watchLiveLog('error', matchId, {'reason': '$e'});
+    } finally {
+      _watchLiveInProgress = false;
+    }
+
+    _watchLiveLog('navigatingToPlayer', matchId, {
+      'value': true,
+      'preRollShown': preRollShown,
+    });
+    await _push(LivePlayerScreen(
+      matchId: matchId,
+      skipInitialPreRoll: preRollShown,
+    ));
     // After the user leaves the live player, optionally show an interstitial
     // (opt-in via admin "after player" toggle). Never during playback.
     if (AdsManager.instance.config.interstitialAfterPlayer) {
-      AdsManager.instance.maybeShowInterstitial(placement: AdPlacement.livePlayer);
+      AdsManager.instance
+          .maybeShowInterstitial(placement: AdPlacement.livePlayer);
     }
+  }
+
+  /// Whether the primary network has a unit/placement id for [type]. Logged so
+  /// a "no ad showed" report can be diagnosed as missing-id vs no-fill.
+  bool _preRollUnitExists(AdConfig ads, StreamPreRollAdType type) {
+    final net = ads.networkConfig(ads.primaryNetwork);
+    switch (type) {
+      case StreamPreRollAdType.none:
+        return false;
+      case StreamPreRollAdType.interstitial:
+        return (net.interstitialId ?? '').isNotEmpty || ads.testMode;
+      case StreamPreRollAdType.rewardedVideo:
+        return (net.rewardedId ?? '').isNotEmpty || ads.testMode;
+      case StreamPreRollAdType.rewardedInterstitial:
+        return (net.rewardedInterstitialId ?? '').isNotEmpty || ads.testMode;
+    }
+  }
+
+  void _watchLiveLog(String event, String matchId, Map<String, Object?> fields) {
+    final parts = fields.entries.map((e) => '${e.key}=${e.value}').join(' ');
+    debugPrint('WATCH_LIVE_AD: event=$event matchId=${matchId.isEmpty ? '-' : matchId} $parts');
+  }
+
+  void _showWatchLiveLoading() {
+    if (_watchLiveLoaderUp || !mounted) return;
+    _watchLiveLoaderUp = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  void _dismissWatchLiveLoading() {
+    if (!_watchLiveLoaderUp) return;
+    _watchLiveLoaderUp = false;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) navigator.pop();
   }
 
   void _openSeries({int initialTab = 0}) {
@@ -323,7 +430,10 @@ class _RootShellState extends State<RootShell> {
             : const SizedBox.shrink(),
     ];
     return Scaffold(
-      extendBody: true,
+      // extendBody:false so the body is laid out ABOVE the bottom bar
+      // (sticky banner ad + nav). Content can never scroll behind the ad at
+      // any scroll position — the banner/nav occupy real layout height.
+      extendBody: false,
       body: IndexedStack(
         index: active.index,
         children: children,

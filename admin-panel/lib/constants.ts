@@ -21,6 +21,7 @@ import {
   SlidersHorizontal,
   HeartPulse,
   FlaskConical,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -61,6 +62,7 @@ export const navigation: NavItem[] = [
   { label: 'Health & Logs', href: '/health', icon: HeartPulse, permission: 'health.view', group: 'ops' },
 
   // Access control
+  { label: 'API Security', href: '/api-security', icon: ShieldCheck, permission: 'apiSecurity.view', group: 'access' },
   { label: 'Admin Users', href: '/users', icon: UserSquare2, permission: 'adminUsers.view', group: 'access' },
   { label: 'Roles', href: '/roles', icon: Shield, permission: 'roles.view', group: 'access' },
   { label: 'Audit Logs', href: '/audit-logs', icon: FileKey, permission: 'audit.view', group: 'access' },

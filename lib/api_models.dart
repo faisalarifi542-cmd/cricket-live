@@ -1,9 +1,48 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 String apiString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
   final text = value.toString().trim();
   return text.isEmpty ? fallback : text;
+}
+
+/// Decodes the HTML entities that occasionally leak through from the upstream
+/// provider into human-readable text (e.g. player names like `Max O&#x27;Dowd`
+/// → `Max O'Dowd`). Handles the common named entities plus decimal/hex numeric
+/// references. Safe to call on any display string; plain text passes through
+/// unchanged.
+String decodeHtmlEntities(dynamic value, [String fallback = '']) {
+  var text = apiString(value, fallback);
+  if (text.isEmpty || !text.contains('&')) return text;
+
+  const named = <String, String>{
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&apos;': "'",
+    '&#39;': "'",
+    '&#x27;': "'",
+    '&#x2F;': '/',
+    '&#47;': '/',
+    '&nbsp;': ' ',
+  };
+  named.forEach((entity, replacement) {
+    text = text.replaceAll(entity, replacement);
+    text = text.replaceAll(entity.toUpperCase(), replacement);
+  });
+
+  // Numeric references: decimal (&#39;) and hex (&#x27;).
+  text = text.replaceAllMapped(
+    RegExp(r'&#(x?)([0-9a-fA-F]+);'),
+    (m) {
+      final isHex = m.group(1)!.isNotEmpty;
+      final code = int.tryParse(m.group(2)!, radix: isHex ? 16 : 10);
+      if (code == null || code < 0 || code > 0x10FFFF) return m.group(0)!;
+      return String.fromCharCode(code);
+    },
+  );
+  return text;
 }
 
 String cleanText(dynamic value, [String fallback = '']) {
@@ -90,21 +129,20 @@ double? apiDouble(dynamic value) {
 
 DateTime? apiDate(dynamic value) => DateTime.tryParse(value?.toString() ?? '');
 
-Map<String, dynamic> apiMap(dynamic value) =>
-    value is Map<String, dynamic>
-        ? value
-        : value is String
-            ? () {
-                try {
-                  final decoded = jsonDecode(value);
-                  return decoded is Map<String, dynamic>
-                      ? decoded
-                      : <String, dynamic>{};
-                } catch (_) {
-                  return <String, dynamic>{};
-                }
-              }()
-            : <String, dynamic>{};
+Map<String, dynamic> apiMap(dynamic value) => value is Map<String, dynamic>
+    ? value
+    : value is String
+        ? () {
+            try {
+              final decoded = jsonDecode(value);
+              return decoded is Map<String, dynamic>
+                  ? decoded
+                  : <String, dynamic>{};
+            } catch (_) {
+              return <String, dynamic>{};
+            }
+          }()
+        : <String, dynamic>{};
 
 List<dynamic> apiList(dynamic value) {
   if (value is List) return value;
@@ -230,7 +268,8 @@ String? resolvePlayerImageUrl(dynamic value) {
   }
   final json = apiMap(value);
   final imageDetails = apiMap(json['imageDetails'] ?? json['image_details']);
-  final playerId = apiString(json['playerId'] ?? json['player_id'] ?? json['id']);
+  final playerId =
+      apiString(json['playerId'] ?? json['player_id'] ?? json['id']);
   final directImage = apiString(json['image_url'] ??
       json['imageUrl'] ??
       json['imageURL'] ??
@@ -274,16 +313,74 @@ String? resolveCricbuzzImageUrlFromFields({
   return 'https://static.cricbuzz.com/a/img/v1/i1/c$normalized/i.jpg';
 }
 
+/// Resolves a local rounded flag asset (`assets/flags/rounded/<team>.png`) for
+/// a team, matched by abbreviation or full name. This is the highest-priority
+/// team logo source so every team logo across the app is rounded & consistent.
+String? roundedFlagAsset({dynamic name, dynamic shortName, dynamic id}) {
+  for (final raw in [apiString(shortName), apiString(name), apiString(id)]) {
+    for (final key in _flagCandidateKeys(raw)) {
+      final asset = kRoundedFlagAssets[key];
+      if (asset != null) return asset;
+    }
+  }
+  return null;
+}
+
+/// Produces candidate flag keys for a raw team name/code, stripping qualifier
+/// suffixes so women / A / U19 / Emerging sides resolve to their base country
+/// flag (e.g. "INDW"/"India Women"/"India A"/"India U19" → IND/INDIA →
+/// India flag; "WIW"/"West Indies Women" → WI/WEST INDIES).
+List<String> _flagCandidateKeys(String raw) {
+  final norm = _normalizeTeamKey(raw);
+  if (norm.isEmpty) return const [];
+  final out = <String>[norm];
+  void add(String k) {
+    if (k.isNotEmpty && !out.contains(k)) out.add(k);
+  }
+
+  const dropTokens = {
+    'WOMEN', 'WOMENS', 'WMN', 'WOMAN', 'W',
+    'U19', 'U23', 'U16', 'U14', 'U17', 'U15', 'U21', 'U25',
+    'A', 'B', 'C', 'XI', 'II', 'III',
+    'EMERGING', 'ACADEMY', 'DEVELOPMENT', 'DEV', 'LIONS',
+    'PRESIDENTS', 'GOVERNORS', 'INVITATIONAL', 'SELECT',
+    'MASTERS', 'LEGENDS', 'NATIONAL', 'TEAM', //
+  };
+  final tokens = norm.split(' ').where((t) => t.isNotEmpty).toList();
+  final base = [...tokens];
+  while (base.length > 1 && dropTokens.contains(base.last)) {
+    base.removeLast();
+  }
+  if (base.length != tokens.length) add(base.join(' '));
+
+  // Single-token codes: strip a trailing women ('W') or 'A' suffix when the
+  // remaining prefix is a real flag key (e.g. INDW→IND, WIW→WI, INDA→IND).
+  if (tokens.length == 1) {
+    final t = tokens.first;
+    if (t.length >= 3) {
+      if (t.endsWith('W')) add(t.substring(0, t.length - 1));
+      if (t.endsWith('A')) add(t.substring(0, t.length - 1));
+    }
+  }
+  return out;
+}
+
 String? resolveKnownTeamLogoUrl({
   dynamic id,
   dynamic name,
   dynamic shortName,
 }) {
+  // 1) Local rounded flag asset (preferred — always rounded & on-brand).
+  final flag = roundedFlagAsset(id: id, name: name, shortName: shortName);
+  if (flag != null) return flag;
+
   for (final raw in [apiString(id), apiString(shortName), apiString(name)]) {
     final key = _normalizeTeamKey(raw);
     if (key.isEmpty) continue;
+    // 2) Other bundled team logo assets.
     final asset = _knownTeamLogoAssets[key];
     if (asset != null) return asset;
+    // 3) Known Cricbuzz team image ids.
     final imageId = _knownTeamImageIds[key];
     if (imageId != null) {
       return resolveCricbuzzImageUrlFromFields(imageId: imageId);
@@ -293,10 +390,7 @@ String? resolveKnownTeamLogoUrl({
 }
 
 String _normalizeTeamKey(String value) {
-  return value
-      .trim()
-      .toUpperCase()
-      .replaceAll(RegExp(r'[^A-Z0-9]+'), ' ');
+  return value.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), ' ');
 }
 
 const Map<String, String> _knownTeamImageIds = {
@@ -345,6 +439,170 @@ const Map<String, String> _knownTeamLogoAssets = {
   '6': 'assets/images/team_ban.png',
   'BAN': 'assets/images/team_ban.png',
   'BANGLADESH': 'assets/images/team_ban.png',
+};
+
+/// Local rounded flag assets bundled in `assets/flags/rounded/`. Keyed by the
+/// normalized team abbreviation and full name. Generated from the real asset
+/// filenames present in the repo. This is the primary team logo source.
+const Map<String, String> kRoundedFlagAssets = {
+  'AFG': 'assets/flags/rounded/afghanistan.png',
+  'AFGHANISTAN': 'assets/flags/rounded/afghanistan.png',
+  'ARG': 'assets/flags/rounded/argentina.png',
+  'ARGENTINA': 'assets/flags/rounded/argentina.png',
+  'AUS': 'assets/flags/rounded/australia.png',
+  'AUSTRALIA': 'assets/flags/rounded/australia.png',
+  'AUSTRIA': 'assets/flags/rounded/austria.png',
+  'AUT': 'assets/flags/rounded/austria.png',
+  'BAH': 'assets/flags/rounded/bahamas.png',
+  'BAHAMAS': 'assets/flags/rounded/bahamas.png',
+  'BAHRAIN': 'assets/flags/rounded/bahrain.png',
+  'BAN': 'assets/flags/rounded/bangladesh.png',
+  'BANGLADESH': 'assets/flags/rounded/bangladesh.png',
+  'BEL': 'assets/flags/rounded/belgium.png',
+  'BELGIUM': 'assets/flags/rounded/belgium.png',
+  'BELIZE': 'assets/flags/rounded/belize.png',
+  'BER': 'assets/flags/rounded/bermuda.png',
+  'BERMUDA': 'assets/flags/rounded/bermuda.png',
+  'BHR': 'assets/flags/rounded/bahrain.png',
+  'BIZ': 'assets/flags/rounded/belize.png',
+  'BOT': 'assets/flags/rounded/botswana.png',
+  'BOTSWANA': 'assets/flags/rounded/botswana.png',
+  'BRA': 'assets/flags/rounded/brazil.png',
+  'BRAZIL': 'assets/flags/rounded/brazil.png',
+  'CAN': 'assets/flags/rounded/canada.png',
+  'CANADA': 'assets/flags/rounded/canada.png',
+  'CAY': 'assets/flags/rounded/cayman_islands.png',
+  'CAYMAN ISLANDS': 'assets/flags/rounded/cayman_islands.png',
+  'CHI': 'assets/flags/rounded/chile.png',
+  'CHILE': 'assets/flags/rounded/chile.png',
+  'CHINA': 'assets/flags/rounded/china.png',
+  'CHN': 'assets/flags/rounded/china.png',
+  'COK': 'assets/flags/rounded/cook_islands.png',
+  'COOK ISLANDS': 'assets/flags/rounded/cook_islands.png',
+  'CZE': 'assets/flags/rounded/czech_republic.png',
+  'CZECH REPUBLIC': 'assets/flags/rounded/czech_republic.png',
+  'DEN': 'assets/flags/rounded/denmark.png',
+  'DENMARK': 'assets/flags/rounded/denmark.png',
+  'ENG': 'assets/flags/rounded/england.png',
+  'ENGLAND': 'assets/flags/rounded/england.png',
+  'ESP': 'assets/flags/rounded/spain.png',
+  'FIJ': 'assets/flags/rounded/fiji.png',
+  'FIJI': 'assets/flags/rounded/fiji.png',
+  'FIN': 'assets/flags/rounded/finland.png',
+  'FINLAND': 'assets/flags/rounded/finland.png',
+  'FRA': 'assets/flags/rounded/france.png',
+  'FRANCE': 'assets/flags/rounded/france.png',
+  'GER': 'assets/flags/rounded/germany.png',
+  'GERMANY': 'assets/flags/rounded/germany.png',
+  'GHA': 'assets/flags/rounded/ghana.png',
+  'GHANA': 'assets/flags/rounded/ghana.png',
+  'GIB': 'assets/flags/rounded/gibraltar.png',
+  'GIBRALTAR': 'assets/flags/rounded/gibraltar.png',
+  'GSY': 'assets/flags/rounded/guernsey.png',
+  'GUERNSEY': 'assets/flags/rounded/guernsey.png',
+  'HK': 'assets/flags/rounded/hong_kong.png',
+  'HKG': 'assets/flags/rounded/hong_kong.png',
+  'HONG KONG': 'assets/flags/rounded/hong_kong.png',
+  'HUN': 'assets/flags/rounded/hungary.png',
+  'HUNGARY': 'assets/flags/rounded/hungary.png',
+  'INA': 'assets/flags/rounded/indonesia.png',
+  'IND': 'assets/flags/rounded/india.png',
+  'INDIA': 'assets/flags/rounded/india.png',
+  'INDONESIA': 'assets/flags/rounded/indonesia.png',
+  'IOM': 'assets/flags/rounded/isle_of_man.png',
+  'IRE': 'assets/flags/rounded/ireland.png',
+  'IRELAND': 'assets/flags/rounded/ireland.png',
+  'ISLE OF MAN': 'assets/flags/rounded/isle_of_man.png',
+  'ITA': 'assets/flags/rounded/italy.png',
+  'ITALY': 'assets/flags/rounded/italy.png',
+  'JAPAN': 'assets/flags/rounded/japan.png',
+  'JER': 'assets/flags/rounded/jersey.png',
+  'JERSEY': 'assets/flags/rounded/jersey.png',
+  'JPN': 'assets/flags/rounded/japan.png',
+  'KEN': 'assets/flags/rounded/kenya.png',
+  'KENYA': 'assets/flags/rounded/kenya.png',
+  'KSA': 'assets/flags/rounded/saudi_arabia.png',
+  'KUW': 'assets/flags/rounded/kuwait.png',
+  'KUWAIT': 'assets/flags/rounded/kuwait.png',
+  'MALAWI': 'assets/flags/rounded/malawi.png',
+  'MALAYSIA': 'assets/flags/rounded/malaysia.png',
+  'MALTA': 'assets/flags/rounded/malta.png',
+  'MAS': 'assets/flags/rounded/malaysia.png',
+  'MEX': 'assets/flags/rounded/mexico.png',
+  'MEXICO': 'assets/flags/rounded/mexico.png',
+  'MLT': 'assets/flags/rounded/malta.png',
+  'MWI': 'assets/flags/rounded/malawi.png',
+  'NAM': 'assets/flags/rounded/namibia.png',
+  'NAMIBIA': 'assets/flags/rounded/namibia.png',
+  'NED': 'assets/flags/rounded/netherlands.png',
+  'NEP': 'assets/flags/rounded/nepal.png',
+  'NEPAL': 'assets/flags/rounded/nepal.png',
+  'NETHERLANDS': 'assets/flags/rounded/netherlands.png',
+  'NEW ZEALAND': 'assets/flags/rounded/new_zealand.png',
+  'NGA': 'assets/flags/rounded/nigeria.png',
+  'NIGERIA': 'assets/flags/rounded/nigeria.png',
+  'NOR': 'assets/flags/rounded/norway.png',
+  'NORWAY': 'assets/flags/rounded/norway.png',
+  'NZ': 'assets/flags/rounded/new_zealand.png',
+  'OMA': 'assets/flags/rounded/oman.png',
+  'OMAN': 'assets/flags/rounded/oman.png',
+  'PAK': 'assets/flags/rounded/pakistan.png',
+  'PAKISTAN': 'assets/flags/rounded/pakistan.png',
+  'PAN': 'assets/flags/rounded/panama.png',
+  'PANAMA': 'assets/flags/rounded/panama.png',
+  'PAPUA NEW GUINEA': 'assets/flags/rounded/papua_new_guinea.png',
+  'PER': 'assets/flags/rounded/peru.png',
+  'PERU': 'assets/flags/rounded/peru.png',
+  'PHI': 'assets/flags/rounded/philippines.png',
+  'PHILIPPINES': 'assets/flags/rounded/philippines.png',
+  'PNG': 'assets/flags/rounded/papua_new_guinea.png',
+  'POR': 'assets/flags/rounded/portugal.png',
+  'PORTUGAL': 'assets/flags/rounded/portugal.png',
+  'QAT': 'assets/flags/rounded/qatar.png',
+  'QATAR': 'assets/flags/rounded/qatar.png',
+  'ROMANIA': 'assets/flags/rounded/romania.png',
+  'ROU': 'assets/flags/rounded/romania.png',
+  'RSA': 'assets/flags/rounded/south_africa.png',
+  'RWA': 'assets/flags/rounded/rwanda.png',
+  'RWANDA': 'assets/flags/rounded/rwanda.png',
+  'SA': 'assets/flags/rounded/south_africa.png',
+  'SAM': 'assets/flags/rounded/samoa.png',
+  'SAMOA': 'assets/flags/rounded/samoa.png',
+  'SAUDI ARABIA': 'assets/flags/rounded/saudi_arabia.png',
+  'SCO': 'assets/flags/rounded/scotland.png',
+  'SCOT': 'assets/flags/rounded/scotland.png',
+  'SCOTLAND': 'assets/flags/rounded/scotland.png',
+  'SIERRA LEONE': 'assets/flags/rounded/sierra_leone.png',
+  'SIN': 'assets/flags/rounded/singapore.png',
+  'SINGAPORE': 'assets/flags/rounded/singapore.png',
+  'SL': 'assets/flags/rounded/sri_lanka.png',
+  'SLE': 'assets/flags/rounded/sierra_leone.png',
+  'SOUTH AFRICA': 'assets/flags/rounded/south_africa.png',
+  'SPAIN': 'assets/flags/rounded/spain.png',
+  'SRI LANKA': 'assets/flags/rounded/sri_lanka.png',
+  'SUI': 'assets/flags/rounded/switzerland.png',
+  'SWE': 'assets/flags/rounded/sweden.png',
+  'SWEDEN': 'assets/flags/rounded/sweden.png',
+  'SWITZERLAND': 'assets/flags/rounded/switzerland.png',
+  'TAN': 'assets/flags/rounded/tanzania.png',
+  'TANZANIA': 'assets/flags/rounded/tanzania.png',
+  'THA': 'assets/flags/rounded/thailand.png',
+  'THAILAND': 'assets/flags/rounded/thailand.png',
+  'U A E': 'assets/flags/rounded/uae.png',
+  'UAE': 'assets/flags/rounded/uae.png',
+  'UGA': 'assets/flags/rounded/uganda.png',
+  'UGANDA': 'assets/flags/rounded/uganda.png',
+  'UNITED ARAB EMIRATES': 'assets/flags/rounded/uae.png',
+  'UNITED STATES': 'assets/flags/rounded/united_states.png',
+  'UNITED STATES OF AMERICA': 'assets/flags/rounded/united_states.png',
+  'USA': 'assets/flags/rounded/united_states.png',
+  'VAN': 'assets/flags/rounded/vanuatu.png',
+  'VANUATU': 'assets/flags/rounded/vanuatu.png',
+  'WEST INDIES': 'assets/flags/rounded/west_indies.png',
+  'WI': 'assets/flags/rounded/west_indies.png',
+  'WINDIES': 'assets/flags/rounded/west_indies.png',
+  'ZIM': 'assets/flags/rounded/zimbabwe.png',
+  'ZIMBABWE': 'assets/flags/rounded/zimbabwe.png',
 };
 
 /// Normalizes cricket overs format.
@@ -693,12 +951,14 @@ class StreamSource {
           json['requires_login'] == 1,
       priority: apiInt(json['priority']),
       status: json['status']?.toString(),
-      backupUrl: apiString(
-              json['backupUrl'] ?? json['backup_url'] ?? json['backup_stream_url'])
-          .isEmpty
+      backupUrl: apiString(json['backupUrl'] ??
+                  json['backup_url'] ??
+                  json['backup_stream_url'])
+              .isEmpty
           ? null
-          : apiString(
-              json['backupUrl'] ?? json['backup_url'] ?? json['backup_stream_url']),
+          : apiString(json['backupUrl'] ??
+              json['backup_url'] ??
+              json['backup_stream_url']),
       headers: apiMap(json['headers'] ?? json['headers_json']),
       drm: apiMap(json['drm']),
     );
@@ -1112,7 +1372,8 @@ class AppConfig {
   bool get maintenanceMode =>
       _boolPath(['maintenanceMode']) || _boolPath(['app', 'maintenanceMode']);
   bool get forceUpdateEnabled =>
-      _boolPath(['forceUpdateEnabled']) || _boolPath(['app', 'forceUpdateEnabled']);
+      _boolPath(['forceUpdateEnabled']) ||
+      _boolPath(['app', 'forceUpdateEnabled']);
   bool get liveStreamingEnabled =>
       _boolPath(['enableLiveStreaming'], fallback: true) &&
       _boolPath(['features', 'liveStreamsEnabled'], fallback: true) &&
@@ -1123,7 +1384,9 @@ class AppConfig {
       _boolPath(['features', 'ads']) ||
       _boolPath(['ads', 'enabled']);
   String get defaultHomeTab =>
-      _stringPath(['defaultHomeTab']) ?? _stringPath(['app', 'defaultHomeTab']) ?? 'live';
+      _stringPath(['defaultHomeTab']) ??
+      _stringPath(['app', 'defaultHomeTab']) ??
+      'live';
   String get streamUnavailableMessage =>
       _stringPath(['streamUnavailableMessage']) ??
       _stringPath(['player', 'streamUnavailableMessage']) ??
@@ -1133,17 +1396,28 @@ class AppConfig {
       _stringPath(['player', 'defaultStreamQuality']) ??
       'AUTO';
   int get liveLineRefreshSeconds =>
-      _intPath(['liveLineRefreshSeconds']) ?? _intPath(['player', 'liveLineRefreshSeconds']) ?? 5;
+      _intPath(['liveLineRefreshSeconds']) ??
+      _intPath(['player', 'liveLineRefreshSeconds']) ??
+      5;
   int get liveScoreRefreshSeconds =>
-      _intPath(['liveScoreRefreshSeconds']) ?? _intPath(['player', 'liveScoreRefreshSeconds']) ?? 5;
+      _intPath(['liveScoreRefreshSeconds']) ??
+      _intPath(['player', 'liveScoreRefreshSeconds']) ??
+      5;
   int get scorecardRefreshSeconds =>
-      _intPath(['scorecardRefreshSeconds']) ?? _intPath(['player', 'scorecardRefreshSeconds']) ?? 30;
+      _intPath(['scorecardRefreshSeconds']) ??
+      _intPath(['player', 'scorecardRefreshSeconds']) ??
+      30;
   int get commentaryRefreshSeconds =>
-      _intPath(['commentaryRefreshSeconds']) ?? _intPath(['player', 'commentaryRefreshSeconds']) ?? 30;
+      _intPath(['commentaryRefreshSeconds']) ??
+      _intPath(['player', 'commentaryRefreshSeconds']) ??
+      30;
   int get oversRefreshSeconds =>
-      _intPath(['oversRefreshSeconds']) ?? _intPath(['player', 'oversRefreshSeconds']) ?? 20;
+      _intPath(['oversRefreshSeconds']) ??
+      _intPath(['player', 'oversRefreshSeconds']) ??
+      20;
   String? get oneSignalAppId =>
-      _stringPath(['notifications', 'oneSignalAppId']) ?? _stringPath(['oneSignalAppId']);
+      _stringPath(['notifications', 'oneSignalAppId']) ??
+      _stringPath(['oneSignalAppId']);
 
   bool _boolPath(List<String> path, {bool fallback = false}) {
     dynamic current = values;

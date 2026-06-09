@@ -50,25 +50,26 @@ class MoreScreen extends StatelessWidget {
                   'ICC Men Ranking',
                   Icons.bar_chart_rounded,
                   const Color(0xff22d3ee),
-                  onOpenRanking
+                  onOpenRanking,
+                  null
                 ),
                 (
                   'ICC Women Ranking',
                   Icons.show_chart_rounded,
                   const Color(0xff8b5cf6),
-                  onOpenRanking
+                  () => ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('ICC Women Ranking is coming soon'),
+                        ),
+                      ),
+                  'Coming Soon'
                 ),
                 (
                   'Teams',
                   Icons.groups_rounded,
                   const Color(0xff36d399),
-                  onOpenTeams
-                ),
-                (
-                  'Highlights',
-                  Icons.play_circle_outline_rounded,
-                  const Color(0xff00d9ff),
-                  onOpenHighlights
+                  onOpenTeams,
+                  null
                 ),
               ],
             ),
@@ -80,25 +81,29 @@ class MoreScreen extends StatelessWidget {
                   'Invite Friends',
                   Icons.share_rounded,
                   const Color(0xff22d3ee),
-                  () {}
+                  () {},
+                  null
                 ),
                 (
                   'Contact Us',
                   Icons.email_outlined,
                   const Color(0xffffc83d),
-                  onOpenContact
+                  onOpenContact,
+                  null
                 ),
                 (
                   'Terms & Conditions',
                   Icons.description_outlined,
                   const Color(0xff8b5cff),
-                  onOpenTerms
+                  onOpenTerms,
+                  null
                 ),
                 (
                   'Privacy Policy',
                   Icons.shield_outlined,
                   const Color(0xff38f28b),
-                  onOpenPolicy
+                  onOpenPolicy,
+                  null
                 ),
               ],
               footer: _AppearanceRow(isDark: isDark, onChanged: onThemeChanged),
@@ -116,7 +121,7 @@ class _MenuGroup extends StatelessWidget {
   const _MenuGroup({required this.title, required this.items, this.footer});
 
   final String title;
-  final List<(String, IconData, Color, VoidCallback)> items;
+  final List<(String, IconData, Color, VoidCallback, String?)> items;
   final Widget? footer;
 
   @override
@@ -158,12 +163,41 @@ class _MenuGroup extends StatelessWidget {
                         ),
                         const SizedBox(width: 18),
                         Expanded(
-                          child: Text(
-                            item.$1,
-                            style: TextStyle(
-                                color: c.text,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.$1,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: c.text,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w700),
+                                ),
+                              ),
+                              if (item.$5 != null) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: item.$3.withValues(alpha: .16),
+                                    borderRadius: BorderRadius.circular(999),
+                                    border: Border.all(
+                                        color: item.$3.withValues(alpha: .45)),
+                                  ),
+                                  child: Text(
+                                    item.$5!,
+                                    style: TextStyle(
+                                      color: item.$3,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         Icon(Icons.chevron_right_rounded, color: c.muted),

@@ -297,33 +297,60 @@ class TeamLogoWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // When a real logo exists, render it cleanly with a transparent
-    // background — no colored circle, border, or glow behind it. Only the
-    // initials fallback gets the premium gradient circle treatment.
-    if (_hasLogo) {
-      return SizedBox(
-        width: size,
-        height: size,
-        child: logoUrl!.startsWith('http')
-            ? Image.network(
-                logoUrl!,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return _teamLoading(context);
-                },
-                errorBuilder: (_, __, ___) => _fallbackCircle(context),
-              )
-            : Image.asset(
-                logoUrl!,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => _fallbackCircle(context),
-              ),
-      );
-    }
-    return _fallbackCircle(context);
+    final c = context.cric;
+    // Team logo priority: local rounded flag asset (by name/abbr) → provided
+    // logo url/asset → neutral initials. The rounded flag is always preferred
+    // so country logos are circular and consistent everywhere.
+    final flag = roundedFlagAsset(name: teamName, shortName: abbreviation);
+    final resolved = flag ?? (_hasLogo ? logoUrl : null);
+    if (resolved == null) return _fallbackCircle(context);
+
+    final isFlag = flag != null;
+    final isAsset = !resolved.startsWith('http');
+    final fit = isFlag ? BoxFit.cover : BoxFit.contain;
+    final image = isAsset
+        ? Image.asset(
+            resolved,
+            fit: fit,
+            errorBuilder: (_, __, ___) => _fallbackCircle(context),
+          )
+        : Image.network(
+            resolved,
+            fit: fit,
+            gaplessPlayback: true,
+            webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+            loadingBuilder: (context, child, progress) {
+              if (progress == null) return child;
+              return _teamLoading(context);
+            },
+            errorBuilder: (_, __, ___) => _fallbackCircle(context),
+          );
+
+    final border = borderColor ?? c.cyan.withValues(alpha: .42);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xff0b2138),
+        border: Border.all(color: border, width: size < 32 ? 1.3 : 2),
+        boxShadow: size >= 40
+            ? [
+                BoxShadow(
+                  color: c.cyan.withValues(alpha: .16),
+                  blurRadius: 14,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
+      ),
+      child: ClipOval(
+        child: Padding(
+          padding: EdgeInsets.all(isFlag ? 0 : size * 0.12),
+          child: image,
+        ),
+      ),
+    );
   }
 
   bool get _hasLogo => logoUrl != null && logoUrl!.trim().isNotEmpty;

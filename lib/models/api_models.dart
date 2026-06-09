@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 String apiString(dynamic value, [String fallback = '']) {
   if (value == null) return fallback;
@@ -90,21 +90,20 @@ double? apiDouble(dynamic value) {
 
 DateTime? apiDate(dynamic value) => DateTime.tryParse(value?.toString() ?? '');
 
-Map<String, dynamic> apiMap(dynamic value) =>
-    value is Map<String, dynamic>
-        ? value
-        : value is String
-            ? () {
-                try {
-                  final decoded = jsonDecode(value);
-                  return decoded is Map<String, dynamic>
-                      ? decoded
-                      : <String, dynamic>{};
-                } catch (_) {
-                  return <String, dynamic>{};
-                }
-              }()
-            : <String, dynamic>{};
+Map<String, dynamic> apiMap(dynamic value) => value is Map<String, dynamic>
+    ? value
+    : value is String
+        ? () {
+            try {
+              final decoded = jsonDecode(value);
+              return decoded is Map<String, dynamic>
+                  ? decoded
+                  : <String, dynamic>{};
+            } catch (_) {
+              return <String, dynamic>{};
+            }
+          }()
+        : <String, dynamic>{};
 
 List<dynamic> apiList(dynamic value) {
   if (value is List) return value;
@@ -235,6 +234,9 @@ String? resolveKnownTeamLogoUrl({
   dynamic name,
   dynamic shortName,
 }) {
+  final flag = roundedFlagAsset(id: id, name: name, shortName: shortName);
+  if (flag != null) return flag;
+
   for (final raw in [apiString(id), apiString(shortName), apiString(name)]) {
     final key = _normalizeTeamKey(raw);
     if (key.isEmpty) continue;
@@ -248,11 +250,54 @@ String? resolveKnownTeamLogoUrl({
   return null;
 }
 
+String? roundedFlagAsset({dynamic name, dynamic shortName, dynamic id}) {
+  for (final raw in [apiString(shortName), apiString(name), apiString(id)]) {
+    for (final key in _flagCandidateKeys(raw)) {
+      final asset = kRoundedFlagAssets[key];
+      if (asset != null) return asset;
+    }
+  }
+  return null;
+}
+
+/// Produces candidate flag keys for a raw team name/code, stripping qualifier
+/// suffixes so women / A / U19 / Emerging sides resolve to their base country
+/// flag.
+List<String> _flagCandidateKeys(String raw) {
+  final norm = _normalizeTeamKey(raw);
+  if (norm.isEmpty) return const [];
+  final out = <String>[norm];
+  void add(String k) {
+    if (k.isNotEmpty && !out.contains(k)) out.add(k);
+  }
+
+  const dropTokens = {
+    'WOMEN', 'WOMENS', 'WMN', 'WOMAN', 'W',
+    'U19', 'U23', 'U16', 'U14', 'U17', 'U15', 'U21', 'U25',
+    'A', 'B', 'C', 'XI', 'II', 'III',
+    'EMERGING', 'ACADEMY', 'DEVELOPMENT', 'DEV', 'LIONS',
+    'PRESIDENTS', 'GOVERNORS', 'INVITATIONAL', 'SELECT',
+    'MASTERS', 'LEGENDS', 'NATIONAL', 'TEAM', //
+  };
+  final tokens = norm.split(' ').where((t) => t.isNotEmpty).toList();
+  final base = [...tokens];
+  while (base.length > 1 && dropTokens.contains(base.last)) {
+    base.removeLast();
+  }
+  if (base.length != tokens.length) add(base.join(' '));
+
+  if (tokens.length == 1) {
+    final t = tokens.first;
+    if (t.length >= 3) {
+      if (t.endsWith('W')) add(t.substring(0, t.length - 1));
+      if (t.endsWith('A')) add(t.substring(0, t.length - 1));
+    }
+  }
+  return out;
+}
+
 String _normalizeTeamKey(String value) {
-  return value
-      .trim()
-      .toUpperCase()
-      .replaceAll(RegExp(r'[^A-Z0-9]+'), ' ');
+  return value.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), ' ');
 }
 
 const Map<String, String> _knownTeamImageIds = {
@@ -301,6 +346,41 @@ const Map<String, String> _knownTeamLogoAssets = {
   '6': 'assets/images/team_ban.png',
   'BAN': 'assets/images/team_ban.png',
   'BANGLADESH': 'assets/images/team_ban.png',
+};
+
+const Map<String, String> kRoundedFlagAssets = {
+  'AFG': 'assets/flags/rounded/afghanistan.png',
+  'AFGHANISTAN': 'assets/flags/rounded/afghanistan.png',
+  'AUS': 'assets/flags/rounded/australia.png',
+  'AUSTRALIA': 'assets/flags/rounded/australia.png',
+  'BAN': 'assets/flags/rounded/bangladesh.png',
+  'BANGLADESH': 'assets/flags/rounded/bangladesh.png',
+  'ENG': 'assets/flags/rounded/england.png',
+  'ENGLAND': 'assets/flags/rounded/england.png',
+  'IND': 'assets/flags/rounded/india.png',
+  'INDIA': 'assets/flags/rounded/india.png',
+  'IRE': 'assets/flags/rounded/ireland.png',
+  'IRELAND': 'assets/flags/rounded/ireland.png',
+  'NED': 'assets/flags/rounded/netherlands.png',
+  'NETHERLANDS': 'assets/flags/rounded/netherlands.png',
+  'NZ': 'assets/flags/rounded/new_zealand.png',
+  'NEW ZEALAND': 'assets/flags/rounded/new_zealand.png',
+  'PAK': 'assets/flags/rounded/pakistan.png',
+  'PAKISTAN': 'assets/flags/rounded/pakistan.png',
+  'SA': 'assets/flags/rounded/south_africa.png',
+  'RSA': 'assets/flags/rounded/south_africa.png',
+  'SOUTH AFRICA': 'assets/flags/rounded/south_africa.png',
+  'SL': 'assets/flags/rounded/sri_lanka.png',
+  'SRI LANKA': 'assets/flags/rounded/sri_lanka.png',
+  'UAE': 'assets/flags/rounded/uae.png',
+  'UNITED ARAB EMIRATES': 'assets/flags/rounded/uae.png',
+  'USA': 'assets/flags/rounded/united_states.png',
+  'UNITED STATES': 'assets/flags/rounded/united_states.png',
+  'WI': 'assets/flags/rounded/west_indies.png',
+  'WEST INDIES': 'assets/flags/rounded/west_indies.png',
+  'WINDIES': 'assets/flags/rounded/west_indies.png',
+  'ZIM': 'assets/flags/rounded/zimbabwe.png',
+  'ZIMBABWE': 'assets/flags/rounded/zimbabwe.png',
 };
 
 /// Normalizes cricket overs format.
@@ -649,12 +729,14 @@ class StreamSource {
           json['requires_login'] == 1,
       priority: apiInt(json['priority']),
       status: json['status']?.toString(),
-      backupUrl: apiString(
-              json['backupUrl'] ?? json['backup_url'] ?? json['backup_stream_url'])
-          .isEmpty
+      backupUrl: apiString(json['backupUrl'] ??
+                  json['backup_url'] ??
+                  json['backup_stream_url'])
+              .isEmpty
           ? null
-          : apiString(
-              json['backupUrl'] ?? json['backup_url'] ?? json['backup_stream_url']),
+          : apiString(json['backupUrl'] ??
+              json['backup_url'] ??
+              json['backup_stream_url']),
       headers: apiMap(json['headers'] ?? json['headers_json']),
       drm: apiMap(json['drm']),
     );
@@ -1065,7 +1147,8 @@ class AppConfig {
   bool get maintenanceMode =>
       _boolPath(['maintenanceMode']) || _boolPath(['app', 'maintenanceMode']);
   bool get forceUpdateEnabled =>
-      _boolPath(['forceUpdateEnabled']) || _boolPath(['app', 'forceUpdateEnabled']);
+      _boolPath(['forceUpdateEnabled']) ||
+      _boolPath(['app', 'forceUpdateEnabled']);
   bool get liveStreamingEnabled =>
       _boolPath(['enableLiveStreaming'], fallback: true) &&
       _boolPath(['features', 'liveStreamsEnabled'], fallback: true) &&
@@ -1076,7 +1159,9 @@ class AppConfig {
       _boolPath(['features', 'ads']) ||
       _boolPath(['ads', 'enabled']);
   String get defaultHomeTab =>
-      _stringPath(['defaultHomeTab']) ?? _stringPath(['app', 'defaultHomeTab']) ?? 'live';
+      _stringPath(['defaultHomeTab']) ??
+      _stringPath(['app', 'defaultHomeTab']) ??
+      'live';
   String get streamUnavailableMessage =>
       _stringPath(['streamUnavailableMessage']) ??
       _stringPath(['player', 'streamUnavailableMessage']) ??
@@ -1086,17 +1171,28 @@ class AppConfig {
       _stringPath(['player', 'defaultStreamQuality']) ??
       'AUTO';
   int get liveLineRefreshSeconds =>
-      _intPath(['liveLineRefreshSeconds']) ?? _intPath(['player', 'liveLineRefreshSeconds']) ?? 5;
+      _intPath(['liveLineRefreshSeconds']) ??
+      _intPath(['player', 'liveLineRefreshSeconds']) ??
+      5;
   int get liveScoreRefreshSeconds =>
-      _intPath(['liveScoreRefreshSeconds']) ?? _intPath(['player', 'liveScoreRefreshSeconds']) ?? 5;
+      _intPath(['liveScoreRefreshSeconds']) ??
+      _intPath(['player', 'liveScoreRefreshSeconds']) ??
+      5;
   int get scorecardRefreshSeconds =>
-      _intPath(['scorecardRefreshSeconds']) ?? _intPath(['player', 'scorecardRefreshSeconds']) ?? 30;
+      _intPath(['scorecardRefreshSeconds']) ??
+      _intPath(['player', 'scorecardRefreshSeconds']) ??
+      30;
   int get commentaryRefreshSeconds =>
-      _intPath(['commentaryRefreshSeconds']) ?? _intPath(['player', 'commentaryRefreshSeconds']) ?? 30;
+      _intPath(['commentaryRefreshSeconds']) ??
+      _intPath(['player', 'commentaryRefreshSeconds']) ??
+      30;
   int get oversRefreshSeconds =>
-      _intPath(['oversRefreshSeconds']) ?? _intPath(['player', 'oversRefreshSeconds']) ?? 20;
+      _intPath(['oversRefreshSeconds']) ??
+      _intPath(['player', 'oversRefreshSeconds']) ??
+      20;
   String? get oneSignalAppId =>
-      _stringPath(['notifications', 'oneSignalAppId']) ?? _stringPath(['oneSignalAppId']);
+      _stringPath(['notifications', 'oneSignalAppId']) ??
+      _stringPath(['oneSignalAppId']);
 
   bool _boolPath(List<String> path, {bool fallback = false}) {
     dynamic current = values;
@@ -1136,4 +1232,3 @@ class HomeConfig {
   factory HomeConfig.fromJson(dynamic value) =>
       HomeConfig(values: apiMap(value));
 }
-

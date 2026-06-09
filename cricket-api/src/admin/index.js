@@ -8,6 +8,7 @@ import settingsRoutes from './routes/settings.routes.js';
 import streamsRoutes from './routes/streams.routes.js';
 import extraRoutes from './routes/extra.routes.js';
 import dataControlRoutes from './routes/data-control.routes.js';
+import apiSecurityRoutes from './routes/api-security.routes.js';
 import { adminAuth, requirePermissions } from './auth.js';
 import { withAudit } from './audit.js';
 import { PERMISSIONS, ROLE_DEFINITIONS, ROLE_PERMISSIONS } from './rbac.js';
@@ -102,6 +103,7 @@ export default async function adminPanelRoutes(fastify) {
   await fastify.register(settingsRoutes, { prefix: '/admin/app-settings' });
   await fastify.register(homepageRoutes, { prefix: '/admin/home-config' });
   await fastify.register(dataControlRoutes, { prefix: '/admin/data-control' });
+  await fastify.register(apiSecurityRoutes, { prefix: '/admin/api-security' });
   await fastify.register(extraRoutes, { prefix: '/admin' });
 
   fastify.get('/admin/dashboard', { preHandler: [adminAuth, requirePermissions('dashboard.view')] }, async () => {

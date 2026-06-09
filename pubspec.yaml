@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.2.2
+  flutter_svg: ^2.0.10
   video_player: ^2.9.2
   google_mobile_ads: ^8.0.0
   onesignal_flutter: ^5.5.6
@@ -26,3 +27,26 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/images/schedule/
+    - assets/images/schedule/icons/
+    - assets/images/schedule/tournament_logos/
+    - assets/images/matches/
+    - assets/images/matches/icons/
+    - assets/images/matches/status/
+    - assets/images/matches/tournament_badges/
+    - assets/images/home/
+    - assets/images/match_details/
+    - assets/images/match_details/backgrounds/
+    - assets/images/match_details/overlays/
+    - assets/images/match_details/badges/
+    - assets/images/match_details/icons/
+    - assets/images/match_details/balls/
+    - assets/images/live_stream/backgrounds/
+    - assets/images/live_stream/overlays/
+    - assets/images/live_stream/icons/
+    - assets/images/series/
+    - assets/images/series/backgrounds/
+    - assets/images/series/effects/
+    - assets/images/series/venues/
+    - assets/images/series/placeholders/
+    - assets/flags/rounded/

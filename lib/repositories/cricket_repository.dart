@@ -66,6 +66,12 @@ class CricketRepository {
           () => _service.matchCommentary(matchId),
           forceRefresh: forceRefresh);
 
+  Future<ApiEnvelope<Map<String, dynamic>>> matchFullCommentary(String matchId,
+          {bool forceRefresh = false}) =>
+      _cached('match:$matchId:full-commentary', const Duration(seconds: 8),
+          () => _service.matchFullCommentary(matchId),
+          forceRefresh: forceRefresh);
+
   Future<ApiEnvelope<Map<String, dynamic>>> matchOvers(String matchId,
           {bool forceRefresh = false}) =>
       _cached('match:$matchId:overs', const Duration(seconds: 5),
@@ -242,7 +248,7 @@ class CricketRepository {
   /// squad data changes rarely once announced.
   Future<ApiEnvelope<Map<String, dynamic>>> seriesSquads(String seriesId,
           {bool forceRefresh = false}) =>
-      _cached('series:$seriesId:squads', const Duration(hours: 1),
+      _cached('series:$seriesId:squads:v2', const Duration(hours: 1),
           () => _service.seriesSquads(seriesId),
           forceRefresh: forceRefresh);
 

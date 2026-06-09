@@ -3,6 +3,21 @@ import providerManager from '../providers/provider-manager.js';
 import { cacheMiddleware } from '../middleware/cache.js';
 import logger from '../lib/logger.js';
 
+/**
+ * Computes the normalized series status: `ongoing`, `upcoming`, `completed`
+ * or `''` (unknown). Date-based completion (endDate in the past) takes
+ * precedence over the start-window heuristic so finished editions are never
+ * shown as Upcoming. A genuine live match always wins.
+ */
+export function computeSeriesStatus({ isLive, startMs, endMs, now, dayMs = 86400000 }) {
+  if (isLive) return 'ongoing';
+  if (endMs && endMs < now) return 'completed';
+  if (startMs && startMs > now) return 'upcoming';
+  if (startMs && endMs && startMs <= now && now <= endMs) return 'ongoing';
+  if (startMs && startMs <= now + dayMs && (!endMs || endMs >= now)) return 'ongoing';
+  return '';
+}
+
 export default async function seriesRoutes(fastify) {
   function normalizePointsTableResponse(seriesId, raw, seriesName = '') {
     const groups = Array.isArray(raw?.groups)
@@ -423,18 +438,18 @@ export default async function seriesRoutes(fastify) {
         if (a.name) name = a.name;
       }
 
-      let status = '';
-      if (liveSeries.has(sid)) {
-        status = 'ongoing';
-      } else if (startMs && endMs && startMs <= now && now <= endMs) {
-        status = 'ongoing';
-      } else if (startMs && startMs <= now + dayMs && (!endMs || endMs >= now)) {
-        status = 'ongoing';
-      } else if (startMs && startMs > now) {
-        status = 'upcoming';
-      } else if (endMs && endMs < now) {
-        status = 'completed';
-      }
+      // Normalized status precedence (same rules mirrored in the Flutter
+      // client): a genuine live match wins; otherwise an end date in the past
+      // means Completed (this is what fixes finished editions like IPL 2026
+      // being mislabelled Upcoming); a future start means Upcoming; a date
+      // window spanning now means Ongoing.
+      const status = computeSeriesStatus({
+        isLive: liveSeries.has(sid),
+        startMs,
+        endMs,
+        now,
+        dayMs,
+      });
 
       return {
         series_id: sid,
@@ -928,6 +943,18 @@ export default async function seriesRoutes(fastify) {
       || cricbuzzImageUrl(text(team.image_id || team.imageId));
   }
 
+  const supportStaffPattern = /\b(?:head\s+coach|assistant\s+coach|batting\s+coach|bowling\s+coach|fielding\s+coach|support\s+staff|team\s+manager|manager|physio|analyst|selector|mentor|coach)\b/i;
+
+  function isSupportStaffPlayer(player) {
+    const combined = [
+      player?.name,
+      player?.role,
+      player?.playerName,
+      player?.title,
+    ].map(text).join(' ');
+    return supportStaffPattern.test(combined);
+  }
+
   // Normalizes a squad team (from match squads) into the app-friendly shape
   // with face image URLs resolved by player id.
   function normalizeSquadTeam(squadTeam, matchTeam) {
@@ -936,7 +963,7 @@ export default async function seriesRoutes(fastify) {
       ...(Array.isArray(squadTeam.playing_xi) ? squadTeam.playing_xi : []),
       ...(Array.isArray(squadTeam.bench) ? squadTeam.bench : []),
     ];
-    const mapped = players.map((p) => {
+    const mapped = players.filter((p) => !isSupportStaffPlayer(p)).map((p) => {
       const playerId = text(p.player_id || p.playerId);
       // Only use a genuine Cricbuzz face image resolved at scrape time. We never
       // synthesise an image URL from the player id (that produced wrong faces),
@@ -969,11 +996,129 @@ export default async function seriesRoutes(fastify) {
     };
   }
 
-  // GET /series/:id/squads — real player squads (with face images) for the
-  // two teams in the series, sourced from the match squads page.
+  // Builds the new grouped squads payload from the Cricbuzz series-squads API.
+  // Returns { formats: [ { format, teams: [ { teamName, teamShortName,
+  // squadId, logoUrl, players[] } ] } ] } or null when nothing is available.
+  async function buildGroupedSeriesSquads(seriesId, seriesName) {
+    let groups = [];
+    try {
+      const res = await providerManager.execute('getSeriesSquadGroups', seriesId);
+      groups = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+    } catch (err) {
+      logger.warn({ msg: 'getSeriesSquadGroups failed', seriesId, error: err.message });
+    }
+    if (!groups.length) return null;
+
+    logger.info({
+      msg: '[Squads] discovered groups',
+      seriesId,
+      count: groups.length,
+      groups: groups.map((g) => ({
+        squadId: g.squadId,
+        format: g.format,
+        teamName: g.teamName,
+        teamId: g.teamId,
+      })),
+    });
+
+    // Resolve each squad group's players in parallel (best-effort). Each squad
+    // gets its OWN fresh players array — never shared by reference.
+    const resolved = await Promise.all(groups.map(async (g) => {
+      try {
+        const res = await providerManager.execute('getSeriesSquad', seriesId, g.squadId);
+        const squad = res?.data || res || {};
+        const players = Array.isArray(squad.players)
+            ? squad.players.map((p) => ({ ...p }))
+            : [];
+        logger.info({
+          msg: '[Squads] resolved squad',
+          seriesId,
+          squadId: g.squadId,
+          format: g.format,
+          teamName: g.teamName,
+          playerCount: players.length,
+          first5: players.slice(0, 5).map((p) => p.name),
+        });
+        return { group: g, players };
+      } catch (err) {
+        logger.warn({ msg: '[Squads] getSeriesSquad failed', seriesId, squadId: g.squadId, error: err.message });
+        return { group: g, players: [] };
+      }
+    }));
+
+    // Group by format, preserving discovery order.
+    const formatOrder = [];
+    const byFormat = new Map();
+    for (const { group, players } of resolved) {
+      const fmt = group.format || group.squadType || 'Squad';
+      if (!byFormat.has(fmt)) {
+        byFormat.set(fmt, []);
+        formatOrder.push(fmt);
+      }
+      const shortName = generateShortNameSafe(group.teamName);
+      byFormat.get(fmt).push({
+        teamId: group.teamId || '',
+        teamName: group.teamName || '',
+        teamShortName: shortName,
+        squadId: group.squadId || '',
+        logoUrl: group.imageId ? cricbuzzImageUrl(group.imageId) : '',
+        players,
+        playerCount: players.length,
+      });
+    }
+
+    const formats = formatOrder.map((format) => ({
+      format,
+      teams: byFormat.get(format),
+    }));
+
+    // Flat team list (for legacy clients only). Deduped by team identity,
+    // keeping the squad with the most players. Never merges player arrays.
+    const flatByTeam = new Map();
+    for (const f of formats) {
+      for (const t of f.teams) {
+        const key = (t.teamId || t.teamName || t.teamShortName || t.squadId)
+            .toString()
+            .toLowerCase();
+        const existing = flatByTeam.get(key);
+        if (!existing || t.players.length > existing.players.length) {
+          flatByTeam.set(key, t);
+        }
+      }
+    }
+
+    return {
+      seriesId: String(seriesId),
+      seriesName: seriesName || '',
+      formats,
+      teams: [...flatByTeam.values()],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  function generateShortNameSafe(name = '') {
+    const n = text(name);
+    if (!n) return '';
+    // Known multi-word countries → conventional abbreviations.
+    const map = {
+      'south africa': 'SA', 'new zealand': 'NZ', 'sri lanka': 'SL',
+      'west indies': 'WI', 'united states': 'USA', 'united arab emirates': 'UAE',
+      'papua new guinea': 'PNG', 'hong kong': 'HK',
+    };
+    const key = n.toLowerCase();
+    if (map[key]) return map[key];
+    const words = n.split(/\s+/).filter(Boolean);
+    if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+    return words.map((w) => w[0]).join('').slice(0, 3).toUpperCase();
+  }
+
+  // GET /series/:id/squads — real player squads (with face images) for every
+  // team and format in the series, sourced from the Cricbuzz series-squads API.
+  // Falls back to deriving a single match's squad when the squad index is
+  // unavailable.
   fastify.get('/series/:id/squads', {
     schema: {
-      description: 'Get squads (players with face images) for the teams in a series',
+      description: 'Get grouped squads (per team per format) for a series',
       tags: ['Series'],
       params: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
     },
@@ -981,67 +1126,72 @@ export default async function seriesRoutes(fastify) {
     const { id } = request.params;
     try {
       const cached = await cacheGet(KEYS.seriesSquads(id));
-      if (cached?.teams?.some((t) => (t.players || []).length > 0)) {
+      if (cached?.formats?.some((f) => f.teams?.some((t) => (t.players || []).length > 0))) {
         reply.header('X-Cache', 'HIT');
         return { success: true, seriesId: id, ...cached, data: cached, fromCache: true };
       }
 
-      const series = await fetchSeriesMatches(id);
+      const series = await fetchSeriesMatches(id).catch(() => ({ seriesName: '', matches: [] }));
+
+      // Primary: grouped series squads (multi-format, both teams, full squads).
+      const grouped = await buildGroupedSeriesSquads(id, series.seriesName);
+      if (grouped && grouped.formats.some((f) => f.teams.some((t) => t.players.length > 0))) {
+        await cacheSet(KEYS.seriesSquads(id), grouped, TTL.SQUADS);
+        reply.header('X-Cache', 'MISS');
+        return { success: true, ...grouped, data: grouped, fromCache: false, message: null };
+      }
+
+      // Fallback: derive from a representative match's squad page.
+      logger.warn({
+        msg: '[Squads] grouped squads empty — using match-squad fallback',
+        seriesId: id,
+      });
       const matches = series.matches || [];
       const squadMatch = pickSquadMatch(matches);
-
-      if (!squadMatch) {
-        return {
-          success: true,
-          seriesId: id,
-          seriesName: series.seriesName || '',
-          teams: [],
-          data: { teams: [] },
-          message: 'Squads are not available for this series yet.',
-        };
+      if (squadMatch) {
+        const matchId = text(squadMatch.match_id || squadMatch.matchId);
+        const squadResult = await providerManager.execute('getMatchSquads', matchId).catch(() => null);
+        const squad = squadResult?.data || null;
+        const teams = [];
+        const t1 = normalizeSquadTeam(squad?.team1, squadMatch.team1);
+        const t2 = normalizeSquadTeam(squad?.team2, squadMatch.team2);
+        if (t1 && t1.players.length) teams.push(t1);
+        if (t2 && t2.players.length) teams.push(t2);
+        if (teams.some((t) => t.players.length > 0)) {
+          const payload = {
+            seriesId: id,
+            seriesName: series.seriesName || '',
+            sourceMatchId: matchId,
+            formats: [{ format: '', teams }],
+            teams,
+            updatedAt: new Date().toISOString(),
+          };
+          await cacheSet(KEYS.seriesSquads(id), payload, TTL.SQUADS);
+          reply.header('X-Cache', 'MISS');
+          return { success: true, ...payload, data: payload, fromCache: false, message: null };
+        }
       }
 
-      const matchId = text(squadMatch.match_id || squadMatch.matchId);
-      const squadResult = await providerManager.execute('getMatchSquads', matchId).catch(() => null);
-      const squad = squadResult?.data || null;
-
-      const teams = [];
-      const t1 = normalizeSquadTeam(squad?.team1, squadMatch.team1);
-      const t2 = normalizeSquadTeam(squad?.team2, squadMatch.team2);
-      if (t1 && t1.players.length) teams.push(t1);
-      if (t2 && t2.players.length) teams.push(t2);
-
-      const payload = {
-        seriesId: id,
-        seriesName: series.seriesName || '',
-        sourceMatchId: matchId,
-        teams,
-        updatedAt: new Date().toISOString(),
-      };
-
-      if (teams.some((t) => t.players.length > 0)) {
-        await cacheSet(KEYS.seriesSquads(id), payload, TTL.SQUADS);
-      }
-
-      reply.header('X-Cache', 'MISS');
       return {
         success: true,
-        ...payload,
-        data: payload,
-        fromCache: false,
-        message: teams.length === 0
-          ? 'Squads have not been announced for this series yet.'
-          : null,
+        seriesId: id,
+        seriesName: series.seriesName || '',
+        formats: [],
+        teams: [],
+        data: { formats: [], teams: [] },
+        message: 'Squads have not been announced for this series yet.',
       };
     } catch (err) {
       logger.warn({ msg: 'Failed to fetch series squads', seriesId: id, error: err.message });
       return {
         success: true,
         seriesId: id,
+        formats: [],
         teams: [],
-        data: { teams: [] },
+        data: { formats: [], teams: [] },
         message: 'Squads are not available for this series yet.',
       };
     }
   });
 }
+

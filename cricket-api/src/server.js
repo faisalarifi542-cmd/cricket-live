@@ -15,7 +15,11 @@ import { shutdownDb } from './lib/db.js';
 import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
 import { cacheOnSend } from './middleware/cache.js';
-import { apiKeyAuth } from './middleware/auth.js';
+import {
+  apiSecurityMiddleware,
+  apiSecurityResponseLog,
+  corsOriginDelegate,
+} from './lib/api-security.js';
 import {
   sqlInjectionProtection,
   xssProtection,
@@ -52,10 +56,23 @@ async function buildServer() {
   // ====================================================
   // Plugins
   // ====================================================
+  // CORS is dynamic: allowed origins come from the Admin Panel
+  // (api_allowed_origins) plus the configured admin panel origin and localhost
+  // in development. Requests without an Origin header (mobile apps / servers)
+  // are allowed here and validated via X-API-Key in apiSecurityMiddleware.
   await fastify.register(cors, {
-    origin: config.cors.origin === '*' ? true : config.cors.origin.split(','),
+    origin: corsOriginDelegate,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', config.auth.apiKeyHeader],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      config.auth.apiKeyHeader,
+      'X-Client-Type',
+      'X-App-Version',
+      'X-Package-Name',
+      'X-Bundle-Id',
+      'X-Device-Id',
+    ],
     credentials: true,
   });
 
@@ -68,6 +85,12 @@ async function buildServer() {
       maxAge: 31536000,
       includeSubDomains: true,
     },
+  });
+
+  // Strip the framework fingerprint header if any plugin sets it.
+  fastify.addHook('onSend', async (request, reply, payload) => {
+    reply.removeHeader('x-powered-by');
+    return payload;
   });
 
   await fastify.register(rateLimit, {
@@ -180,9 +203,15 @@ async function buildServer() {
   });
 
   // ====================================================
-  // API Key auth for API routes (optional — public access allowed)
+  // API access security for all incoming requests.
+  // Enforces endpoint rules, blocklist, origin, API key, client type, and
+  // rate limits (controlled from the Admin Panel). Does NOT affect outbound
+  // provider calls. Admin routes still self-enforce JWT/RBAC.
   // ====================================================
-  fastify.addHook('preHandler', apiKeyAuth);
+  fastify.addHook('preHandler', apiSecurityMiddleware);
+
+  // Write a request log (no secrets) after each response.
+  fastify.addHook('onResponse', apiSecurityResponseLog);
 
   // ====================================================
   // Routes

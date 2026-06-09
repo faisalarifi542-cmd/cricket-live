@@ -406,6 +406,37 @@ class AdConfig {
       apiInt(frequency['minimum_seconds_between_app_open_ads']) ??
       120;
 
+  /// Cross-resume cooldown for app-open ads. Defaults to 240 minutes (4 hours)
+  /// per AdMob best practice — app-open must not spam on every foreground.
+  /// Admin can override via `app_open_min_interval_minutes` (or the
+  /// `app_open.minIntervalMinutes` placement value surfaced into frequency).
+  int get appOpenMinIntervalMinutes {
+    final value = apiInt(frequency['appOpenMinIntervalMinutes']) ??
+        apiInt(frequency['app_open_min_interval_minutes']);
+    if (value != null && value > 0) return value;
+    return 240;
+  }
+
+  /// Effective minimum seconds between two app-open ads. This is the LARGER of
+  /// the legacy seconds field and the 4-hour (default) minute-based cooldown,
+  /// so the strict cooldown always wins.
+  int get effectiveAppOpenIntervalSeconds {
+    final minutesAsSeconds = appOpenMinIntervalMinutes * 60;
+    return minutesAsSeconds > minimumAppOpenSeconds
+        ? minutesAsSeconds
+        : minimumAppOpenSeconds;
+  }
+
+  /// The app must have actually been in the background at least this long
+  /// before an app-open ad may show on resume. Guards against notification
+  /// shade / quick-settings / app-switcher quick resumes. Default 30s.
+  int get appOpenMinBackgroundSeconds {
+    final value = apiInt(frequency['appOpenMinBackgroundSeconds']) ??
+        apiInt(frequency['app_open_min_background_seconds']);
+    if (value != null && value >= 0) return value;
+    return 30;
+  }
+
   int get maxAppOpenPerSession =>
       apiInt(frequency['maxAppOpenAdsPerSession']) ??
       apiInt(frequency['max_app_open_ads_per_session']) ??
@@ -531,6 +562,37 @@ class AdConfig {
     if (!preRollAllowFallback) return StreamPreRollAdType.none;
     if (canShowInterstitial) return StreamPreRollAdType.interstitial;
     return StreamPreRollAdType.none;
+  }
+
+  /// Resolves the pre-roll ad to show when the user taps **Watch Live**,
+  /// independent of any specific stream's premium flag.
+  ///
+  /// Unlike [resolveStreamPreRoll], this does NOT silently drop the ad based on
+  /// the free/premium pre-roll switches — those switches gate the per-stream
+  /// reward unlock inside the player, not the Watch Live entry ad. Here we
+  /// simply honor the admin-selected pre-roll TYPE as long as that format is
+  /// globally enabled. This is what makes "AdMob primary + pre-roll
+  /// interstitial enabled" actually show an interstitial on Watch Live for a
+  /// normal stream.
+  StreamPreRollAdType resolveWatchLivePreRoll() {
+    if (!enabled) return StreamPreRollAdType.none;
+    switch (streamPreRollAdType) {
+      case StreamPreRollAdType.none:
+        return StreamPreRollAdType.none;
+      case StreamPreRollAdType.interstitial:
+        if (canShowInterstitial) return StreamPreRollAdType.interstitial;
+        return _preRollFallback();
+      case StreamPreRollAdType.rewardedVideo:
+        if (canShowRewardedForPremium && rewardedVideoForLivePlayer) {
+          return StreamPreRollAdType.rewardedVideo;
+        }
+        return _preRollFallback();
+      case StreamPreRollAdType.rewardedInterstitial:
+        if (canShowRewardedForPremium && rewardedInterstitialForLivePlayer) {
+          return StreamPreRollAdType.rewardedInterstitial;
+        }
+        return _preRollFallback();
+    }
   }
 
   bool _placementBool(AdPlacement placement, String key, bool fallback) {

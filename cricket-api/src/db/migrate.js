@@ -1,6 +1,13 @@
+import crypto from 'node:crypto';
 import { getPool } from '../lib/db.js';
 import config from '../config/index.js';
 import logger from '../lib/logger.js';
+
+// Default public app API key. Shared with the Flutter client via the
+// APP_PUBLIC_API_KEY env (same fallback string baked into the app config so the
+// app keeps working out of the box). Override in production from the Admin Panel
+// by issuing a fresh client and regenerating this one.
+const DEFAULT_APP_API_KEY = process.env.APP_PUBLIC_API_KEY || 'csk_live_cricpro_app_8f3a2b1c9d';
 
 const TABLES = [
   // ====================================================
@@ -715,6 +722,120 @@ const TABLES = [
     INDEX idx_manual_enabled (is_enabled, status),
     INDEX idx_manual_external (match_external_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // API SECURITY — API CLIENTS (apps / websites / servers)
+  // Raw API keys are NEVER stored; only a SHA-256 hash + short prefix.
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS api_clients (
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    name                  VARCHAR(200) NOT NULL,
+    client_type           VARCHAR(20) DEFAULT 'app',
+    api_key_hash          VARCHAR(128) UNIQUE NOT NULL,
+    api_key_prefix        VARCHAR(24) NOT NULL,
+    secret_hash           VARCHAR(128),
+    allowed_origins       JSON,
+    allowed_domains       JSON,
+    allowed_package_names JSON,
+    allowed_bundle_ids    JSON,
+    scopes                JSON,
+    rate_limit_per_minute INT DEFAULT 120,
+    rate_limit_per_hour   INT DEFAULT 5000,
+    rate_limit_per_day    INT DEFAULT 100000,
+    status                VARCHAR(20) DEFAULT 'active',
+    expires_at            DATETIME,
+    last_used_at          DATETIME,
+    created_by            INT,
+    notes                 TEXT,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_api_clients_hash (api_key_hash),
+    INDEX idx_api_clients_status (status),
+    INDEX idx_api_clients_type (client_type)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // API SECURITY — ALLOWED ORIGINS / DOMAINS (drives CORS)
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS api_allowed_origins (
+    id                      INT AUTO_INCREMENT PRIMARY KEY,
+    origin                  VARCHAR(255),
+    domain                  VARCHAR(255),
+    status                  VARCHAR(20) DEFAULT 'active',
+    allowed_endpoint_groups JSON,
+    rate_limit_per_minute   INT DEFAULT 120,
+    notes                   TEXT,
+    created_at              DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_allowed_origin (origin),
+    INDEX idx_allowed_domain (domain),
+    INDEX idx_allowed_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // API SECURITY — ENDPOINT ACCESS RULES (per endpoint group)
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS api_endpoint_rules (
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    group_name            VARCHAR(80) UNIQUE NOT NULL,
+    path_pattern          VARCHAR(255),
+    methods               JSON,
+    enabled               TINYINT(1) DEFAULT 1,
+    auth_required         VARCHAR(20) DEFAULT 'api_key',
+    allowed_client_types  JSON,
+    rate_limit_per_minute INT DEFAULT 120,
+    rate_limit_per_hour   INT DEFAULT 5000,
+    cache_ttl_seconds     INT DEFAULT 0,
+    logging_enabled       TINYINT(1) DEFAULT 1,
+    notes                 TEXT,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_endpoint_group (group_name)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // API SECURITY — BLOCKLIST
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS api_blocklist (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    type        VARCHAR(20) NOT NULL,
+    value       VARCHAR(255) NOT NULL,
+    reason      TEXT,
+    enabled     TINYINT(1) DEFAULT 1,
+    expires_at  DATETIME,
+    created_by  INT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_blocklist_type (type, enabled),
+    INDEX idx_blocklist_value (value)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // API SECURITY — REQUEST LOGS (trimmed by retention setting)
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS api_request_logs (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    method          VARCHAR(10),
+    path            VARCHAR(400),
+    endpoint_group  VARCHAR(80),
+    status_code     INT,
+    ip              VARCHAR(64),
+    origin          VARCHAR(255),
+    referer         VARCHAR(400),
+    user_agent      VARCHAR(400),
+    api_client_id   INT,
+    api_key_prefix  VARCHAR(24),
+    allowed         TINYINT(1) DEFAULT 1,
+    blocked_reason  VARCHAR(80),
+    response_time_ms INT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_req_logs_created (created_at),
+    INDEX idx_req_logs_allowed (allowed),
+    INDEX idx_req_logs_client (api_client_id),
+    INDEX idx_req_logs_group (endpoint_group),
+    INDEX idx_req_logs_ip (ip),
+    INDEX idx_req_logs_status (status_code)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 async function migrate() {
@@ -728,6 +849,7 @@ async function migrate() {
     }
 
     await applyCompatibilityMigrations(pool);
+    await seedApiSecurityDefaults(pool);
 
     logger.info(`Database migration completed successfully (${TABLES.length} tables)`);
   } catch (err) {
@@ -839,6 +961,120 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'cache_events', 'duration_ms', 'duration_ms INT NULL');
   await addColumnIfMissing(pool, 'cache_events', 'error_message', 'error_message TEXT NULL');
   await addColumnIfMissing(pool, 'cache_events', 'details', 'details JSON NULL');
+
+  // ----------------------------------------------------------------
+  // Featured Series — manual entries managed from the Admin Panel.
+  // The cricket provider does not expose a "featured series" feed, so
+  // operators add these by hand with a poster, name, date range and
+  // location. These columns are additive and backward compatible: rows
+  // that only carry a provider series_external_id keep working.
+  // ----------------------------------------------------------------
+  await addColumnIfMissing(pool, 'featured_series', 'title', 'title VARCHAR(220) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'subtitle', 'subtitle VARCHAR(220) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'date_range', 'date_range VARCHAR(140) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'location', 'location VARCHAR(180) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'image_url', 'image_url TEXT NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'cta_label', 'cta_label VARCHAR(80) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'cta_url', 'cta_url TEXT NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'starts_at', 'starts_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'ends_at', 'ends_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  // Allow purely-manual series that have no provider id.
+  await pool
+    .execute('ALTER TABLE `featured_series` MODIFY COLUMN `series_external_id` VARCHAR(80) NULL')
+    .catch(() => null);
+
+  // Featured Matches — allow an optional manual label/note already exists;
+  // add updated_at for parity with the admin list ordering.
+  await addColumnIfMissing(pool, 'featured_matches', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+}
+
+// ====================================================
+// Seed safe API-security defaults (idempotent).
+//   - endpoint group rules
+//   - allowed origins (admin panel + dev localhost)
+//   - a default CricPro Android client (so the app keeps working)
+// Uses INSERT ... ON DUPLICATE / existence checks so re-running is safe and
+// never overwrites operator edits made from the Admin Panel.
+// ====================================================
+async function seedApiSecurityDefaults(pool) {
+  // ----- Endpoint rules -----
+  const endpointRules = [
+    { group: 'health', pattern: '/health', auth: 'none', types: ['android', 'ios', 'web', 'server', 'admin'], rpm: 120, ttl: 0 },
+    { group: 'app_config', pattern: '/app/config', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'matches', pattern: '/matches', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 240, ttl: 0 },
+    { group: 'match_details', pattern: '/match', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 240, ttl: 0 },
+    { group: 'commentary', pattern: '/match/:id/commentary', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 300, ttl: 0 },
+    { group: 'scorecard', pattern: '/match/:id/scorecard', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 240, ttl: 0 },
+    { group: 'series', pattern: '/series', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'players', pattern: '/player', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'teams', pattern: '/team', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'streams', pattern: '/match/:id/streams', auth: 'api_key', types: ['android', 'ios', 'web'], rpm: 120, ttl: 0 },
+    { group: 'news', pattern: '/news', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'rankings', pattern: '/rankings', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'schedule', pattern: '/schedule', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
+    { group: 'notifications_device_register', pattern: '/app/device', auth: 'api_key', types: ['android', 'ios', 'web'], rpm: 60, ttl: 0 },
+    { group: 'admin', pattern: '/admin', auth: 'admin_jwt', types: ['admin'], rpm: 600, ttl: 0 },
+  ];
+  for (const r of endpointRules) {
+    await pool.execute(
+      `INSERT INTO api_endpoint_rules
+         (group_name, path_pattern, methods, enabled, auth_required, allowed_client_types, rate_limit_per_minute, cache_ttl_seconds, logging_enabled)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE path_pattern = path_pattern`,
+      [r.group, r.pattern, JSON.stringify(['GET', 'POST', 'PUT', 'DELETE']), r.auth, JSON.stringify(r.types), r.rpm, r.ttl],
+    ).catch((err) => logger.warn(`seed endpoint rule ${r.group} failed: ${err.message}`));
+  }
+
+  // ----- Allowed origins (admin panel + dev) -----
+  const adminOrigin = process.env.ADMIN_PANEL_ORIGIN || 'https://admin.webcrichd.co';
+  const seedOrigins = [
+    { origin: adminOrigin, domain: null, notes: 'Admin panel (auto-seeded)' },
+  ];
+  if (config.isDev) {
+    seedOrigins.push(
+      { origin: 'http://localhost:3000', domain: 'localhost', notes: 'Dev admin panel' },
+      { origin: 'http://localhost:5173', domain: 'localhost', notes: 'Dev web' },
+    );
+  }
+  for (const o of seedOrigins) {
+    const [existing] = await pool.execute(
+      `SELECT id FROM api_allowed_origins WHERE origin = ? LIMIT 1`,
+      [o.origin],
+    );
+    if (existing.length) continue;
+    await pool.execute(
+      `INSERT INTO api_allowed_origins (origin, domain, status, allowed_endpoint_groups, rate_limit_per_minute, notes)
+       VALUES (?, ?, 'active', NULL, 240, ?)`,
+      [o.origin, o.domain, o.notes],
+    ).catch((err) => logger.warn(`seed origin ${o.origin} failed: ${err.message}`));
+  }
+
+  // ----- Default CricPro Android client -----
+  const keyHash = crypto.createHash('sha256').update(DEFAULT_APP_API_KEY).digest('hex');
+  const [client] = await pool.execute(
+    `SELECT id FROM api_clients WHERE api_key_hash = ? LIMIT 1`,
+    [keyHash],
+  );
+  if (!client.length) {
+    await pool.execute(
+      `INSERT INTO api_clients
+         (name, client_type, api_key_hash, api_key_prefix, allowed_origins, allowed_domains,
+          allowed_package_names, allowed_bundle_ids, scopes, rate_limit_per_minute, rate_limit_per_hour,
+          rate_limit_per_day, status, notes)
+       VALUES (?, 'android', ?, ?, NULL, NULL, ?, ?, ?, 240, 8000, 200000, 'active', ?)`,
+      [
+        'CricPro Android (default)',
+        keyHash,
+        DEFAULT_APP_API_KEY.slice(0, 12),
+        JSON.stringify(['com.example.cricpro_flutter', 'com.cricpro.app']),
+        JSON.stringify(['com.cricpro.app']),
+        JSON.stringify(['matches', 'match_details', 'commentary', 'scorecard', 'series', 'players', 'teams', 'streams', 'news', 'rankings', 'schedule', 'app_config', 'notifications_device_register']),
+        'Auto-seeded default app client. Regenerate from Admin Panel for production.',
+      ],
+    ).catch((err) => logger.warn(`seed default client failed: ${err.message}`));
+    logger.info('Seeded default CricPro Android API client');
+  }
 }
 
 migrate().catch((err) => {

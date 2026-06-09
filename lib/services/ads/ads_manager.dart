@@ -3,11 +3,15 @@ import 'package:flutter/foundation.dart';
 import 'package:cricpro_flutter/models/ad_config.dart';
 import 'package:cricpro_flutter/services/ads/ad_adapter.dart';
 import 'package:cricpro_flutter/services/ads/admob_adapter.dart';
+import 'package:cricpro_flutter/services/ads/consent_manager.dart';
 import 'package:cricpro_flutter/services/ads/meta_adapter.dart';
 import 'package:cricpro_flutter/services/ads/unity_adapter.dart';
 
 /// Outcome of a stream pre-roll ad attempt.
 enum StreamAdResult { allowed, failed }
+
+/// What triggered an app-open ad attempt. Used for logging and policy gating.
+enum AppOpenTrigger { coldStart, resume }
 
 /// Central, adapter-based ads coordinator.
 ///
@@ -45,7 +49,23 @@ class AdsManager {
   /// app-open ads must NOT show. Live player sets/clears this.
   bool _videoPlaying = false;
 
+  /// True while ANY full-screen ad (interstitial, rewarded, rewarded
+  /// interstitial, app open) is currently on screen. Prevents stacking a new
+  /// full-screen ad on top of another, and prevents the ad's own
+  /// pause/resume lifecycle from arming a second app-open ad.
+  bool _isShowingAd = false;
+
   AdConfig get config => _config;
+
+  /// Whether a full-screen ad is currently visible.
+  bool get isShowingAd => _isShowingAd;
+
+  /// When the last app-open ad was shown (null if none this process). Exposed
+  /// for APP_OPEN_DEBUG diagnostics.
+  DateTime? get lastAppOpenShownAt => _lastAppOpenAt;
+
+  /// How many app-open ads have shown this session. Exposed for diagnostics.
+  int get appOpensThisSession => _appOpensThisSession;
 
   set videoPlaying(bool value) {
     _videoPlaying = value;
@@ -66,6 +86,19 @@ class AdsManager {
   /// Records that a full-screen ad was shown (drives the cross-format cooldown).
   void _markFullScreenShown() {
     _lastFullScreenAt = DateTime.now();
+  }
+
+  /// Unconditional waterfall logging for Watch Live pre-roll diagnostics.
+  /// Visible in logcat / `flutter logs` on a real device.
+  void _waterfallLog(
+    String network,
+    String format,
+    String result, [
+    String reason = '',
+  ]) {
+    debugPrint('AD_WATERFALL: placement=live_player_preroll network=$network '
+        'format=$format result=$result'
+        '${reason.isEmpty ? '' : ' reason=$reason'}');
   }
 
   /// Initializes/refreshes ads from the latest [AdConfig]. Safe to call again
@@ -91,6 +124,13 @@ class AdsManager {
         'resume=${config.appOpenShowOnResume})',
       );
     }
+
+    // GDPR/UMP consent must be resolved BEFORE any ad SDK loads ads, so
+    // personalized ads are only requested when allowed. Fails open on error.
+    await ConsentManager.instance.gatherConsent(
+      consentRequired: config.consentRequired,
+      testMode: config.testMode,
+    );
 
     for (final network in config.orderedNetworks) {
       final adapter = _adapters[network]!;
@@ -191,6 +231,12 @@ class AdsManager {
   /// during launch or live video.
   Future<bool> maybeShowInterstitial({AdPlacement? placement}) async {
     if (kIsWeb || !_config.canShowInterstitial) return false;
+    if (_isShowingAd) {
+      if (kDebugMode) {
+        debugPrint('[Ads] interstitial blocked: another ad is already showing');
+      }
+      return false;
+    }
     if (_videoPlaying) {
       if (kDebugMode) debugPrint('[Ads] interstitial blocked: video playing');
       return false;
@@ -213,7 +259,13 @@ class AdsManager {
     }
     for (final adapter in _activeAdapters) {
       if (!await adapter.loadInterstitial()) continue;
-      final shown = await adapter.showInterstitial();
+      _isShowingAd = true;
+      bool shown;
+      try {
+        shown = await adapter.showInterstitial();
+      } finally {
+        _isShowingAd = false;
+      }
       if (shown) {
         _lastInterstitialAt = DateTime.now();
         _interstitialsThisSession += 1;
@@ -261,7 +313,13 @@ class AdsManager {
         debugPrint('[Ads] rewarded load start via ${adNetworkName(adapter.network)}');
       }
       if (!await adapter.loadRewarded()) continue;
-      final earned = await adapter.showRewarded();
+      _isShowingAd = true;
+      bool earned;
+      try {
+        earned = await adapter.showRewarded();
+      } finally {
+        _isShowingAd = false;
+      }
       if (kDebugMode) {
         debugPrint('[Ads] rewarded earned=$earned via ${adNetworkName(adapter.network)}');
       }
@@ -309,13 +367,24 @@ class AdsManager {
   }
 
   Future<bool> _showStreamInterstitial() async {
+    var attempted = false;
     for (final adapter in _activeAdapters) {
-      if (!await adapter.loadInterstitial()) continue;
-      final shown = await adapter.showInterstitial();
-      if (kDebugMode) {
-        debugPrint('[Ads] pre-roll interstitial shown=$shown via '
-            '${adNetworkName(adapter.network)}');
+      attempted = true;
+      final net = adNetworkName(adapter.network);
+      if (!await adapter.loadInterstitial()) {
+        _waterfallLog(net, 'interstitial', 'failed', 'no-fill/load failed');
+        continue;
       }
+      _waterfallLog(net, 'interstitial', 'loaded');
+      _isShowingAd = true;
+      bool shown;
+      try {
+        shown = await adapter.showInterstitial();
+      } finally {
+        _isShowingAd = false;
+      }
+      _waterfallLog(net, 'interstitial', shown ? 'shown' : 'failed',
+          shown ? '' : 'show failed');
       if (shown) {
         _lastInterstitialAt = DateTime.now();
         _interstitialsThisSession += 1;
@@ -323,38 +392,60 @@ class AdsManager {
         return true;
       }
     }
-    if (kDebugMode) debugPrint('[Ads] pre-roll interstitial no-fill');
+    if (!attempted) {
+      _waterfallLog('none', 'interstitial', 'skipped', 'no active networks');
+    }
     return false;
   }
 
   Future<bool> _showStreamRewarded({required bool rewardedInterstitial}) async {
+    final format = rewardedInterstitial ? 'rewarded_interstitial' : 'rewarded';
+    var attempted = false;
     for (final adapter in _activeAdapters) {
+      attempted = true;
+      final net = adNetworkName(adapter.network);
       if (rewardedInterstitial) {
-        if (!await adapter.loadRewardedInterstitial()) continue;
-        final earned = await adapter.showRewardedInterstitial();
-        if (kDebugMode) {
-          debugPrint('[Ads] pre-roll rewarded-interstitial earned=$earned via '
-              '${adNetworkName(adapter.network)}');
+        if (!await adapter.loadRewardedInterstitial()) {
+          _waterfallLog(net, format, 'failed', 'no-fill/load failed');
+          continue;
         }
+        _waterfallLog(net, format, 'loaded');
+        _isShowingAd = true;
+        bool earned;
+        try {
+          earned = await adapter.showRewardedInterstitial();
+        } finally {
+          _isShowingAd = false;
+        }
+        _waterfallLog(net, format, earned ? 'shown' : 'failed',
+            'rewardEarned=$earned');
         if (earned) {
           _markFullScreenShown();
           return true;
         }
       } else {
-        if (!await adapter.loadRewarded()) continue;
-        final earned = await adapter.showRewarded();
-        if (kDebugMode) {
-          debugPrint('[Ads] pre-roll rewarded earned=$earned via '
-              '${adNetworkName(adapter.network)}');
+        if (!await adapter.loadRewarded()) {
+          _waterfallLog(net, format, 'failed', 'no-fill/load failed');
+          continue;
         }
+        _waterfallLog(net, format, 'loaded');
+        _isShowingAd = true;
+        bool earned;
+        try {
+          earned = await adapter.showRewarded();
+        } finally {
+          _isShowingAd = false;
+        }
+        _waterfallLog(net, format, earned ? 'shown' : 'failed',
+            'rewardEarned=$earned');
         if (earned) {
           _markFullScreenShown();
           return true;
         }
       }
     }
-    if (kDebugMode) {
-      debugPrint('[Ads] pre-roll rewarded unavailable across all networks');
+    if (!attempted) {
+      _waterfallLog('none', format, 'skipped', 'no active networks');
     }
     return false;
   }
@@ -364,7 +455,7 @@ class AdsManager {
     final last = _lastAppOpenAt;
     if (last == null) return true;
     return DateTime.now().difference(last).inSeconds >=
-        _config.minimumAppOpenSeconds;
+        _config.effectiveAppOpenIntervalSeconds;
   }
 
   Future<void> preloadAppOpen() async {
@@ -375,10 +466,21 @@ class AdsManager {
   }
 
   /// Shows an app open ad if enabled, not during video, and within frequency
-  /// caps. Returns true if shown. Safe to call on cold start and resume — the
-  /// caller decides which based on config.
-  Future<bool> maybeShowAppOpen() async {
+  /// caps. Returns true if shown.
+  ///
+  /// The lifecycle decision (cold start vs real foreground, background
+  /// duration, notification-shade quick resume) is made by
+  /// [AppOpenAdManager] — this method only enforces ads-policy guards: global
+  /// toggle, video playback, "already showing an ad", cross-format cooldown,
+  /// and the 4-hour (default) app-open frequency cap.
+  Future<bool> maybeShowAppOpen({AppOpenTrigger? trigger}) async {
     if (kIsWeb || !_config.appOpenAllowed) return false;
+    if (_isShowingAd) {
+      if (kDebugMode) {
+        debugPrint('[Ads] app-open blocked: another ad is already showing');
+      }
+      return false;
+    }
     if (_videoPlaying) {
       if (kDebugMode) debugPrint('[Ads] app-open blocked: video playing');
       return false;
@@ -391,18 +493,29 @@ class AdsManager {
       return false;
     }
     if (!_appOpenAllowedByFrequency) {
-      if (kDebugMode) debugPrint('[Ads] app-open blocked by frequency cap');
+      if (kDebugMode) {
+        debugPrint('[Ads] app-open blocked by frequency cap '
+            '(min interval ${_config.appOpenMinIntervalMinutes}m, '
+            'session $_appOpensThisSession/${_config.maxAppOpenPerSession})');
+      }
       return false;
     }
     for (final adapter in _activeAdapters) {
       if (!await adapter.loadAppOpen()) continue;
-      final shown = await adapter.showAppOpen();
+      _isShowingAd = true;
+      bool shown;
+      try {
+        shown = await adapter.showAppOpen();
+      } finally {
+        _isShowingAd = false;
+      }
       if (shown) {
         _lastAppOpenAt = DateTime.now();
         _appOpensThisSession += 1;
         _markFullScreenShown();
         if (kDebugMode) {
-          debugPrint('[Ads] app-open shown by ${adNetworkName(adapter.network)}');
+          debugPrint('[Ads] app-open shown by ${adNetworkName(adapter.network)} '
+              '(trigger=${trigger?.name ?? 'manual'})');
         }
         return true;
       }

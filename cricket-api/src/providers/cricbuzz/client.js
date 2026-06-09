@@ -850,7 +850,136 @@ export const cricbuzzApi = {
       return { teams: [] };
     }
   },
+
+  // --- Series Squads (real, multi-format) ---------------------------------
+  // Discovers the squad groups (one per team per format) for a series by
+  // parsing the embedded JSON on the Cricbuzz series squads page. Each group
+  // carries a squadId we can then resolve via the series-squads JSON API.
+  async getSeriesSquadGroups(seriesId) {
+    const slug = await resolveSeriesSlug(seriesId);
+    const paths = [
+      slug ? `/cricket-series/${seriesId}/${slug}/squads` : null,
+      `/cricket-series/${seriesId}/squads`,
+    ].filter(Boolean);
+
+    for (const p of paths) {
+      try {
+        const html = await request(htmlClient, p, { responseType: 'text' });
+        const groups = parseSeriesSquadGroupsFromHtml(html);
+        if (groups.length) return groups;
+      } catch (err) {
+        logger.debug({ msg: 'Series squad groups scrape failed', seriesId, path: p, error: err.message });
+      }
+    }
+    return [];
+  },
+
+  // Fetches one squad group's full player list from the series-squads JSON API.
+  async getSeriesSquad(seriesId, squadId) {
+    return request(apiClient, `/cricket-series/series-squads/${seriesId}/${squadId}`);
+  },
 };
+
+// Resolves the URL slug for a series (e.g. "afghanistan-tour-of-india-2026")
+// from its name, used to build the canonical squads page path.
+async function resolveSeriesSlug(seriesId) {
+  try {
+    const info = await cricbuzzApi.getSeriesInfo(seriesId).catch(() => null);
+    return buildSeriesSlugFromTitle(info?.seriesName || info?.series_name || '');
+  } catch {
+    return '';
+  }
+}
+
+// Parses the `"squads":[ ... ]` block embedded in the Cricbuzz Next.js squads
+// page. The array interleaves format headers ({squadType, isHeader:true}) with
+// squad entries ({squadId, squadType, teamId, imageId}). We attach the most
+// recent header format to each entry and derive a clean team name.
+function parseSeriesSquadGroupsFromHtml(html = '') {
+  // The squads array is embedded in the Next.js flight payload as JS-escaped
+  // JSON (\"squads\":[ ... ]). Unescape the whole payload first so the marker
+  // and the JSON parse both work on clean text.
+  const text = String(html || '').replace(/\\"/g, '"');
+  const marker = '"squads":[';
+  const start = text.indexOf(marker);
+  if (start === -1) return [];
+
+  // Walk from the opening bracket to its matching close, respecting strings.
+  const arrStart = start + marker.length - 1;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let end = -1;
+  for (let i = arrStart; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end === -1) return [];
+
+  const raw = text.slice(arrStart, end + 1);
+
+  let list;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+
+  const groups = [];
+  let currentFormat = '';
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry.isHeader) {
+      currentFormat = String(entry.squadType || '').trim();
+      continue;
+    }
+    const squadId = String(entry.squadId || '');
+    if (!squadId) continue;
+    const squadType = String(entry.squadType || '').trim();
+    groups.push({
+      squadId,
+      teamId: String(entry.teamId || ''),
+      imageId: String(entry.imageId || ''),
+      format: currentFormat,
+      squadType,
+      teamName: deriveTeamNameFromSquadType(squadType, currentFormat),
+    });
+  }
+  return groups;
+}
+
+// "India One-off Test Squad" + format "Test" -> "India".
+// Strips the format words and the trailing "Squad" so we get a clean team name.
+function deriveTeamNameFromSquadType(squadType = '', format = '') {
+  let name = String(squadType || '');
+  // Remove trailing "Squad"
+  name = name.replace(/\bsquad\b/gi, ' ');
+  // Remove format descriptors.
+  name = name.replace(/\bone-?off\b/gi, ' ')
+    .replace(/\btest\b/gi, ' ')
+    .replace(/\bodis?\b/gi, ' ')
+    .replace(/\bt20is?\b/gi, ' ')
+    .replace(/\bt20\b/gi, ' ')
+    .replace(/\bt10\b/gi, ' ')
+    .replace(/\bwomen'?s?\b/gi, ' Women ')
+    .replace(/\b(\d+)(st|nd|rd|th)?\b/gi, ' ');
+  name = name.replace(/\s+/g, ' ').trim();
+  return name || String(squadType || '').replace(format, '').trim();
+}
+
+
 
 function decodeNextPayloadText(html = '') {
   return String(html)
@@ -2514,6 +2643,7 @@ const TEAM_NAME_BY_SHORT = {
 };
 
 const PLAYER_ROLE_PATTERN = /(WK-Batter|Wicket Keeper|Keeper|Batter|Bowler|Batting Allrounder|Bowling Allrounder|Allrounder|All-Rounder|WK)/ig;
+const SUPPORT_STAFF_PATTERN = /\b(?:head\s+coach|assistant\s+coach|batting\s+coach|bowling\s+coach|fielding\s+coach|support\s+staff|team\s+manager|manager|physio|analyst|selector|mentor|coach)\b/i;
 
 function extractSquadTeamsFromTitle(html, pageTitle) {
   const title = decodeHtmlEntities(pageTitle || '');
@@ -2548,10 +2678,16 @@ function cleanSquadPlayerName(rawName = '') {
   let name = cleanText(rawName);
   name = name
     .replace(/\((?:c|C|wk|WK|w\.k\.|C\s*&\s*WK|WK\s*&\s*C)\)/g, ' ')
+    .replace(SUPPORT_STAFF_PATTERN, ' ')
     .replace(PLAYER_ROLE_PATTERN, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return name;
+}
+
+function isSupportStaffSquadEntry(rawName = '', playerName = '', role = '', context = '') {
+  const combined = cleanText(`${rawName} ${playerName} ${role} ${context}`);
+  return SUPPORT_STAFF_PATTERN.test(combined);
 }
 
 function cleanSquadRole(context = '', rawName = '') {
@@ -2680,7 +2816,7 @@ function parseMatchSquadsFromHtml_OLD(html, matchId) {
     const rawPlayerName = nameHtml.replace(/<[^>]+>/g, '').trim();
     const playerName = cleanSquadPlayerName(rawPlayerName);
     
-    if (playerName && playerName.length > 2 && !/^(coach|support staff|mentor)$/i.test(playerName)) {
+    if (playerName && playerName.length > 2) {
       const contextStart = Math.max(0, playerMatch.index - 200);
       const contextEnd = Math.min(html.length, playerMatch.index + 300);
       const context = html.slice(contextStart, contextEnd);
@@ -2690,6 +2826,9 @@ function parseMatchSquadsFromHtml_OLD(html, matchId) {
       const section = lastSectionMatch ? lastSectionMatch[1].toLowerCase() : 'unknown';
       
       const role = cleanSquadRole(context, rawPlayerName) || extractPlayerRole(context);
+      if (isSupportStaffSquadEntry(rawPlayerName, playerName, role, context)) {
+        continue;
+      }
       // Captain/keeper badges live inside the player's own anchor markup, so we
       // detect them from that player's text only (rawPlayerName) instead of a
       // wide character window, which would bleed badges from neighbouring cards.
@@ -3177,7 +3316,7 @@ function parseMatchSquadsFromHtml_FIXED(html, matchId) {
     const rawPlayerName = nameHtml.replace(/<[^>]+>/g, '').trim();
     const playerName = cleanSquadPlayerName(rawPlayerName);
     
-    if (playerName && playerName.length > 2 && !/^(coach|support staff|mentor)$/i.test(playerName)) {
+    if (playerName && playerName.length > 2) {
       const contextStart = Math.max(0, playerMatch.index - 200);
       const contextEnd = Math.min(html.length, playerMatch.index + 300);
       const context = html.slice(contextStart, contextEnd);
@@ -3187,6 +3326,9 @@ function parseMatchSquadsFromHtml_FIXED(html, matchId) {
       const section = lastSectionMatch ? lastSectionMatch[1].toLowerCase() : 'unknown';
       
       const role = cleanSquadRole(context, rawPlayerName) || extractPlayerRole(context);
+      if (isSupportStaffSquadEntry(rawPlayerName, playerName, role, context)) {
+        continue;
+      }
       // Captain/keeper badges live inside the player's own anchor markup, so we
       // detect them from that player's text only (rawPlayerName) instead of a
       // wide character window, which would bleed badges from neighbouring cards.
