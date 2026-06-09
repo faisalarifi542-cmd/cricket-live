@@ -15,6 +15,7 @@ import { shutdownDb } from './lib/db.js';
 import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
 import { cacheOnSend } from './middleware/cache.js';
+import { enrichTeamLogos } from './lib/team-logos.js';
 import {
   apiSecurityMiddleware,
   apiSecurityResponseLog,
@@ -212,6 +213,26 @@ async function buildServer() {
 
   // Write a request log (no secrets) after each response.
   fastify.addHook('onResponse', apiSecurityResponseLog);
+
+  // ====================================================
+  // Admin-managed team logos.
+  // A single preSerialization hook injects the Admin-Panel uploaded logo into
+  // every team object of every public response (Home, Matches, Schedule,
+  // Series, Series details, Match details, Scorecard, Squads, Live, ...), so
+  // the app is admin-logo dependent everywhere with the provider logo as the
+  // automatic fallback. Admin/internal responses are skipped.
+  // ====================================================
+  fastify.addHook('preSerialization', async (request, reply, payload) => {
+    const url = request.raw?.url || request.url || '';
+    if (url.startsWith('/admin') || url.startsWith('/uploads') || url.startsWith('/docs')) {
+      return payload;
+    }
+    try {
+      return await enrichTeamLogos(payload);
+    } catch {
+      return payload;
+    }
+  });
 
   // ====================================================
   // Routes

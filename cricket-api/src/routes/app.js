@@ -14,6 +14,8 @@ import {
   mergeManualMatches,
 } from '../lib/manual-matches.js';
 import { loadHomeLayout } from '../lib/home-layout.js';
+import { resolveUploadFile } from '../lib/uploads.js';
+import fs from 'node:fs';
 
 /** Best-effort external id for a raw provider match object. */
 function rawMatchId(m) {
@@ -100,6 +102,19 @@ async function streamSummary(matchId, config = null) {
 }
 
 export default async function appRoutes(fastify) {
+  // Public, unauthenticated static serving for admin-uploaded images. The
+  // Flutter app loads these via Image.network (no API key), so this route is
+  // treated as public (see resolveEndpointGroup → 'health').
+  fastify.get('/uploads/:file', async (request, reply) => {
+    const resolved = resolveUploadFile(request.params.file);
+    if (!resolved) {
+      return reply.code(404).send({ success: false, error: 'Not found' });
+    }
+    reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+    reply.type(resolved.contentType);
+    return reply.send(fs.createReadStream(resolved.full));
+  });
+
   fastify.get('/app/config', async (_request, reply) => {
     const config = await buildPublicAppConfig();
     return sendAppResponse(reply, appResponse(config, { provider: 'admin' }));
@@ -258,6 +273,51 @@ export default async function appRoutes(fastify) {
       },
     });
     return sendAppResponse(reply, appResponse(result.data, result.meta));
+  });
+
+  // Admin-managed Series hero banner. Returns the first active featured_series
+  // entry as a clean hero DTO (title/subtitle/format/date, background image and
+  // the two flanking teams with server logo URLs). The Flutter Series screen
+  // renders this when present and only falls back to deriving a hero from the
+  // live series list when no admin hero is configured. Public (no API key) so
+  // it follows the same access posture as /app/home.
+  fastify.get('/app/series-hero', async (request, reply) => {
+    const rows = await query(
+      `SELECT * FROM featured_series WHERE is_active = 1 ORDER BY sort_order ASC, id ASC LIMIT 1`,
+    ).catch(() => []);
+    const row = rows[0] || null;
+    const proto = request.headers['x-forwarded-proto'] || request.protocol || 'https';
+    const host = request.headers['x-forwarded-host'] || request.headers.host;
+    const abs = (u) => {
+      const v = String(u || '').trim();
+      if (!v) return null;
+      if (/^https?:\/\//i.test(v)) return v;
+      return host ? `${proto}://${host}${v.startsWith('/') ? '' : '/'}${v}` : v;
+    };
+    const hero = row
+      ? {
+          id: row.id,
+          seriesId: String(row.series_external_id || '').trim(),
+          title: row.title || '',
+          subtitle: row.subtitle || '',
+          formatText: row.format_text || '',
+          dateRange: row.date_range || '',
+          location: row.location || '',
+          backgroundImage: abs(row.image_url),
+          ctaLabel: row.cta_label || 'View Series',
+          teamA: {
+            name: row.team_a_name || '',
+            shortName: row.team_a_short || '',
+            logoUrl: abs(row.team_a_logo),
+          },
+          teamB: {
+            name: row.team_b_name || '',
+            shortName: row.team_b_short || '',
+            logoUrl: abs(row.team_b_logo),
+          },
+        }
+      : null;
+    return sendAppResponse(reply, appResponse(hero, { provider: 'admin' }));
   });
 
   fastify.get('/app/match/:id', async (request, reply) => {

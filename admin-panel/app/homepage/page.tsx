@@ -1,8 +1,8 @@
 ﻿'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { AdminShell } from '@/components/layout/AdminShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs } from '@/components/ui/Tabs';
@@ -40,6 +40,14 @@ type FeaturedSeries = {
   cta_url?: string | null;
   sort_order?: number;
   is_active?: number | boolean;
+  // Series hero banner fields (power the app's premium Series screen hero).
+  format_text?: string | null;
+  team_a_name?: string | null;
+  team_a_short?: string | null;
+  team_a_logo?: string | null;
+  team_b_name?: string | null;
+  team_b_short?: string | null;
+  team_b_logo?: string | null;
 };
 type Banner = {
   id: number;
@@ -529,6 +537,7 @@ function FeaturedSeriesForm({
   const isEdit = !!initial?.id;
   const [form, setForm] = useState({
     title: '',
+    subtitle: '',
     series_external_id: '',
     date_range: '',
     location: '',
@@ -536,14 +545,25 @@ function FeaturedSeriesForm({
     cta_url: '',
     sort_order: 100,
     is_active: true,
+    format_text: '',
+    team_a_name: '',
+    team_a_short: '',
+    team_a_logo: '',
+    team_b_name: '',
+    team_b_short: '',
+    team_b_logo: '',
   });
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadingFlag, setUploadingFlag] = useState<'a' | 'b' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Re-seed when the modal opens for a different row.
   useEffect(() => {
     if (open) {
       setForm({
         title: initial?.title ?? '',
+        subtitle: initial?.subtitle ?? '',
         series_external_id: initial?.series_external_id ?? '',
         date_range: initial?.date_range ?? '',
         location: initial?.location ?? '',
@@ -551,12 +571,67 @@ function FeaturedSeriesForm({
         cta_url: initial?.cta_url ?? '',
         sort_order: initial?.sort_order ?? 100,
         is_active: initial?.is_active != null ? Boolean(initial.is_active) : true,
+        format_text: initial?.format_text ?? '',
+        team_a_name: initial?.team_a_name ?? '',
+        team_a_short: initial?.team_a_short ?? '',
+        team_a_logo: initial?.team_a_logo ?? '',
+        team_b_name: initial?.team_b_name ?? '',
+        team_b_short: initial?.team_b_short ?? '',
+        team_b_logo: initial?.team_b_logo ?? '',
       });
     }
   }, [open, initial]);
 
   function update<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm((p) => ({ ...p, [k]: v }));
+  }
+
+  async function handleUpload(file: File) {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await homeApi.uploadImage(dataUrl, file.type);
+      update('image_url', res.url);
+      toast.success('Image uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  // Uploads a team flag and stores its public URL on the matching team field.
+  async function handleFlagUpload(side: 'a' | 'b', file: File) {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+    setUploadingFlag(side);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await homeApi.uploadImage(dataUrl, file.type);
+      update(side === 'a' ? 'team_a_logo' : 'team_b_logo', res.url);
+      toast.success('Flag uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploadingFlag(null);
+    }
   }
 
   async function submit() {
@@ -568,6 +643,7 @@ function FeaturedSeriesForm({
     try {
       const body = {
         title: form.title.trim() || null,
+        subtitle: form.subtitle.trim() || null,
         series_external_id: form.series_external_id.trim() || null,
         date_range: form.date_range.trim() || null,
         location: form.location.trim() || null,
@@ -575,6 +651,13 @@ function FeaturedSeriesForm({
         cta_url: form.cta_url.trim() || null,
         sort_order: form.sort_order,
         is_active: form.is_active,
+        format_text: form.format_text.trim() || null,
+        team_a_name: form.team_a_name.trim() || null,
+        team_a_short: form.team_a_short.trim() || null,
+        team_a_logo: form.team_a_logo.trim() || null,
+        team_b_name: form.team_b_name.trim() || null,
+        team_b_short: form.team_b_short.trim() || null,
+        team_b_logo: form.team_b_logo.trim() || null,
       };
       if (isEdit && initial?.id) {
         await homeApi.updateFeaturedSeries(initial.id, body);
@@ -619,8 +702,69 @@ function FeaturedSeriesForm({
         <Field label="Series ID (optional, for deep link)">
           <Input value={form.series_external_id} onChange={(e) => update('series_external_id', e.target.value)} placeholder="e.g. 9237" />
         </Field>
-        <Field label="Poster image URL" className="md:col-span-2">
-          <Input value={form.image_url} onChange={(e) => update('image_url', e.target.value)} placeholder="https://…/poster.png" />
+        <Field label="Subtitle (small text above title)">
+          <Input value={form.subtitle} onChange={(e) => update('subtitle', e.target.value)} placeholder="Afghanistan tour of" />
+        </Field>
+        <Field label="Format summary">
+          <Input value={form.format_text} onChange={(e) => update('format_text', e.target.value)} placeholder="3 T20Is • 3 ODIs • 2 Tests" />
+        </Field>
+
+        {/* ----- Hero teams (power the Series screen banner) ----- */}
+        <div className="md:col-span-2 mt-1 rounded-lg border border-line/60 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Hero teams</div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FlagTeamFields
+              title="Left team"
+              name={form.team_a_name}
+              short={form.team_a_short}
+              logo={form.team_a_logo}
+              uploading={uploadingFlag === 'a'}
+              onName={(v) => update('team_a_name', v)}
+              onShort={(v) => update('team_a_short', v)}
+              onLogo={(v) => update('team_a_logo', v)}
+              onUpload={(f) => handleFlagUpload('a', f)}
+            />
+            <FlagTeamFields
+              title="Right team"
+              name={form.team_b_name}
+              short={form.team_b_short}
+              logo={form.team_b_logo}
+              uploading={uploadingFlag === 'b'}
+              onName={(v) => update('team_b_name', v)}
+              onShort={(v) => update('team_b_short', v)}
+              onLogo={(v) => update('team_b_logo', v)}
+              onUpload={(f) => handleFlagUpload('b', f)}
+            />
+          </div>
+        </div>
+        <Field label="Poster / background image" className="md:col-span-2">
+          <div className="flex gap-2">
+            <Input
+              value={form.image_url}
+              onChange={(e) => update('image_url', e.target.value)}
+              placeholder="Paste an image link, or upload →"
+              className="flex-1"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleUpload(f);
+              }}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              icon={<Upload className="h-4 w-4" />}
+              loading={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload
+            </Button>
+          </div>
         </Field>
         <Field label="CTA URL (optional)">
           <Input value={form.cta_url} onChange={(e) => update('cta_url', e.target.value)} />
@@ -629,11 +773,34 @@ function FeaturedSeriesForm({
           <Input type="number" value={form.sort_order} onChange={(e) => update('sort_order', Number(e.target.value))} />
         </Field>
       </div>
-      {form.image_url ? (
+      {(form.image_url || form.title || form.team_a_short || form.team_b_short) ? (
         <div className="mt-4">
-          <div className="mb-1 text-xs text-slate-500">Preview</div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={form.image_url} alt="preview" className="h-24 w-44 rounded-lg object-cover bg-white/5 border border-line" />
+          <div className="mb-1 text-xs text-slate-500">Hero preview</div>
+          <div
+            className="relative h-28 w-full overflow-hidden rounded-xl border border-cyan-400/50 bg-[#071726]"
+            style={
+              form.image_url
+                ? { backgroundImage: `url(${form.image_url})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                : undefined
+            }
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-[#031126]/40 via-[#041731]/55 to-[#020b18]/75" />
+            <div className="absolute inset-0 flex items-center justify-between px-4">
+              <HeroPreviewTeam logo={form.team_a_logo} code={form.team_a_short || form.team_a_name} />
+              <div className="text-center">
+                {form.subtitle ? (
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-white/85">{form.subtitle}</div>
+                ) : null}
+                <div className="text-base font-extrabold uppercase text-cyan-300 drop-shadow">
+                  {form.title || 'Series title'}
+                </div>
+                {form.format_text ? (
+                  <div className="text-[10px] font-semibold text-white/85">{form.format_text}</div>
+                ) : null}
+              </div>
+              <HeroPreviewTeam logo={form.team_b_logo} code={form.team_b_short || form.team_b_name} />
+            </div>
+          </div>
         </div>
       ) : null}
       <div className="mt-3">
@@ -641,10 +808,92 @@ function FeaturedSeriesForm({
           checked={form.is_active}
           onChange={(v) => update('is_active', v)}
           label="Active"
-          description="Inactive series are hidden from the app home screen."
+          description="Inactive series are hidden from the app home screen and Series hero."
         />
       </div>
     </Modal>
+  );
+}
+
+function HeroPreviewTeam({ logo, code }: { logo: string; code: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-cyan-400/60 bg-[#0b2138]">
+        {logo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logo} alt={code} className="h-full w-full object-cover" />
+        ) : (
+          <span className="text-[10px] font-bold text-cyan-200">{(code || 'TBD').slice(0, 3).toUpperCase()}</span>
+        )}
+      </div>
+      <span className="text-[10px] font-bold uppercase text-white">{(code || 'TBD').toUpperCase()}</span>
+    </div>
+  );
+}
+
+function FlagTeamFields({
+  title,
+  name,
+  short,
+  logo,
+  uploading,
+  onName,
+  onShort,
+  onLogo,
+  onUpload,
+}: {
+  title: string;
+  name: string;
+  short: string;
+  logo: string;
+  uploading: boolean;
+  onName: (v: string) => void;
+  onShort: (v: string) => void;
+  onLogo: (v: string) => void;
+  onUpload: (file: File) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-cyan-400/50 bg-[#0b2138]">
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo} alt={short || name} className="h-full w-full object-cover" />
+          ) : (
+            <span className="text-[9px] font-bold text-cyan-200">{(short || 'TBD').slice(0, 3).toUpperCase()}</span>
+          )}
+        </div>
+        <span className="text-xs font-semibold text-slate-300">{title}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Name">
+          <Input value={name} onChange={(e) => onName(e.target.value)} placeholder="India" />
+        </Field>
+        <Field label="Short code">
+          <Input value={short} onChange={(e) => onShort(e.target.value)} placeholder="IND" />
+        </Field>
+      </div>
+      <Field label="Flag / logo URL">
+        <div className="flex gap-2">
+          <Input value={logo} onChange={(e) => onLogo(e.target.value)} placeholder="Paste URL or upload →" className="flex-1" />
+          <input
+            ref={ref}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(f);
+              if (ref.current) ref.current.value = '';
+            }}
+          />
+          <Button type="button" variant="secondary" icon={<Upload className="h-4 w-4" />} loading={uploading} onClick={() => ref.current?.click()}>
+            Upload
+          </Button>
+        </div>
+      </Field>
+    </div>
   );
 }
 

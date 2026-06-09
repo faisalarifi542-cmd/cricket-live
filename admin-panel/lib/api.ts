@@ -407,6 +407,12 @@ export const homeApi = {
       method: 'PUT',
       body: j(body),
     }),
+  // Upload an image as a base64 data URL; returns an absolute public URL.
+  uploadImage: (dataUrl: string, mimeType?: string) =>
+    adminFetch<{ success: true; url: string; relativeUrl: string; bytes: number }>(
+      '/admin/home-config/upload-image',
+      { method: 'POST', body: j({ dataUrl, mimeType }) },
+    ),
   listBanners: () =>
     adminFetch<{ success: true; data: any[] }>('/admin/home-config/banners'),
   createBanner: (body: Record<string, unknown>) =>
@@ -449,6 +455,31 @@ export const teamsApi = {
     adminFetch<{ success: true }>(`/admin/teams/${id}/cache-clear`, {
       method: 'POST',
     }),
+  // Persist a team logo (and optionally name/short/country). The app prefers
+  // this admin logo over the Cricbuzz source everywhere.
+  update: (id: string | number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/teams/${id}`, {
+      method: 'PUT',
+      body: j(body),
+    }),
+  create: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number }>('/admin/teams', {
+      method: 'POST',
+      body: j(body),
+    }),
+  delete: (id: string | number) =>
+    adminFetch<{ success: true }>(`/admin/teams/${id}`, { method: 'DELETE' }),
+  syncFromApi: () =>
+    adminFetch<{ success: true; candidates: number; inserted: number; updated: number }>(
+      '/admin/teams/sync-from-api',
+      { method: 'POST' },
+    ),
+  // Upload a team flag/logo as a base64 data URL; returns a public URL.
+  uploadFlag: (dataUrl: string, mimeType?: string) =>
+    adminFetch<{ success: true; url: string; relativeUrl: string; bytes: number }>(
+      '/admin/teams/upload-flag',
+      { method: 'POST', body: j({ dataUrl, mimeType }) },
+    ),
 };
 
 export const playersApi = {

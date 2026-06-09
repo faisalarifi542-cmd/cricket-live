@@ -2,9 +2,38 @@ import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import { loadHomeLayout, saveHomeLayout } from '../../lib/home-layout.js';
+import { saveBase64Image } from '../../lib/uploads.js';
  
 export default async function homepageRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
+
+  // ---------- Image upload (base64 JSON → saved file + public URL) ----------
+  // Used by the Featured Series form to upload a poster instead of pasting a
+  // link. Returns an absolute URL pointing at the public /uploads/:file route.
+  fastify.post(
+    '/upload-image',
+    { preHandler: [requirePermissions('home.write')], bodyLimit: 8 * 1024 * 1024 },
+    async (request, reply) => {
+      const body = request.body || {};
+      const data = body.dataUrl || body.data || body.image || '';
+      try {
+        const { relativeUrl, bytes } = saveBase64Image(data, body.mimeType || '');
+        const proto = request.headers['x-forwarded-proto'] || request.protocol || 'https';
+        const host = request.headers['x-forwarded-host'] || request.headers.host;
+        const url = host ? `${proto}://${host}${relativeUrl}` : relativeUrl;
+        await withAudit(
+          request,
+          { action: 'home.image.upload', entityType: 'upload', newValue: { url, bytes } },
+          async () => null,
+        );
+        return reply.code(201).send({ success: true, url, relativeUrl, bytes });
+      } catch (err) {
+        return reply
+          .code(err.statusCode || 500)
+          .send({ success: false, error: err.message || 'Upload failed' });
+      }
+    },
+  );
 
   // ---------- Global home layout (section toggles / order / sources) ----------
   fastify.get('/layout', { preHandler: [requirePermissions('home.view')] }, async () => {
@@ -92,6 +121,9 @@ export default async function homepageRoutes(fastify) {
     'series_external_id', 'title', 'subtitle', 'date_range', 'location',
     'image_url', 'cta_label', 'cta_url', 'sort_order', 'is_active', 'note',
     'starts_at', 'ends_at',
+    // Series hero banner fields.
+    'format_text', 'team_a_name', 'team_a_short', 'team_a_logo',
+    'team_b_name', 'team_b_short', 'team_b_logo',
   ];
 
   fastify.get('/featured-series', { preHandler: [requirePermissions('home.view')] }, async () => {
@@ -121,17 +153,36 @@ export default async function homepageRoutes(fastify) {
       note: body.note || null,
       starts_at: body.starts_at || null,
       ends_at: body.ends_at || null,
+      format_text: body.format_text || null,
+      team_a_name: body.team_a_name || null,
+      team_a_short: body.team_a_short || null,
+      team_a_logo: body.team_a_logo || null,
+      team_b_name: body.team_b_name || null,
+      team_b_short: body.team_b_short || null,
+      team_b_logo: body.team_b_logo || null,
       created_by: request.adminUser.id,
     };
     const keys = Object.keys(cols);
-    const r = await withAudit(
-      request,
-      { action: 'featured_series.create', entityType: 'featured_series', newValue: { title, externalId } },
-      async () => query(
-        `INSERT INTO featured_series (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`,
-        Object.values(cols),
-      ),
-    );
+    let r;
+    try {
+      r = await withAudit(
+        request,
+        { action: 'featured_series.create', entityType: 'featured_series', newValue: { title, externalId } },
+        async () => query(
+          `INSERT INTO featured_series (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`,
+          Object.values(cols),
+        ),
+      );
+    } catch (err) {
+      if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_DEFAULT_FOR_FIELD')) {
+        return reply.code(503).send({
+          success: false,
+          error: 'featured_series schema is out of date. Run the database migration (node src/db/migrate.js) to add/relax the required columns.',
+          detail: err.sqlMessage || String(err.message || err),
+        });
+      }
+      throw err;
+    }
     return reply.code(201).send({ success: true, id: r.insertId });
   });
 
@@ -144,11 +195,22 @@ export default async function homepageRoutes(fastify) {
     if ('is_active' in data) data.is_active = data.is_active ? 1 : 0;
     if (!Object.keys(data).length) return reply.code(400).send({ success: false, error: 'No fields' });
     const setClause = Object.keys(data).map((k) => `${k} = ?`).join(', ');
-    await withAudit(
-      request,
-      { action: 'featured_series.update', entityType: 'featured_series', entityId: id, oldValue: old[0], newValue: data },
-      async () => query(`UPDATE featured_series SET ${setClause} WHERE id = ?`, [...Object.values(data), id]),
-    );
+    try {
+      await withAudit(
+        request,
+        { action: 'featured_series.update', entityType: 'featured_series', entityId: id, oldValue: old[0], newValue: data },
+        async () => query(`UPDATE featured_series SET ${setClause} WHERE id = ?`, [...Object.values(data), id]),
+      );
+    } catch (err) {
+      if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_DEFAULT_FOR_FIELD')) {
+        return reply.code(503).send({
+          success: false,
+          error: 'featured_series schema is out of date. Run the database migration (node src/db/migrate.js) to add/relax the required columns.',
+          detail: err.sqlMessage || String(err.message || err),
+        });
+      }
+      throw err;
+    }
     return { success: true };
   });
 

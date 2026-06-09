@@ -138,6 +138,72 @@ class SeriesTeamRef {
   final String? logoUrl;
 }
 
+/// Admin-managed Series hero banner, parsed from `GET /app/series-hero`.
+///
+/// Every field is optional so a partially-configured hero still renders
+/// cleanly. [hasContent] is used by the Series screen to decide whether to use
+/// the admin hero or fall back to a hero derived from the live series list.
+class SeriesHeroData {
+  const SeriesHeroData({
+    this.seriesId = '',
+    this.title = '',
+    this.subtitle = '',
+    this.formatText = '',
+    this.dateRange = '',
+    this.backgroundImage,
+    this.ctaLabel = 'View Series',
+    this.teamA,
+    this.teamB,
+  });
+
+  final String seriesId;
+  final String title;
+  final String subtitle;
+  final String formatText;
+  final String dateRange;
+  final String? backgroundImage;
+  final String ctaLabel;
+  final SeriesTeamRef? teamA;
+  final SeriesTeamRef? teamB;
+
+  bool get hasContent => title.trim().isNotEmpty || (teamA != null && teamB != null);
+
+  static SeriesTeamRef? _team(dynamic value) {
+    final map = apiMap(value);
+    final name = apiString(map['name'] ?? map['teamName'] ?? map['team_name']);
+    final short = apiString(
+        map['shortName'] ?? map['short_name'] ?? map['teamShortName']);
+    final logo = apiString(map['logoUrl'] ?? map['logo_url'] ?? map['logo']);
+    if (name.isEmpty && short.isEmpty && logo.isEmpty) return null;
+    return SeriesTeamRef(
+      name: name.isEmpty ? short : name,
+      shortName: short.isEmpty ? name : short,
+      logoUrl: logo.isEmpty ? null : logo,
+    );
+  }
+
+  static SeriesHeroData? fromJson(dynamic value) {
+    if (value == null) return null;
+    final map = apiMap(value);
+    if (map.isEmpty) return null;
+    final hero = SeriesHeroData(
+      seriesId: apiString(map['seriesId'] ?? map['series_id']),
+      title: cleanSeriesText(apiString(map['title'])),
+      subtitle: apiString(map['subtitle']),
+      formatText: apiString(map['formatText'] ?? map['format_text']),
+      dateRange: apiString(map['dateRange'] ?? map['date_range']),
+      backgroundImage: apiString(map['backgroundImage'] ?? map['image_url'])
+              .isEmpty
+          ? null
+          : apiString(map['backgroundImage'] ?? map['image_url']),
+      ctaLabel: apiString(map['ctaLabel'] ?? map['cta_label'], 'View Series'),
+      teamA: _team(map['teamA'] ?? map['team_a']),
+      teamB: _team(map['teamB'] ?? map['team_b']),
+    );
+    return hero.hasContent ? hero : null;
+  }
+}
+
 String cleanSeriesText(String value) {
   return value
       .replaceAll(r'\\', '')
@@ -374,6 +440,11 @@ class SeriesFilterPills extends StatelessWidget {
 // Premium Series card (used in the Series list)
 // ---------------------------------------------------------------------------
 
+/// Premium vertical Series card — matches the Matches-screen card visual
+/// language (stadium texture, cyan border + top glow, glowing VS centerpiece)
+/// in a stacked layout: status badge + date on top, centered title + format
+/// summary, the two teams flanking a glowing VS badge, then a full-width
+/// "View Series" action.
 class SeriesListCard extends StatelessWidget {
   const SeriesListCard({super.key, required this.series, required this.onTap});
 
@@ -383,10 +454,12 @@ class SeriesListCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final statusColor = switch (series.status) {
-      SeriesStatus.ongoing => c.live,
-      SeriesStatus.upcoming => c.cyan,
-      SeriesStatus.completed => c.success,
+    // Status colour mapping per the target: Ongoing = green, Upcoming = cyan,
+    // Completed = grey.
+    final (statusColor, isLive) = switch (series.status) {
+      SeriesStatus.ongoing => (c.success, true),
+      SeriesStatus.upcoming => (c.cyan, false),
+      SeriesStatus.completed => (c.muted, false),
     };
     final phone = context.w <= 430;
     final tight = context.w <= 360;
@@ -398,7 +471,8 @@ class SeriesListCard extends StatelessWidget {
     final dateLine = series.shortDateRange;
     final left = series.teams.isNotEmpty ? series.teams.first : null;
     final right = series.teams.length > 1 ? series.teams[1] : null;
-    final logoSize = phone ? 42.0 : 46.0;
+    final logoSize = tight ? 46.0 : (phone ? 52.0 : 56.0);
+    final codeSize = tight ? 14.0 : 15.5;
 
     return TapScale(
       onTap: onTap,
@@ -407,17 +481,17 @@ class SeriesListCard extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: c.cyan.withValues(alpha: .42), width: 1),
+          border: Border.all(color: c.cyan.withValues(alpha: .5), width: 1.1),
           boxShadow: [
             BoxShadow(
-              color: c.cyan.withValues(alpha: .1),
-              blurRadius: 18,
-              spreadRadius: -8,
+              color: c.cyan.withValues(alpha: .16),
+              blurRadius: 24,
+              spreadRadius: -6,
             ),
             BoxShadow(
-              color: Colors.black.withValues(alpha: .38),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
+              color: Colors.black.withValues(alpha: .42),
+              blurRadius: 20,
+              offset: const Offset(0, 12),
             ),
           ],
         ),
@@ -427,7 +501,11 @@ class SeriesListCard extends StatelessWidget {
               child: Image.asset(
                 SAsset.listCardBg,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                errorBuilder: (_, __, ___) => Image.asset(
+                  SAsset.homeStadiumBackdrop,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
               ),
             ),
             Positioned.fill(
@@ -445,104 +523,168 @@ class SeriesListCard extends StatelessWidget {
                 ),
               ),
             ),
-            const TopCyanHighlight(),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-              child: Row(
-                children: [
-                  PremiumTeamLogo(
-                    name: left?.name ?? series.cleanName,
-                    short: left?.shortName ?? '',
-                    logo: left?.logoUrl,
-                    size: logoSize,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          series.cleanName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: c.text,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 14,
-                            height: 1.14,
-                          ),
-                        ),
-                        if (formatLine.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            formatLine,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: .8),
-                              fontWeight: FontWeight.w700,
-                              fontSize: 11.5,
-                            ),
-                          ),
-                        ],
-                        if (dateLine.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(Icons.calendar_today_rounded,
-                                  color: c.cyan, size: 11),
-                              const SizedBox(width: 5),
-                              Flexible(
-                                child: Text(
-                                  dateLine,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: .7),
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                        const SizedBox(height: 7),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 5,
-                          children: [
-                            SeriesStatusPill(
-                              label: series.statusLabel,
-                              color: statusColor,
-                              live: series.status == SeriesStatus.ongoing,
-                              dense: true,
-                            ),
-                            SeriesOutlineChip(label: series.categoryLabel),
-                          ],
-                        ),
+            // Subtle cyan bloom centred on the VS for extra premium depth.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(0, .35),
+                      radius: .85,
+                      colors: [
+                        c.cyan.withValues(alpha: .1),
+                        Colors.transparent,
                       ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  PremiumVsBadge(
-                    width: tight ? 38 : 42,
-                    height: tight ? 26 : 28,
-                    intensity: .85,
+                ),
+              ),
+            ),
+            const TopCyanHighlight(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Row 1 — status badge (left) and date range (right).
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      SeriesStatusPill(
+                        label: series.statusLabel,
+                        color: statusColor,
+                        live: isLive,
+                        dense: true,
+                      ),
+                      const Spacer(),
+                      if (dateLine.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            dateLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .72),
+                              fontWeight: FontWeight.w700,
+                              fontSize: tight ? 10.5 : 11.5,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  PremiumTeamLogo(
-                    name: right?.name ?? series.cleanName,
-                    short: right?.shortName ?? '',
-                    logo: right?.logoUrl,
-                    size: logoSize,
-                    accent: c.warning,
+                  const SizedBox(height: 10),
+                  // Centered series title.
+                  Text(
+                    series.cleanName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: c.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: tight ? 14.5 : 16,
+                      height: 1.12,
+                    ),
                   ),
-                  Icon(Icons.chevron_right_rounded,
-                      color: c.cyan, size: tight ? 18 : 20),
+                  if (formatLine.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      formatLine,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .82),
+                        fontWeight: FontWeight.w600,
+                        fontSize: tight ? 11.5 : 12.5,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  // Teams flanking the glowing VS centerpiece.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: PremiumTeamColumn(
+                          name: left?.name ?? 'TBD',
+                          short: left?.shortName ?? 'TBD',
+                          logo: left?.logoUrl,
+                          logoSize: logoSize,
+                          codeSize: codeSize,
+                          accent: c.cyan,
+                          showFullName: false,
+                        ),
+                      ),
+                      PremiumVsBadge(
+                        width: tight ? 46 : 52,
+                        height: tight ? 30 : 34,
+                        intensity: .9,
+                      ),
+                      Expanded(
+                        child: PremiumTeamColumn(
+                          name: right?.name ?? 'TBD',
+                          short: right?.shortName ?? 'TBD',
+                          logo: right?.logoUrl,
+                          logoSize: logoSize,
+                          codeSize: codeSize,
+                          accent: c.warning,
+                          showFullName: false,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Full-width "View Series" action.
+                  _ViewSeriesButton(onTap: onTap),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-width bordered "View Series" button — centered cyan label with a
+/// trailing chevron, matching the target and the Matches action-button glass
+/// language.
+class _ViewSeriesButton extends StatelessWidget {
+  const _ViewSeriesButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 40,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: c.cyan.withValues(alpha: .06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: c.cyan.withValues(alpha: .4)),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Text(
+              'View Series',
+              style: TextStyle(
+                color: c.cyan,
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+              ),
+            ),
+            Positioned(
+              right: 12,
+              child: Icon(Icons.chevron_right_rounded, color: c.cyan, size: 20),
             ),
           ],
         ),

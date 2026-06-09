@@ -298,16 +298,37 @@ class TeamLogoWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    // Team logo priority: local rounded flag asset (by name/abbr) → provided
-    // logo url/asset → neutral initials. The rounded flag is always preferred
-    // so country logos are circular and consistent everywhere.
+    // Team logo priority (server/admin-first, per CricPro design):
+    //   1. Server logo URL — the backend resolves this to the Admin-Panel
+    //      uploaded logo when one exists, otherwise the Cricbuzz source logo,
+    //      so any http(s) URL here is already "admin → cricbuzz" ordered.
+    //   2. Local rounded flag asset (by name/abbr) — only when no server logo.
+    //   3. Neutral initials.
     final flag = roundedFlagAsset(name: teamName, shortName: abbreviation);
-    final resolved = flag ?? (_hasLogo ? logoUrl : null);
+    final logo = _hasLogo ? logoUrl!.trim() : null;
+    final hasHttpLogo = logo != null &&
+        (logo.startsWith('http://') || logo.startsWith('https://'));
+
+    String? resolved;
+    if (hasHttpLogo) {
+      resolved = logo; // admin-or-cricbuzz, resolved server-side
+    } else if (flag != null) {
+      resolved = flag; // local rounded flag asset
+    } else if (logo != null) {
+      resolved = logo; // non-http asset path (rare)
+    }
     if (resolved == null) return _fallbackCircle(context);
 
-    final isFlag = flag != null;
+    final isFlag = resolved == flag;
     final isAsset = !resolved.startsWith('http');
     final fit = isFlag ? BoxFit.cover : BoxFit.contain;
+    // When a network logo fails, fall back to the local flag asset (if any)
+    // before the neutral initials circle so a broken/old URL never shows a
+    // broken-image icon and server outages degrade gracefully.
+    Widget networkError() => flag != null
+        ? Image.asset(flag, fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _fallbackCircle(context))
+        : _fallbackCircle(context);
     final image = isAsset
         ? Image.asset(
             resolved,
@@ -323,7 +344,7 @@ class TeamLogoWidget extends StatelessWidget {
               if (progress == null) return child;
               return _teamLoading(context);
             },
-            errorBuilder: (_, __, ___) => _fallbackCircle(context),
+            errorBuilder: (_, __, ___) => networkError(),
           );
 
     final border = borderColor ?? c.cyan.withValues(alpha: .42);

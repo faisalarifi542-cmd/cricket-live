@@ -86,8 +86,11 @@ export async function blockSuspiciousIPs(request, reply) {
 
 export async function requestSizeLimit(request, reply) {
   const contentLength = request.headers['content-length'];
-  const maxSize = 1048576;
-  
+  // Image uploads (base64 JSON) need a larger ceiling than regular API calls.
+  const path = (request.url || '').split('?')[0];
+  const isUpload = path === '/admin/home-config/upload-image';
+  const maxSize = isUpload ? 8 * 1048576 : 1048576;
+
   if (contentLength && parseInt(contentLength) > maxSize) {
     logger.warn({ msg: 'Request too large', ip: request.ip, size: contentLength });
     return reply.code(413).send({ error: 'Request entity too large' });

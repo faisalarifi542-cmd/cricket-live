@@ -201,6 +201,14 @@ class CricketRepository {
       _cached('series:list', const Duration(hours: 1), _service.series,
           forceRefresh: forceRefresh);
 
+  /// Admin-managed Series hero banner config. Cached briefly so an operator's
+  /// change in the Admin Panel surfaces quickly. Returns an envelope whose
+  /// `data` is null when no hero is configured.
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesHero(
+          {bool forceRefresh = false}) =>
+      _cached('series:hero', const Duration(minutes: 2), _service.seriesHero,
+          forceRefresh: forceRefresh);
+
   Future<ApiEnvelope<List<ApiSeries>>> seriesList(
       {bool forceRefresh = false}) async {
     final response = await series(forceRefresh: forceRefresh);

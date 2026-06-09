@@ -180,7 +180,8 @@ export function resolveEndpointGroup(method, rawUrl) {
 
   // System / never-block routes.
   if (path === '/health' || path.startsWith('/health/') || path === '/metrics'
-    || path === '/providers' || path === '/docs' || path.startsWith('/docs/')) {
+    || path === '/providers' || path === '/docs' || path.startsWith('/docs/')
+    || path === '/uploads' || path.startsWith('/uploads/')) {
     return 'health';
   }
   if (path.startsWith('/admin')) return 'admin';

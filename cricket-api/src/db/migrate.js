@@ -18,9 +18,12 @@ const TABLES = [
     external_id   VARCHAR(50) UNIQUE,
     name          VARCHAR(200) NOT NULL,
     short_name    VARCHAR(20),
+    slug          VARCHAR(220),
     logo_url      TEXT,
+    cricbuzz_logo_url TEXT,
     country       VARCHAR(100),
     team_type     VARCHAR(20) DEFAULT 'international',
+    is_active     TINYINT(1) DEFAULT 1,
     metadata      JSON,
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -901,6 +904,12 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'admin_users', 'last_login_at', 'last_login_at DATETIME NULL');
   await addColumnIfMissing(pool, 'admin_users', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
 
+  await addColumnIfMissing(pool, 'teams', 'slug', 'slug VARCHAR(220) NULL');
+  await addColumnIfMissing(pool, 'teams', 'cricbuzz_logo_url', 'cricbuzz_logo_url TEXT NULL');
+  await addColumnIfMissing(pool, 'teams', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+  await addColumnIfMissing(pool, 'teams', 'team_type', "team_type VARCHAR(20) DEFAULT 'international'");
+  await addColumnIfMissing(pool, 'teams', 'metadata', 'metadata JSON NULL');
+
   await addColumnIfMissing(pool, 'match_streams', 'match_title', 'match_title VARCHAR(250) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'team_a', 'team_a VARCHAR(180) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'team_b', 'team_b VARCHAR(180) NULL');
@@ -974,19 +983,102 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'featured_series', 'date_range', 'date_range VARCHAR(140) NULL');
   await addColumnIfMissing(pool, 'featured_series', 'location', 'location VARCHAR(180) NULL');
   await addColumnIfMissing(pool, 'featured_series', 'image_url', 'image_url TEXT NULL');
+  // Series hero banner fields (admin-managed). These power the premium Series
+  // screen hero: a format summary line and the two flanking teams (name, short
+  // code and a server logo URL). All additive + nullable, so existing manual
+  // featured-series rows keep working untouched.
+  await addColumnIfMissing(pool, 'featured_series', 'format_text', 'format_text VARCHAR(180) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_a_name', 'team_a_name VARCHAR(120) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_a_short', 'team_a_short VARCHAR(24) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_a_logo', 'team_a_logo TEXT NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_b_name', 'team_b_name VARCHAR(120) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_b_short', 'team_b_short VARCHAR(24) NULL');
+  await addColumnIfMissing(pool, 'featured_series', 'team_b_logo', 'team_b_logo TEXT NULL');
   await addColumnIfMissing(pool, 'featured_series', 'cta_label', 'cta_label VARCHAR(80) NULL');
   await addColumnIfMissing(pool, 'featured_series', 'cta_url', 'cta_url TEXT NULL');
   await addColumnIfMissing(pool, 'featured_series', 'starts_at', 'starts_at DATETIME NULL');
   await addColumnIfMissing(pool, 'featured_series', 'ends_at', 'ends_at DATETIME NULL');
   await addColumnIfMissing(pool, 'featured_series', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  // The provider-linked id. Older databases (created from admin-panel-schema.sql)
+  // shipped this column as `external_id` and lacked `series_external_id`, which
+  // is the name every route/query uses. Add it idempotently so manual series
+  // inserts (which write series_external_id) work on existing installs.
+  await addColumnIfMissing(pool, 'featured_series', 'series_external_id', 'series_external_id VARCHAR(191) NULL');
+
+  // The admin-panel-schema.sql variant of the featured_* tables only had
+  // (id, external_id, sort_order, created_at). Every route also writes
+  // sort_order / is_active / note / created_by, so ensure those exist on all
+  // three tables. Idempotent and safe on freshly-created tables too.
+  for (const table of ['featured_series', 'featured_matches', 'featured_news']) {
+    await addColumnIfMissing(pool, table, 'sort_order', 'sort_order INT DEFAULT 100');
+    await addColumnIfMissing(pool, table, 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+    await addColumnIfMissing(pool, table, 'note', 'note TEXT NULL');
+    await addColumnIfMissing(pool, table, 'created_by', 'created_by INT NULL');
+    await addColumnIfMissing(pool, table, 'created_at', 'created_at DATETIME DEFAULT CURRENT_TIMESTAMP');
+  }
+  // Canonical id columns each route uses (legacy schema used `external_id`).
+  await addColumnIfMissing(pool, 'featured_matches', 'match_external_id', 'match_external_id VARCHAR(80) NULL');
+  await addColumnIfMissing(pool, 'featured_matches', 'starts_at', 'starts_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'featured_matches', 'ends_at', 'ends_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'featured_news', 'news_id', 'news_id VARCHAR(120) NULL');
+
+  // Backfill canonical id columns from a legacy `external_id` column, once.
+  for (const [table, target] of [
+    ['featured_series', 'series_external_id'],
+    ['featured_matches', 'match_external_id'],
+    ['featured_news', 'news_id'],
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    if (
+      (await columnExists(pool, table, 'external_id')) &&
+      (await columnExists(pool, table, target))
+    ) {
+      // eslint-disable-next-line no-await-in-loop
+      await pool
+        .execute(`UPDATE \`${table}\` SET \`${target}\` = \`external_id\` WHERE \`${target}\` IS NULL AND \`external_id\` IS NOT NULL`)
+        .catch(() => null);
+    }
+  }
+
   // Allow purely-manual series that have no provider id.
   await pool
-    .execute('ALTER TABLE `featured_series` MODIFY COLUMN `series_external_id` VARCHAR(80) NULL')
+    .execute('ALTER TABLE `featured_series` MODIFY COLUMN `series_external_id` VARCHAR(191) NULL')
     .catch(() => null);
 
-  // Featured Matches — allow an optional manual label/note already exists;
-  // add updated_at for parity with the admin list ordering.
+  // Legacy `external_id` columns were created NOT NULL with no default. Manual
+  // inserts never set them (they use the canonical *_external_id / news_id
+  // columns), so relax them to NULL to avoid ER_NO_DEFAULT_FOR_FIELD.
+  for (const table of ['featured_series', 'featured_matches', 'featured_news']) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await columnExists(pool, table, 'external_id')) {
+      // eslint-disable-next-line no-await-in-loop
+      await pool
+        .execute(`ALTER TABLE \`${table}\` MODIFY COLUMN \`external_id\` VARCHAR(191) NULL`)
+        .catch(() => null);
+    }
+  }
+
+  // Featured Matches — add updated_at for parity with the admin list ordering.
   await addColumnIfMissing(pool, 'featured_matches', 'updated_at', 'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+  // ---- Schema verification: log any still-missing required columns ----------
+  const requiredCols = {
+    featured_series: ['series_external_id', 'title', 'subtitle', 'date_range', 'location', 'image_url', 'cta_label', 'cta_url', 'sort_order', 'is_active', 'note', 'created_by', 'starts_at', 'ends_at'],
+    featured_matches: ['match_external_id', 'sort_order', 'is_active', 'note', 'created_by', 'starts_at', 'ends_at'],
+    featured_news: ['news_id', 'sort_order', 'is_active', 'note', 'created_by'],
+  };
+  for (const [table, cols] of Object.entries(requiredCols)) {
+    const missing = [];
+    for (const col of cols) {
+      // eslint-disable-next-line no-await-in-loop
+      if (!(await columnExists(pool, table, col))) missing.push(col);
+    }
+    if (missing.length) {
+      logger.error(`${table} is MISSING columns after migration: ${missing.join(', ')}`);
+    } else {
+      logger.info(`${table} schema verified — all required columns present`);
+    }
+  }
 }
 
 // ====================================================

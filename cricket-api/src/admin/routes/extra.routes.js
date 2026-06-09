@@ -14,6 +14,9 @@ import { query } from '../../lib/db.js';
 import { getRedis } from '../../lib/redis.js';
 import { recordNotificationHistory, sendOneSignalNotification } from '../../lib/onesignal.js';
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../rbac.js';
+import { saveBase64Image } from '../../lib/uploads.js';
+import { invalidateAdminTeamLogoIndex } from '../../lib/team-logos.js';
+import { CricbuzzProvider } from '../../providers/cricbuzz/index.js';
 
 async function clearPattern(redis, pattern) {
   let cursor = '0';
@@ -34,6 +37,96 @@ function bool(v, fallback = null) {
   if (v === 1 || v === '1' || v === 'true') return 1;
   if (v === 0 || v === '0' || v === 'false') return 0;
   return fallback;
+}
+
+function slugifyTeam(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 220);
+}
+
+function cleanTeamText(value) {
+  const text = String(value || '').trim();
+  return text && text !== '-' && text.toLowerCase() !== 'tbd' ? text : '';
+}
+
+function normalizeTeamRecord(team = {}) {
+  const externalId = cleanTeamText(team.external_id || team.team_id || team.teamId || team.id);
+  const name = cleanTeamText(team.name || team.teamName || team.team_name || team.fullName || team.teamFullName);
+  const shortName = cleanTeamText(team.short_name || team.shortName || team.teamShortName || team.team_short || team.teamSName || team.abbr);
+  const logo = cleanTeamText(team.logo_url || team.logoUrl || team.logo || team.flag || team.imageUrl || team.image_url);
+  const country = cleanTeamText(team.country || team.location || team.region);
+  const type = cleanTeamText(team.team_type || team.type || team.category) || 'international';
+  if (!name && !shortName) return null;
+  return {
+    external_id: externalId || null,
+    name: name || shortName,
+    short_name: shortName || null,
+    slug: slugifyTeam(name || shortName),
+    country: country || null,
+    team_type: type,
+    cricbuzz_logo_url: logo || null,
+  };
+}
+
+function addTeamCandidate(map, team) {
+  const normalized = normalizeTeamRecord(team);
+  if (!normalized) return;
+  const key = normalized.external_id
+    ? `id:${normalized.external_id}`
+    : normalized.short_name
+      ? `short:${normalized.short_name.toLowerCase()}`
+      : `name:${normalized.name.toLowerCase()}`;
+  const existing = map.get(key);
+  map.set(key, { ...(existing || {}), ...normalized });
+}
+
+async function upsertTeamCandidate(team) {
+  const rows = await query(
+    `SELECT id, logo_url
+       FROM teams
+      WHERE (external_id IS NOT NULL AND external_id <> '' AND external_id = ?)
+         OR (short_name IS NOT NULL AND short_name <> '' AND LOWER(short_name) = LOWER(?))
+         OR LOWER(name) = LOWER(?)
+      LIMIT 1`,
+    [team.external_id || '', team.short_name || '', team.name],
+  ).catch(() => []);
+
+  if (rows.length) {
+    await query(
+      `UPDATE teams
+          SET external_id = COALESCE(?, external_id),
+              name = COALESCE(?, name),
+              short_name = COALESCE(?, short_name),
+              slug = COALESCE(?, slug),
+              country = COALESCE(?, country),
+              team_type = COALESCE(?, team_type),
+              cricbuzz_logo_url = COALESCE(?, cricbuzz_logo_url),
+              is_active = COALESCE(is_active, 1)
+        WHERE id = ?`,
+      [
+        team.external_id,
+        team.name,
+        team.short_name,
+        team.slug,
+        team.country,
+        team.team_type,
+        team.cricbuzz_logo_url,
+        rows[0].id,
+      ],
+    );
+    return { inserted: 0, updated: 1 };
+  }
+
+  await query(
+    `INSERT INTO teams (external_id, name, short_name, slug, logo_url, cricbuzz_logo_url, country, team_type, is_active)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 1)`,
+    [team.external_id, team.name, team.short_name, team.slug, team.cricbuzz_logo_url, team.country, team.team_type],
+  );
+  return { inserted: 1, updated: 0 };
 }
 
 export default async function extraAdminRoutes(fastify) {
@@ -327,7 +420,6 @@ export default async function extraAdminRoutes(fastify) {
    * ===================================================== */
   for (const [path, table, idCol, permView, permWrite] of [
     ['/series/:id', 'series', 'series_id', 'series.view', 'series.write'],
-    ['/teams/:id', 'teams', 'team_id', 'teams.view', 'teams.write'],
     ['/players/:id', 'players', 'player_id', 'players.view', 'players.write'],
   ]) {
     fastify.get(path, { preHandler: [requirePermissions(permView)] }, async (request, reply) => {
@@ -372,6 +464,191 @@ export default async function extraAdminRoutes(fastify) {
         [request.params.id],
       ).catch(() => null),
     );
+    return { success: true };
+  });
+
+  /* =====================================================
+   * TEAMS — flag/logo management (admin-managed server logos)
+   * Lets operators upload a team flag (stored under /uploads and served
+   * publicly) and persist its URL on the team record so series/matches/home
+   * responses carry a server logo the app prefers over local fallbacks.
+   * ===================================================== */
+  fastify.get('/teams', { preHandler: [requirePermissions('teams.view')] }, async () => {
+    const rows = await query(
+      `SELECT id, external_id, name, short_name, slug, country, logo_url,
+              cricbuzz_logo_url, team_type, is_active, created_at, updated_at
+         FROM teams
+        ORDER BY is_active DESC, name ASC
+        LIMIT 1000`,
+    ).catch(() => []);
+    return { success: true, data: rows.map((r) => ({ ...r, is_active: r.is_active !== 0 })) };
+  });
+
+  fastify.get('/teams/:id', { preHandler: [requirePermissions('teams.view')] }, async (request, reply) => {
+    const rows = await query(
+      `SELECT id, external_id, name, short_name, slug, country, logo_url,
+              cricbuzz_logo_url, team_type, is_active, created_at, updated_at
+         FROM teams
+        WHERE id = ? OR external_id = ? OR LOWER(short_name) = LOWER(?)
+        LIMIT 1`,
+      [request.params.id, request.params.id, request.params.id],
+    ).catch(() => []);
+    if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    return { success: true, data: { ...rows[0], is_active: rows[0].is_active !== 0 } };
+  });
+
+  fastify.post('/teams/sync-from-api', { preHandler: [requirePermissions('teams.write')] }, async (request) => {
+    const candidates = new Map();
+    const addMatchTeams = (matches = []) => {
+      for (const match of Array.isArray(matches) ? matches : []) {
+        addTeamCandidate(candidates, match?.team1);
+        addTeamCandidate(candidates, match?.team2);
+        for (const team of Array.isArray(match?.teams) ? match.teams : []) addTeamCandidate(candidates, team);
+      }
+    };
+
+    const dbMatches = await query(
+      `SELECT team1_id, team2_id, team1_name, team2_name, team1_short, team2_short,
+              team1_logo_url, team2_logo_url
+         FROM matches
+        ORDER BY start_time DESC
+        LIMIT 300`,
+    ).catch(() => []);
+    for (const match of dbMatches) {
+      addTeamCandidate(candidates, {
+        external_id: match.team1_id,
+        name: match.team1_name,
+        short_name: match.team1_short,
+        logo_url: match.team1_logo_url,
+      });
+      addTeamCandidate(candidates, {
+        external_id: match.team2_id,
+        name: match.team2_name,
+        short_name: match.team2_short,
+        logo_url: match.team2_logo_url,
+      });
+    }
+
+    const provider = new CricbuzzProvider();
+    for (const loader of [
+      () => provider.getLiveMatches(),
+      () => provider.getUpcomingMatches(),
+      () => provider.getRecentMatches(),
+    ]) {
+      try {
+        const result = await loader();
+        addMatchTeams(Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : []);
+      } catch {
+        // Best-effort; DB matches still seed the list when provider is unavailable.
+      }
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    for (const team of candidates.values()) {
+      const result = await upsertTeamCandidate(team);
+      inserted += result.inserted;
+      updated += result.updated;
+    }
+    invalidateAdminTeamLogoIndex();
+    await withAudit(
+      request,
+      { action: 'teams.syncFromApi', entityType: 'team', newValue: { candidates: candidates.size, inserted, updated } },
+      async () => null,
+    );
+    return { success: true, candidates: candidates.size, inserted, updated };
+  });
+
+  fastify.post(
+    '/teams/upload-flag',
+    { preHandler: [requirePermissions('teams.write')], bodyLimit: 8 * 1024 * 1024 },
+    async (request, reply) => {
+      const body = request.body || {};
+      const data = body.dataUrl || body.data || body.image || '';
+      try {
+        const { relativeUrl, bytes } = saveBase64Image(data, body.mimeType || '');
+        const proto = request.headers['x-forwarded-proto'] || request.protocol || 'https';
+        const host = request.headers['x-forwarded-host'] || request.headers.host;
+        const url = host ? `${proto}://${host}${relativeUrl}` : relativeUrl;
+        await withAudit(
+          request,
+          { action: 'team.flag.upload', entityType: 'team', newValue: { url, bytes } },
+          async () => null,
+        );
+        return reply.code(201).send({ success: true, url, relativeUrl, bytes });
+      } catch (err) {
+        return reply
+          .code(err.statusCode || 500)
+          .send({ success: false, error: err.message || 'Upload failed' });
+      }
+    },
+  );
+
+  fastify.post('/teams', { preHandler: [requirePermissions('teams.write')] }, async (request, reply) => {
+    const body = request.body || {};
+    const name = String(body.name || '').trim();
+    if (!name) return reply.code(400).send({ success: false, error: 'name required' });
+    const shortName = cleanTeamText(body.short_name || body.shortName);
+    const slug = cleanTeamText(body.slug) || slugifyTeam(name);
+    const result = await withAudit(
+      request,
+      { action: 'team.create', entityType: 'team', newValue: { name } },
+      () => query(
+        `INSERT INTO teams (external_id, name, short_name, slug, logo_url, cricbuzz_logo_url, country, team_type, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          cleanTeamText(body.external_id) || null,
+          name,
+          shortName || null,
+          slug || null,
+          cleanTeamText(body.logo_url) || null,
+          cleanTeamText(body.cricbuzz_logo_url) || null,
+          cleanTeamText(body.country) || null,
+          cleanTeamText(body.team_type || body.type) || 'international',
+          bool(body.is_active, 1),
+        ],
+      ),
+    );
+    invalidateAdminTeamLogoIndex();
+    return reply.code(201).send({ success: true, id: result.insertId });
+  });
+
+  fastify.put('/teams/:id', { preHandler: [requirePermissions('teams.write')] }, async (request, reply) => {
+    const old = await query(`SELECT * FROM teams WHERE id = ? OR external_id = ? LIMIT 1`, [request.params.id, request.params.id]).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const body = request.body || {};
+    const allowed = ['external_id', 'name', 'short_name', 'slug', 'logo_url', 'cricbuzz_logo_url', 'country', 'team_type', 'is_active'];
+    const set = [];
+    const vals = [];
+    for (const k of allowed) {
+      if (body[k] !== undefined) {
+        set.push(`${k} = ?`);
+        vals.push(k === 'is_active' ? bool(body[k], 1) : body[k]);
+      }
+    }
+    if (body.name !== undefined && body.slug === undefined) {
+      set.push('slug = COALESCE(slug, ?)');
+      vals.push(slugifyTeam(body.name));
+    }
+    if (!set.length) return reply.code(400).send({ success: false, error: 'No fields to update' });
+    await withAudit(
+      request,
+      { action: 'team.update', entityType: 'team', entityId: old[0].id, oldValue: old[0], newValue: body },
+      () => query(`UPDATE teams SET ${set.join(', ')} WHERE id = ?`, [...vals, old[0].id]),
+    );
+    invalidateAdminTeamLogoIndex();
+    return { success: true };
+  });
+
+  fastify.delete('/teams/:id', { preHandler: [requirePermissions('teams.write')] }, async (request, reply) => {
+    const old = await query(`SELECT * FROM teams WHERE id = ? OR external_id = ? LIMIT 1`, [request.params.id, request.params.id]).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    await withAudit(
+      request,
+      { action: 'team.disable', entityType: 'team', entityId: old[0].id, oldValue: old[0], newValue: { is_active: 0 } },
+      () => query(`UPDATE teams SET is_active = 0 WHERE id = ?`, [old[0].id]),
+    );
+    invalidateAdminTeamLogoIndex();
     return { success: true };
   });
 

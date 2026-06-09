@@ -34,12 +34,18 @@ class HomeScreen extends StatefulWidget {
     required this.onOpenReminders,
     required this.onOpenRanking,
     required this.onWatchLive,
+    this.onOpenSeriesDetail,
   });
 
   /// Invoked with the resolved match id. Pass empty string when the user
   /// taps a section header that doesn't reference a specific match.
   final ValueChanged<String> onOpenMatchDetails;
   final VoidCallback onOpenSeries;
+
+  /// Opens the full Series Details screen for a specific series id. Used by
+  /// admin-managed Featured Series cards that carry a real series id. Falls
+  /// back to [onOpenSeries] (the series list) when null or the id is empty.
+  final ValueChanged<String>? onOpenSeriesDetail;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenFilters;
   final VoidCallback onOpenReminders;
@@ -114,6 +120,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _loadHero(forceRefresh: forceRefresh);
   }
 
+  /// Opens a Featured Series card: the exact Series Details screen when the
+  /// entry carries a real series id, otherwise the normal Series list.
+  void _openFeaturedSeries(HomeFeaturedSeries series) {
+    final id = series.seriesExternalId.trim();
+    if (id.isNotEmpty && widget.onOpenSeriesDetail != null) {
+      widget.onOpenSeriesDetail!(id);
+    } else {
+      widget.onOpenSeries();
+    }
+  }
+
   /// Builds the home body sections in the admin-configured order, honouring
   /// per-section enable flags. Disabled sections are simply omitted.
   List<Widget> _buildSections() {
@@ -177,7 +194,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children.add(_FeaturedSeriesSection(
             future: _feedFuture,
             config: cfg.featuredSeries,
-            onOpenSeries: widget.onOpenSeries,
+            onSeeAll: widget.onOpenSeries,
+            onOpenSeries: _openFeaturedSeries,
           ));
           break;
       }
@@ -2464,12 +2482,14 @@ class _FeaturedSeriesSection extends StatelessWidget {
   const _FeaturedSeriesSection({
     required this.future,
     required this.config,
+    required this.onSeeAll,
     required this.onOpenSeries,
   });
 
   final Future<HomeFeed> future;
   final FeaturedSectionConfig config;
-  final VoidCallback onOpenSeries;
+  final VoidCallback onSeeAll;
+  final ValueChanged<HomeFeaturedSeries> onOpenSeries;
 
   @override
   Widget build(BuildContext context) {
@@ -2486,7 +2506,7 @@ class _FeaturedSeriesSection extends StatelessWidget {
             _SectionHeader(
               title: config.title,
               showSeeAll: config.showSeeAll,
-              onSeeAll: onOpenSeries,
+              onSeeAll: onSeeAll,
             ),
             const SizedBox(height: 10),
             _FeaturedSeriesRow(series: series, onOpenSeries: onOpenSeries),
@@ -2695,7 +2715,7 @@ class _FeaturedSeriesRow extends StatelessWidget {
   });
 
   final List<HomeFeaturedSeries> series;
-  final VoidCallback onOpenSeries;
+  final ValueChanged<HomeFeaturedSeries> onOpenSeries;
 
   @override
   Widget build(BuildContext context) {
@@ -2709,7 +2729,7 @@ class _FeaturedSeriesRow extends StatelessWidget {
         itemBuilder: (context, index) {
           return _FeaturedSeriesMini(
             series: series[index],
-            onTap: onOpenSeries,
+            onTap: () => onOpenSeries(series[index]),
           );
         },
       ),
@@ -2738,26 +2758,37 @@ class _FeaturedSeriesMini extends StatelessWidget {
           border: Border.all(color: c.cyan.withValues(alpha: .3)),
         ),
         child: Stack(
+          fit: StackFit.expand,
           children: [
+            // Always render a stadium fallback so the image area is never
+            // empty; the network poster paints over it when available.
+            Image.asset(
+              _HAsset.liveCardBg,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
             if (series.hasImage)
-              Positioned.fill(
-                child: Image.network(
-                  series.imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
+              Image.network(
+                series.imageUrl,
+                fit: BoxFit.cover,
+                // Keep the stadium fallback visible on error instead of
+                // collapsing the image area.
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                loadingBuilder: (context, child, progress) {
+                  if (progress == null) return child;
+                  return const SizedBox.shrink();
+                },
               ),
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withValues(alpha: .72),
-                    ],
-                  ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: .15),
+                    Colors.black.withValues(alpha: .78),
+                  ],
+                  stops: const [0.35, 1],
                 ),
               ),
             ),
@@ -2787,7 +2818,7 @@ class _FeaturedSeriesMini extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: c.muted,
+                        color: Colors.white.withValues(alpha: .82),
                         fontWeight: FontWeight.w600,
                         fontSize: 10.5,
                       ),

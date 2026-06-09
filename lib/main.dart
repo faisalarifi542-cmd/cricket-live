@@ -375,6 +375,12 @@ class _RootShellState extends State<RootShell> {
         return HomeScreen(
           onOpenMatchDetails: _openMatch,
           onOpenSeries: _openSeries,
+          onOpenSeriesDetail: (seriesId) => _push(SeriesDetailScreen(
+            seriesId: seriesId,
+            onOpenReminders: () => showReminderSheet(context),
+            onOpenCalendar: () => showCalendarSheet(context),
+            onOpenPlayer: () => _push(const PlayerDetailScreen()),
+          )),
           onOpenNotifications: _openNotifications,
           onOpenFilters: _openFilters,
           onOpenReminders: _openReminders,

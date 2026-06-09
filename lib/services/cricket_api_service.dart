@@ -25,6 +25,13 @@ class CricketApiService {
 
   Future<ApiEnvelope<Map<String, dynamic>>> appHome() => _map('/app/home');
 
+  /// Admin-managed Series hero banner (title/subtitle/format/teams/background).
+  /// Returns `data: null` when no hero is configured in the Admin Panel.
+  /// `allowFailure` so older backends without this endpoint degrade gracefully
+  /// (the Series screen then derives a hero from the live series list).
+  Future<ApiEnvelope<Map<String, dynamic>>> seriesHero() =>
+      _map('/app/series-hero', allowFailure: true);
+
   Future<ApiEnvelope<Map<String, dynamic>>> matchDetail(String matchId) =>
       _map('/match/$matchId');
 
