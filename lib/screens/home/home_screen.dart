@@ -156,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (!cfg.mainMatches.enabled) break;
           if (cfg.mainMatches.showStatusTabs) {
             children.add(_HomeStatusTabs(selected: topTab, onChanged: _setTopTab));
-            children.add(const SizedBox(height: 12));
+            children.add(const SizedBox(height: 10));
           }
           if (cfg.mainMatches.showCategoryFilter) {
             children.add(_HomeCategoryFilter(
@@ -164,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               onChanged: (i) => setState(() => categoryIndex = i),
               onOpenFilters: widget.onOpenFilters,
             ));
-            children.add(const SizedBox(height: 16));
+            children.add(const SizedBox(height: 14));
           }
           children.add(_HomeMatchList(
             future: _tabFuture,
@@ -2475,13 +2475,13 @@ class _FeaturedMatchesSection extends StatelessWidget {
         if (matches.isEmpty) return const SizedBox.shrink();
         return Column(
           children: [
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
             _SectionHeader(
               title: config.title,
               showSeeAll: config.showSeeAll,
               onSeeAll: onSeeAll,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _FeaturedMatchesRow(matches: matches, onOpenMatch: onOpenMatch),
           ],
         );
@@ -2514,13 +2514,13 @@ class _FeaturedSeriesSection extends StatelessWidget {
         if (series.isEmpty) return const SizedBox.shrink();
         return Column(
           children: [
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
             _SectionHeader(
               title: config.title,
               showSeeAll: config.showSeeAll,
               onSeeAll: onSeeAll,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _FeaturedSeriesRow(series: series, onOpenSeries: onOpenSeries),
           ],
         );
