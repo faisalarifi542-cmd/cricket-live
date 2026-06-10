@@ -2200,7 +2200,7 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: Colors.white.withValues(alpha: .82),
+                              color: c.onImageText,
                               height: 1.35,
                               fontWeight: FontWeight.w500,
                               fontSize: 12.5)),
