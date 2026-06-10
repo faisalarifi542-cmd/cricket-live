@@ -115,11 +115,19 @@ class CricketRepository {
   Future<bool> shouldShowWatchLiveForMatch(CricketMatch match,
       {bool forceRefresh = false}) async {
     if (match.id.isEmpty) return false;
-    if (!match.hasStreamInfo) {
-      return hasPlayableStreams(match.id, forceRefresh: forceRefresh);
-    }
+    // Global kill-switch first: if live streaming is disabled in the admin
+    // panel, never show Watch Live regardless of per-match flags.
     final config = await appConfig(forceRefresh: forceRefresh);
-    return shouldShowWatchLive(match, AppConfig.fromJson(config.data));
+    if (!AppConfig.fromJson(config.data).liveStreamingEnabled) return false;
+
+    // Trust the embedded flags only when they're positive. When the match
+    // carries no stream info, or the flags say "not enabled", confirm against
+    // the authoritative /match/:id/streams endpoint so a valid stream is never
+    // hidden by stale/missing list-level flags.
+    if (match.hasStreamInfo && match.watchLiveEnabled && match.hasLiveStream) {
+      return true;
+    }
+    return hasPlayableStreams(match.id, forceRefresh: forceRefresh);
   }
 
   Future<ApiEnvelope<List<dynamic>>> schedule(

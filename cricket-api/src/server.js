@@ -16,6 +16,7 @@ import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
 import { cacheOnSend } from './middleware/cache.js';
 import { enrichTeamLogos } from './lib/team-logos.js';
+import { enrichPlayerImages } from './lib/player-images.js';
 import {
   apiSecurityMiddleware,
   apiSecurityResponseLog,
@@ -221,17 +222,29 @@ async function buildServer() {
   // Series, Series details, Match details, Scorecard, Squads, Live, ...), so
   // the app is admin-logo dependent everywhere with the provider logo as the
   // automatic fallback. Admin/internal responses are skipped.
+  //
+  // Player images are enriched in the same hook, right after team logos, so
+  // every player object across the same responses resolves to the
+  // admin/provider/initials image according to the global mode + per-player
+  // overrides. Both steps are defensive and never break a response.
   // ====================================================
   fastify.addHook('preSerialization', async (request, reply, payload) => {
     const url = request.raw?.url || request.url || '';
     if (url.startsWith('/admin') || url.startsWith('/uploads') || url.startsWith('/docs')) {
       return payload;
     }
+    let result = payload;
     try {
-      return await enrichTeamLogos(payload);
+      result = await enrichTeamLogos(result);
     } catch {
-      return payload;
+      // keep result as-is
     }
+    try {
+      result = await enrichPlayerImages(result);
+    } catch {
+      // keep result as-is
+    }
+    return result;
   });
 
   // ====================================================

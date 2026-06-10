@@ -176,7 +176,18 @@ export default async function appRoutes(fastify) {
     return { success: true };
   });
 
-  fastify.get('/app/home', async (_request, reply) => {
+  fastify.get('/app/home', async (request, reply) => {
+    // Resolve relative admin-uploaded image paths (e.g. `/uploads/x.png`) into
+    // absolute URLs so the Flutter app can load them via Image.network. Mirrors
+    // the logic used by /app/series-hero.
+    const proto = request.headers['x-forwarded-proto'] || request.protocol || 'https';
+    const host = request.headers['x-forwarded-host'] || request.headers.host;
+    const absUrl = (u) => {
+      const v = String(u || '').trim();
+      if (!v) return '';
+      if (/^https?:\/\//i.test(v)) return v;
+      return host ? `${proto}://${host}${v.startsWith('/') ? '' : '/'}${v}` : v;
+    };
     const result = await controlledFetch({
       dataType: 'homeData',
       targetId: 'default',
@@ -244,7 +255,15 @@ export default async function appRoutes(fastify) {
 
         // Featured Series (manual admin entries).
         const featuredSeriesList = s.featuredSeries.enabled
-          ? (home.featuredSeries || []).slice(0, Math.max(1, Number(s.featuredSeries.maxItems) || 10))
+          ? (home.featuredSeries || [])
+              .slice(0, Math.max(1, Number(s.featuredSeries.maxItems) || 10))
+              .map((row) => ({
+                ...row,
+                // Absolute URLs so Image.network works in the Flutter app.
+                image_url: absUrl(row.image_url),
+                team_a_logo: absUrl(row.team_a_logo),
+                team_b_logo: absUrl(row.team_b_logo),
+              }))
           : [];
 
         const payload = {

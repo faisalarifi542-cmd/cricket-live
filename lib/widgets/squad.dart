@@ -358,34 +358,8 @@ class _PlayerAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    return Container(
-      width: 44,
-      height: 44,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: c.card,
-        border: Border.all(color: c.cyan.withValues(alpha: .35)),
-      ),
-      child: image == null
-          ? Center(
-              child: Text(_initial(name),
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16)),
-            )
-          : Image.network(image!,
-              fit: BoxFit.cover,
-              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-              errorBuilder: (_, __, ___) => Center(
-                  child: Text(_initial(name),
-                      style: TextStyle(
-                          color: c.text,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16)))),
-    );
+    // Shared resolver: admin → provider → initials, never a broken icon.
+    return PlayerAvatarWidget(name: name, imageUrl: image, size: 44);
   }
 }
 

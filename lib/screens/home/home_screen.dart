@@ -137,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final cfg = _config;
     final children = <Widget>[
       _HomeHeader(onBell: widget.onOpenNotifications),
-      const SizedBox(height: 10),
+      const SizedBox(height: 8),
     ];
 
     for (final key in cfg.sectionOrder) {
@@ -449,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   context.horizontalPadding,
                   8,
                   context.horizontalPadding,
-                  context.mainBottomPadding + 70,
+                  context.mainBottomPadding + 84,
                 ),
                 children: _buildSections(),
               ),
@@ -473,13 +473,15 @@ class _HomeHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final logoSize = context.w <= 400 ? 32.0 : 35.0;
+    final logoSize = context.w <= 400 ? 30.0 : 33.0;
     return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          RichText(
+      padding: const EdgeInsets.only(top: 2, bottom: 0),
+      child: SizedBox(
+        height: 46,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            RichText(
             text: TextSpan(
               style: TextStyle(
                 fontSize: logoSize,
@@ -505,7 +507,8 @@ class _HomeHeader extends StatelessWidget {
           ),
           const Spacer(),
           _NotificationButton(onTap: onBell),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -523,15 +526,15 @@ class _NotificationButton extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 50,
-        height: 50,
+        width: 44,
+        height: 44,
         child: Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.center,
           children: [
             Container(
-              width: 50,
-              height: 50,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: c.card.withValues(alpha: .42),
@@ -547,12 +550,12 @@ class _NotificationButton extends StatelessWidget {
               ),
               alignment: Alignment.center,
               child: Icon(Icons.notifications_none_rounded,
-                  color: c.text, size: 24),
+                  color: c.text, size: 22),
             ),
             // Notification dot.
             Positioned(
-              top: 10,
-              right: 11,
+              top: 9,
+              right: 10,
               child: Container(
                 width: 9,
                 height: 9,
@@ -611,7 +614,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
   @override
   Widget build(BuildContext context) {
     final phone = context.w <= 430;
-    final heroHeight = phone ? 202.0 : 220.0;
+    final heroHeight = phone ? 190.0 : 206.0;
     return FutureBuilder<List<CricketMatch>>(
       future: widget.future,
       builder: (context, snapshot) {
@@ -668,7 +671,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
                 },
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             if (widget.showDots)
               _CarouselDots(count: items.length, active: _current),
           ],
@@ -781,7 +784,7 @@ class _HeroMatchCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Column(
                 mainAxisSize: MainAxisSize.max,
                 children: [
@@ -790,30 +793,20 @@ class _HeroMatchCard extends StatelessWidget {
                     child: _StatusBadge(label: label, color: color, live: live),
                   ),
                   const SizedBox(height: 6),
+                  // Premium white match title (2 lines max, no early ellipsis).
                   Text(
-                    match.series,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: c.cyan,
-                      fontWeight: FontWeight.w800,
-                      fontSize: phone ? 12.5 : 13.5,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _heroDateTime(match),
-                    maxLines: 1,
+                    _heroTitle(match),
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: c.text,
-                      fontWeight: FontWeight.w900,
-                      fontSize: phone ? 16 : 17,
+                      fontWeight: FontWeight.w800,
+                      fontSize: phone ? 15 : 16,
+                      height: 1.15,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   // Team row fills the remaining space so the venue row always
                   // fits inside the fixed hero height (no overflow).
                   Expanded(
@@ -1352,65 +1345,197 @@ class _GlowOrb extends StatelessWidget {
   }
 }
 
-/// Top row shared by all list cards: status badge + series + date/time.
+/// Top row shared by all list cards: status badge + centered title + star.
 class _CardTopRow extends StatelessWidget {
   const _CardTopRow({
     required this.label,
     required this.color,
     required this.live,
-    required this.series,
-    required this.dateTime,
+    required this.title,
+    this.titleColor,
   });
 
   final String label;
   final Color color;
   final bool live;
-  final String series;
-  final String dateTime;
+  final String title;
+  final Color? titleColor;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final shortDate =
-        context.w <= 430 ? dateTime.replaceAll(' • ', '  ') : dateTime;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         _StatusBadge(label: label, color: color, live: live, dense: true),
-        const SizedBox(width: 7),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
-            series,
-            maxLines: 1,
+            title,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
             style: TextStyle(
-              color: c.cyan,
+              color: titleColor ?? c.text,
               fontWeight: FontWeight.w800,
-              fontSize: 12.2,
+              fontSize: 14,
+              height: 1.15,
             ),
           ),
         ),
         const SizedBox(width: 6),
-        Text(
-          shortDate,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: .92),
-            fontWeight: FontWeight.w700,
-            fontSize: 10.5,
-          ),
-        ),
+        Icon(Icons.star_border_rounded,
+            color: c.text.withValues(alpha: .85), size: 22),
       ],
     );
   }
 }
 
+/// Small centered status pill (e.g. `LIVE NOW`, `UPCOMING`) shown under VS.
+class _CenterPill extends StatelessWidget {
+  const _CenterPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: .7)),
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: .3), blurRadius: 9, spreadRadius: -3),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 10.5,
+          letterSpacing: .5,
+        ),
+      ),
+    );
+  }
+}
+
+/// Hairline divider used between the team block and the metadata row.
+class _CardDivider extends StatelessWidget {
+  const _CardDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      height: 1,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.transparent,
+            c.cyan.withValues(alpha: .28),
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Three-column metadata row: venue | date/time | match type.
+class _CardMetaRow extends StatelessWidget {
+  const _CardMetaRow({required this.match});
+
+  final CricketMatch match;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Row(
+      children: [
+        Expanded(
+          child: _item(
+            c,
+            Icons.location_on_outlined,
+            match.venue.isEmpty ? 'Venue TBC' : match.venue,
+            MainAxisAlignment.start,
+          ),
+        ),
+        _div(c),
+        Expanded(
+          child: _item(
+            c,
+            Icons.calendar_month_rounded,
+            _cardDateTime(match),
+            MainAxisAlignment.center,
+          ),
+        ),
+        _div(c),
+        Expanded(
+          child: _item(
+            c,
+            Icons.desktop_windows_outlined,
+            match.matchDesc.isEmpty ? 'Match' : match.matchDesc,
+            MainAxisAlignment.end,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _div(CricColors c) => Container(
+        width: 1,
+        height: 16,
+        color: c.cyan.withValues(alpha: .22),
+      );
+
+  Widget _item(
+    CricColors c,
+    IconData icon,
+    String text,
+    MainAxisAlignment align,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(
+        mainAxisAlignment: align,
+        children: [
+          Icon(icon, color: c.cyan, size: 13),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: .82),
+                fontWeight: FontWeight.w600,
+                fontSize: 10.8,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CardTeamRow extends StatelessWidget {
-  const _CardTeamRow({required this.match, this.showScore = false});
+  const _CardTeamRow({
+    required this.match,
+    this.showScore = false,
+    this.centerPill,
+  });
 
   final CricketMatch match;
   final bool showScore;
+
+  /// Optional status pill (e.g. `LIVE NOW`, `UPCOMING`) centred under the VS
+  /// badge, matching the premium target layout.
+  final Widget? centerPill;
 
   @override
   Widget build(BuildContext context) {
@@ -1419,8 +1544,14 @@ class _CardTeamRow extends StatelessWidget {
     final logoSize = phone ? 46.0 : 52.0;
     final codeSize = phone ? 20.0 : 21.0;
     final scoreColor = match.isLive ? c.live : c.cyan;
+    final vsHeight = phone ? 34.0 : 36.0;
+    // Anchor everything to the top so both team logos share the exact same Y
+    // (and therefore the same vertical centre/baseline) even when one side has
+    // a score and the other doesn't. The VS column is nudged down so the badge
+    // centres on the logos.
+    final vsTopInset = (logoSize / 2) - (vsHeight / 2);
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: _HomeTeamBlock(
@@ -1430,15 +1561,27 @@ class _CardTeamRow extends StatelessWidget {
             accent: c.cyan,
             logoSize: logoSize,
             codeSize: codeSize,
-            showFullName: false,
+            showFullName: true,
             scoreColor: scoreColor,
             score: showScore ? match.teamAScoreText : null,
           ),
         ),
-        _HomeVsBadge(
-          width: phone ? 46 : 50,
-          height: phone ? 32 : 34,
-          intensity: 0.85,
+        Padding(
+          padding: EdgeInsets.only(top: vsTopInset > 0 ? vsTopInset : 0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _HomeVsBadge(
+                width: phone ? 50 : 54,
+                height: vsHeight,
+                intensity: 0.9,
+              ),
+              if (centerPill != null) ...[
+                const SizedBox(height: 8),
+                centerPill!,
+              ],
+            ],
+          ),
         ),
         Expanded(
           child: _HomeTeamBlock(
@@ -1448,38 +1591,9 @@ class _CardTeamRow extends StatelessWidget {
             accent: c.warning,
             logoSize: logoSize,
             codeSize: codeSize,
-            showFullName: false,
+            showFullName: true,
             scoreColor: scoreColor,
             score: showScore ? match.teamBScoreText : null,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CardVenueRow extends StatelessWidget {
-  const _CardVenueRow({required this.venue});
-
-  final String venue;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.cric;
-    return Row(
-      children: [
-        Icon(Icons.location_on_outlined, color: c.cyan, size: 14),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            venue.isEmpty ? 'Venue TBC' : venue,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: .82),
-              fontWeight: FontWeight.w600,
-              fontSize: 11.5,
-            ),
           ),
         ),
       ],
@@ -1517,7 +1631,7 @@ class _HomeLiveMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 195 : 215,
+      minHeight: context.w <= 430 ? 196 : 214,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1525,12 +1639,16 @@ class _HomeLiveMatchCard extends StatelessWidget {
             label: 'LIVE',
             color: c.live,
             live: true,
-            series: match.series,
-            dateTime: _cardDateTime(match),
+            title: _heroTitle(match),
+            titleColor: c.cyan,
           ),
           const SizedBox(height: 6),
-          // Scores render under each team code (no long center score line).
-          _CardTeamRow(match: match, showScore: true),
+          // Full team names + scores, with a centred LIVE NOW pill under VS.
+          _CardTeamRow(
+            match: match,
+            showScore: true,
+            centerPill: _CenterPill(label: 'LIVE NOW', color: c.cyan),
+          ),
           if (note.isNotEmpty) ...[
             const SizedBox(height: 5),
             Text(
@@ -1545,9 +1663,11 @@ class _HomeLiveMatchCard extends StatelessWidget {
               ),
             ),
           ],
-          const SizedBox(height: 5),
-          _CardVenueRow(venue: match.venue),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
+          const _CardDivider(),
+          const SizedBox(height: 7),
+          _CardMetaRow(match: match),
+          const SizedBox(height: 9),
           _LiveActionBar(
             match: match,
             repository: repository,
@@ -1562,9 +1682,13 @@ class _HomeLiveMatchCard extends StatelessWidget {
   }
 }
 
-/// Resolves stream availability and renders the action bar. Watch Live stays
-/// visible but disabled/low-opacity when no playable stream exists.
-class _LiveActionBar extends StatelessWidget {
+/// Resolves stream availability and renders the action bar.
+///
+/// Watch Live is shown only when a playable stream actually exists. To avoid a
+/// flash where the button "disappears" while the async check runs, we seed an
+/// optimistic value from the match's embedded stream flags and then reconcile
+/// it with the authoritative `/match/:id/streams` result.
+class _LiveActionBar extends StatefulWidget {
   const _LiveActionBar({
     required this.match,
     required this.repository,
@@ -1582,24 +1706,65 @@ class _LiveActionBar extends StatelessWidget {
   final bool showViewMatch;
 
   @override
+  State<_LiveActionBar> createState() => _LiveActionBarState();
+}
+
+class _LiveActionBarState extends State<_LiveActionBar> {
+  /// True/false once resolved; starts from the optimistic embedded-flag guess.
+  late bool _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = _optimistic;
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LiveActionBar old) {
+    super.didUpdateWidget(old);
+    if (old.match.id != widget.match.id) {
+      _enabled = _optimistic;
+      _resolve();
+    }
+  }
+
+  /// Best guess before the authoritative check returns: trust positive
+  /// embedded flags so a clearly-streamable live match shows the button
+  /// immediately instead of flickering in.
+  bool get _optimistic =>
+      widget.match.id.isNotEmpty &&
+      widget.match.hasStreamInfo &&
+      widget.match.watchLiveEnabled &&
+      widget.match.hasLiveStream;
+
+  Future<void> _resolve() async {
+    if (widget.match.id.isEmpty) {
+      if (mounted && _enabled) setState(() => _enabled = false);
+      return;
+    }
+    try {
+      final result =
+          await widget.repository.shouldShowWatchLiveForMatch(widget.match);
+      if (mounted && result != _enabled) setState(() => _enabled = result);
+    } catch (_) {
+      // Keep the optimistic value on transient errors so a valid stream is
+      // not hidden by a flaky check.
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final future = match.id.isEmpty
-        ? Future<bool>.value(false)
-        : (match.hasStreamInfo
-            ? repository.shouldShowWatchLiveForMatch(match)
-            : repository.hasPlayableStreams(match.id));
-    return FutureBuilder<bool>(
-      future: future,
-      builder: (context, snapshot) {
-        final enabled = snapshot.data == true;
-        return _HomeActionBar(
-          onViewMatch: () => onViewMatch(match.id),
-          showWatch: showWatchLive,
-          showView: showViewMatch,
-          watchEnabled: enabled,
-          onWatchLive: enabled ? () => onWatchLive(match.id) : null,
-        );
-      },
+    // Only surface Watch Live when a playable stream exists, so a LIVE card
+    // never shows a confusing dimmed/disabled button. When no stream is
+    // available, View Match takes the full width.
+    final showWatch = widget.showWatchLive && _enabled;
+    return _HomeActionBar(
+      onViewMatch: () => widget.onViewMatch(widget.match.id),
+      showWatch: showWatch,
+      showView: widget.showViewMatch,
+      watchEnabled: _enabled,
+      onWatchLive: _enabled ? () => widget.onWatchLive(widget.match.id) : null,
     );
   }
 }
@@ -1627,7 +1792,7 @@ class _HomeUpcomingMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 175 : 195,
+      minHeight: context.w <= 430 ? 190 : 208,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1635,15 +1800,18 @@ class _HomeUpcomingMatchCard extends StatelessWidget {
             label: 'UPCOMING',
             color: c.cyan,
             live: false,
-            series: match.series,
-            dateTime: _cardDateTime(match),
+            title: match.versusTitle,
+          ),
+          const SizedBox(height: 6),
+          _CardTeamRow(
+            match: match,
+            centerPill: _CenterPill(label: 'UPCOMING', color: c.cyan),
           ),
           const SizedBox(height: 8),
-          _CardTeamRow(match: match),
+          const _CardDivider(),
           const SizedBox(height: 7),
-          _CardVenueRow(venue: match.venue),
-          const SizedBox(height: 7),
-          // Empty left segment preserves the target's split-bar layout.
+          _CardMetaRow(match: match),
+          const SizedBox(height: 9),
           _HomeActionBar(
             onViewMatch: () => onOpenMatch(match.id),
             showView: showViewMatch,
@@ -1675,7 +1843,7 @@ class _HomeFinishedMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 175 : 195,
+      minHeight: context.w <= 430 ? 196 : 214,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1683,34 +1851,19 @@ class _HomeFinishedMatchCard extends StatelessWidget {
             label: 'FINISHED',
             color: c.success,
             live: false,
-            series: match.series,
-            dateTime: _cardDateTime(match),
+            title: match.versusTitle,
+          ),
+          const SizedBox(height: 6),
+          _CardTeamRow(
+            match: match,
+            showScore: true,
+            centerPill: _CenterPill(label: result, color: c.success),
           ),
           const SizedBox(height: 8),
-          _CardTeamRow(match: match, showScore: true),
-          const SizedBox(height: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            decoration: BoxDecoration(
-              color: c.success.withValues(alpha: .14),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: c.success.withValues(alpha: .7)),
-            ),
-            child: Text(
-              result,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.success,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          _CardVenueRow(venue: match.venue),
+          const _CardDivider(),
           const SizedBox(height: 7),
+          _CardMetaRow(match: match),
+          const SizedBox(height: 9),
           _HomeActionBar(
             onViewMatch: () => onOpenMatch(match.id),
             showView: showViewMatch,
@@ -2099,9 +2252,9 @@ class _HomeActionBar extends StatelessWidget {
 
   final VoidCallback onViewMatch;
 
-  /// Whether to render the left Watch Live segment at all. Live cards always
-  /// set this true (kept visible even when disabled); Upcoming/Finished leave
-  /// it false so the left segment stays empty but the split layout remains.
+  /// Whether to render the Watch Live button at all. Live cards always set
+  /// this true (kept visible even when disabled); Upcoming/Finished leave it
+  /// false so only the full-width View Match button shows.
   final bool showWatch;
   final VoidCallback? onWatchLive;
   final bool watchEnabled;
@@ -2109,97 +2262,164 @@ class _HomeActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
     // Nothing to show — collapse the bar entirely.
     if (!showWatch && !showView) return const SizedBox.shrink();
-    return Container(
-      height: 36,
-      decoration: BoxDecoration(
-        color: c.card.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(11),
-        border: Border.all(color: c.cyan.withValues(alpha: .45)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: showWatch
-                ? Opacity(
-                    opacity: watchEnabled ? 1 : 0.65,
-                    child: _segment(
-                      context,
-                      icon: Icons.podcasts_rounded,
-                      label: 'Watch Live',
-                      accent: true,
-                      trailingChevron: false,
-                      onTap: watchEnabled ? onWatchLive : null,
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          if (showWatch && showView)
-            Container(width: 1, height: 18, color: c.cyan.withValues(alpha: .3)),
-          Expanded(
-            child: showView
-                ? _segment(
-                    context,
-                    icon: Icons.bar_chart_rounded,
-                    label: 'View Match',
-                    accent: false,
-                    trailingChevron: true,
-                    onTap: onViewMatch,
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ],
-      ),
-    );
-  }
+    final watchBtn = showWatch
+        ? Opacity(
+            opacity: watchEnabled ? 1 : 0.55,
+            child: _FilledActionButton(
+              icon: Icons.podcasts_rounded,
+              label: 'Watch Live',
+              onTap: watchEnabled ? onWatchLive : null,
+            ),
+          )
+        : null;
+    final viewBtn = showView
+        ? _OutlinedActionButton(
+            icon: Icons.bar_chart_rounded,
+            label: 'View Match',
+            trailingChevron: true,
+            onTap: onViewMatch,
+          )
+        : null;
 
-  Widget _segment(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required bool accent,
-    required bool trailingChevron,
-    required VoidCallback? onTap,
-  }) {
+    if (watchBtn != null && viewBtn != null) {
+      return Row(
+        children: [
+          Expanded(child: watchBtn),
+          const SizedBox(width: 10),
+          Expanded(child: viewBtn),
+        ],
+      );
+    }
+    return watchBtn ?? viewBtn ?? const SizedBox.shrink();
+  }
+}
+
+/// Large filled gradient action button (Watch Live).
+class _FilledActionButton extends StatelessWidget {
+  const _FilledActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.cric;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: c.cyan.withValues(alpha: .16),
-              border: Border.all(color: c.cyan.withValues(alpha: .55)),
-            ),
-            alignment: Alignment.center,
-            child: Icon(icon, size: 10, color: c.cyan),
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xff35e2ff), Color(0xff0a86ff)],
           ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: accent ? c.cyan : c.text,
-                fontWeight: FontWeight.w800,
-                fontSize: 11.5,
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .45),
+              blurRadius: 16,
+              spreadRadius: -3,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: Colors.white),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
               ),
             ),
-          ),
-          if (trailingChevron) ...[
-            const SizedBox(width: 4),
-            Icon(Icons.chevron_right_rounded, size: 18, color: c.cyan),
           ],
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Large outlined action button (View Match).
+class _OutlinedActionButton extends StatelessWidget {
+  const _OutlinedActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.trailingChevron = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool trailingChevron;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: c.card.withValues(alpha: .35),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: c.cyan.withValues(alpha: .6), width: 1.2),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: c.cyan.withValues(alpha: .16),
+                border: Border.all(color: c.cyan.withValues(alpha: .55)),
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, size: 13, color: c.cyan),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.text,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            if (trailingChevron) ...[
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right_rounded, size: 19, color: c.cyan),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2350,12 +2570,11 @@ class _HomeCategoryFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
     return SizedBox(
-      height: 38,
+      height: 40,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
+        padding: const EdgeInsets.only(right: 8),
         itemCount: _labels.length + 1,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
@@ -2393,9 +2612,10 @@ class _HomeCategoryFilter extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
+        height: 36,
+        alignment: Alignment.center,
         padding: EdgeInsets.symmetric(
-          horizontal: label != null ? 14 : 10,
-          vertical: 8,
+          horizontal: label != null ? 15 : 11,
         ),
         decoration: BoxDecoration(
           color: active
@@ -2407,6 +2627,15 @@ class _HomeCategoryFilter extends StatelessWidget {
                 ? c.cyan.withValues(alpha: .8)
                 : c.cyan.withValues(alpha: .25),
           ),
+          boxShadow: active
+              ? [
+                  BoxShadow(
+                    color: c.cyan.withValues(alpha: .28),
+                    blurRadius: 12,
+                    spreadRadius: -3,
+                  ),
+                ]
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -2582,17 +2811,28 @@ class _FeaturedMatchesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Card width tuned so ~1.25–1.35 cards show at 360dp: the first card is
+    // comfortably sized and the next card peeks ~25–35% (a clear, premium
+    // preview), never a tiny sliver. A trailing inset keeps the last card off
+    // the screen edge.
+    final w = context.w;
+    final hp = context.horizontalPadding;
+    final cardWidth = ((w - hp * 2) * 0.78).clamp(248.0, 340.0);
     return SizedBox(
-      height: 120,
+      height: 172,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
+        clipBehavior: Clip.none,
+        padding: const EdgeInsets.only(right: 18),
         itemCount: matches.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, __) => const SizedBox(width: 14),
         itemBuilder: (context, index) {
-          return _FeaturedMatchMini(
-            match: matches[index],
-            onTap: () => onOpenMatch(matches[index].id),
+          return SizedBox(
+            width: cardWidth,
+            child: _FeaturedMatchMini(
+              match: matches[index],
+              onTap: () => onOpenMatch(matches[index].id),
+            ),
           );
         },
       ),
@@ -2616,90 +2856,213 @@ class _FeaturedMatchMini extends StatelessWidget {
             : ('UPCOMING', c.cyan);
     return TapScale(
       onTap: onTap,
-      borderRadius: 14,
+      borderRadius: 16,
       child: Container(
-        width: 180,
-        padding: const EdgeInsets.all(10),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: c.card.withValues(alpha: .5),
-          border: Border.all(color: c.cyan.withValues(alpha: .35)),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: c.cyan.withValues(alpha: .38), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .1),
+              blurRadius: 14,
+              spreadRadius: -8,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .34),
+              blurRadius: 14,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Row(
-              children: [
-                _StatusBadge(label: label, color: color, live: match.isLive, dense: true),
-                const Spacer(),
-                Flexible(
-                  child: Text(
-                    match.versusTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 11,
-                    ),
+            // Stadium background.
+            Positioned.fill(
+              child: Image.asset(
+                _HAsset.liveCardBg,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xff031126).withValues(alpha: .28),
+                      const Color(0xff020b18).withValues(alpha: .66),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TeamLogoWidget(
-                  logoUrl: match.teamALogo,
-                  teamName: match.teamA,
-                  abbreviation: match.teamAShort,
-                  color: c.cyan,
-                  size: 32,
-                ),
-                const SizedBox(width: 8),
-                Text('VS',
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 11)),
-                const SizedBox(width: 8),
-                TeamLogoWidget(
-                  logoUrl: match.teamBLogo,
-                  teamName: match.teamB,
-                  abbreviation: match.teamBShort,
-                  color: c.warning,
-                  size: 32,
-                ),
-              ],
-            ),
-            const Spacer(),
-            Row(
-              children: [
-                Text(
-                  match.teamAShort,
-                  style: TextStyle(
-                      color: c.text, fontWeight: FontWeight.w800, fontSize: 11),
-                ),
-                const Spacer(),
-                Text(
-                  _cardDateTime(match),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: c.muted, fontWeight: FontWeight.w600, fontSize: 10),
-                ),
-                const Spacer(),
-                Text(
-                  match.teamBShort,
-                  style: TextStyle(
-                      color: c.text, fontWeight: FontWeight.w800, fontSize: 11),
-                ),
-              ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Top: status badge + series title (title gets full width and
+                  // up to 2 lines so it never clips too early).
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: _StatusBadge(
+                            label: label,
+                            color: color,
+                            live: match.isLive,
+                            dense: true),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          match.series.isEmpty
+                              ? match.versusTitle
+                              : match.series,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12.5,
+                            height: 1.18,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  // Middle: logos + VS + codes.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: _MiniTeam(
+                          name: match.teamA,
+                          short: match.teamAShort,
+                          logo: match.teamALogo,
+                          accent: c.cyan,
+                        ),
+                      ),
+                      const _HomeVsBadge(width: 48, height: 33, intensity: 0.85),
+                      Expanded(
+                        child: _MiniTeam(
+                          name: match.teamB,
+                          short: match.teamBShort,
+                          logo: match.teamBLogo,
+                          accent: c.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  // Bottom: date + venue.
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_month_rounded,
+                          size: 12, color: c.cyan),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _cardDateTime(match),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .84),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.location_on_outlined,
+                          size: 12, color: c.cyan),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          match.venue.isEmpty ? 'Venue TBC' : match.venue,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .84),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Compact team block (logo + code) used inside Featured Matches cards.
+class _MiniTeam extends StatelessWidget {
+  const _MiniTeam({
+    required this.name,
+    required this.short,
+    required this.logo,
+    required this.accent,
+  });
+
+  final String name;
+  final String short;
+  final String? logo;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final code = (short.isEmpty ? name : short).toUpperCase();
+    final isPlaceholder = code == 'TBC' || code == 'TBD' || code.isEmpty;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TeamLogoWidget(
+          logoUrl: isPlaceholder ? null : logo,
+          teamName: name,
+          abbreviation: code,
+          color: accent,
+          size: 46,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          code,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: c.text,
+            fontWeight: FontWeight.w900,
+            fontSize: 15,
+            height: 1,
+          ),
+        ),
+        if (name.isNotEmpty && name.toUpperCase() != code) ...[
+          const SizedBox(height: 2),
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .68),
+              fontWeight: FontWeight.w600,
+              fontSize: 10,
+              height: 1,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -2719,26 +3082,26 @@ class _FeaturedSeriesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 140,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        itemCount: series.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          return _FeaturedSeriesMini(
-            series: series[index],
-            onTap: () => onOpenSeries(series[index]),
-          );
-        },
-      ),
+    // Premium full-width cinematic cards, stacked vertically. The target shows
+    // one prominent banner; when admins add several, each gets the same
+    // full-bleed treatment.
+    return Column(
+      children: [
+        for (var i = 0; i < series.length; i++)
+          Padding(
+            padding: EdgeInsets.only(bottom: i == series.length - 1 ? 0 : 14),
+            child: _FeaturedSeriesCard(
+              series: series[i],
+              onTap: () => onOpenSeries(series[i]),
+            ),
+          ),
+      ],
     );
   }
 }
 
-class _FeaturedSeriesMini extends StatelessWidget {
-  const _FeaturedSeriesMini({required this.series, required this.onTap});
+class _FeaturedSeriesCard extends StatelessWidget {
+  const _FeaturedSeriesCard({required this.series, required this.onTap});
 
   final HomeFeaturedSeries series;
   final VoidCallback onTap;
@@ -2746,24 +3109,37 @@ class _FeaturedSeriesMini extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final phone = context.w <= 430;
+    final height = phone ? 150.0 : 168.0;
     return TapScale(
       onTap: onTap,
-      borderRadius: 14,
+      borderRadius: 18,
       child: Container(
-        width: 200,
+        height: height,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: c.card.withValues(alpha: .5),
-          border: Border.all(color: c.cyan.withValues(alpha: .3)),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: c.cyan.withValues(alpha: .4), width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .12),
+              blurRadius: 18,
+              spreadRadius: -8,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .4),
+              blurRadius: 18,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Always render a stadium fallback so the image area is never
-            // empty; the network poster paints over it when available.
+            // Premium stadium fallback — always present so the image area is
+            // never empty; the admin poster paints over it when available.
             Image.asset(
-              _HAsset.liveCardBg,
+              _HAsset.heroBg,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
@@ -2771,81 +3147,166 @@ class _FeaturedSeriesMini extends StatelessWidget {
               Image.network(
                 series.imageUrl,
                 fit: BoxFit.cover,
-                // Keep the stadium fallback visible on error instead of
-                // collapsing the image area.
+                gaplessPlayback: true,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 loadingBuilder: (context, child, progress) {
                   if (progress == null) return child;
                   return const SizedBox.shrink();
                 },
               ),
+            // Strong left-to-right + bottom gradient so the title/date/location
+            // stay readable over any poster.
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Color(0xF2020B18),
+                    Color(0xB3020B18),
+                    Color(0x40020B18),
+                  ],
+                  stops: [0, .55, 1],
+                ),
+              ),
+            ),
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: .15),
-                    Colors.black.withValues(alpha: .78),
+                    Colors.black.withValues(alpha: .12),
+                    Colors.black.withValues(alpha: .66),
                   ],
-                  stops: const [0.35, 1],
+                  stops: const [.35, 1],
                 ),
               ),
             ),
-            Positioned(
-              left: 10,
-              right: 10,
-              bottom: 10,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 15, 16, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    series.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                      height: 1.2,
-                    ),
-                  ),
-                  if (series.dateRange.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      series.dateRange,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: .82),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10.5,
+                  // Optional "ODI SERIES"-style chip from the subtitle.
+                  if (series.subtitle.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: c.cyan.withValues(alpha: .2),
+                        borderRadius: BorderRadius.circular(999),
+                        border:
+                            Border.all(color: c.cyan.withValues(alpha: .75)),
+                      ),
+                      child: Text(
+                        series.subtitle.toUpperCase(),
+                        style: TextStyle(
+                          color: c.cyan,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 10,
+                          letterSpacing: .6,
+                        ),
                       ),
                     ),
-                  ],
-                  if (series.location.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on_outlined,
-                            size: 11, color: c.cyan),
-                        const SizedBox(width: 3),
-                        Flexible(
-                          child: Text(
-                            series.location,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: .8),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 10.5,
+                  const Spacer(),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              series.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: phone ? 19 : 22,
+                                height: 1.1,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black.withValues(alpha: .6),
+                                    blurRadius: 8,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
+                            const SizedBox(height: 7),
+                            Row(
+                              children: [
+                                if (series.dateRange.isNotEmpty) ...[
+                                  Icon(Icons.calendar_month_rounded,
+                                      size: 13, color: c.cyan),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      series.dateRange,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color:
+                                            Colors.white.withValues(alpha: .9),
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (series.dateRange.isNotEmpty &&
+                                    series.location.isNotEmpty)
+                                  const SizedBox(width: 12),
+                                if (series.location.isNotEmpty) ...[
+                                  Icon(Icons.location_on_outlined,
+                                      size: 13, color: c.cyan),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      series.location,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color:
+                                            Colors.white.withValues(alpha: .9),
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(width: 10),
+                      // Circular arrow button with subtle cyan glow, vertically
+                      // aligned with the title/meta block.
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c.cyan.withValues(alpha: .16),
+                          border: Border.all(
+                              color: c.cyan.withValues(alpha: .9), width: 1.4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: c.cyan.withValues(alpha: .4),
+                              blurRadius: 14,
+                              spreadRadius: -2,
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(Icons.arrow_forward_rounded,
+                            color: c.cyan, size: 22),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -2865,13 +3326,13 @@ const _months = [
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
-/// Hero card: `6 Jun 2026 • 06:00 AM`.
-String _heroDateTime(CricketMatch match) {
-  final dt = match.startDateTime?.toLocal();
-  if (dt == null) {
-    return match.statusText.isNotEmpty ? match.statusText : match.startTime;
-  }
-  return '${dt.day} ${_months[dt.month - 1]} ${dt.year} • ${_clock(dt)}';
+/// Hero card title — prefers the match's own title (e.g. "Afghanistan vs
+/// India - Test Live Stream"), falling back to the series name then the
+/// derived "TeamA vs TeamB" so the carousel is never blank.
+String _heroTitle(CricketMatch match) {
+  if (match.title.trim().isNotEmpty) return match.title.trim();
+  if (match.series.trim().isNotEmpty) return match.series.trim();
+  return match.versusTitle;
 }
 
 /// List card: `Jun 6 • 06:00 AM`.

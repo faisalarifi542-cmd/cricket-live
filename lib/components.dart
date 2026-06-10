@@ -446,6 +446,107 @@ class TeamLogoWidget extends StatelessWidget {
   }
 }
 
+/// Unified player avatar used everywhere a player photo appears (squads,
+/// player profile, rankings, top performers, scorecard rows, …).
+///
+/// The backend resolves the correct image URL ahead of time according to the
+/// admin/provider/initials priority and per-player override, so this widget
+/// only has to:
+///   1. show the resolved network image when present,
+///   2. fall back to clean initials,
+/// and NEVER display a broken-image icon (a failed/empty URL → initials).
+class PlayerAvatarWidget extends StatelessWidget {
+  const PlayerAvatarWidget({
+    super.key,
+    required this.name,
+    this.imageUrl,
+    this.size = 56,
+    this.borderColor,
+    this.accent,
+  });
+
+  final String name;
+  final String? imageUrl;
+  final double size;
+  final Color? borderColor;
+
+  /// Optional accent used to tint the initials fallback gradient.
+  final Color? accent;
+
+  bool get _hasImage {
+    final u = imageUrl?.trim();
+    return u != null && u.isNotEmpty && u.startsWith('http');
+  }
+
+  static String _initials(String name) {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final border = borderColor ?? c.cyan.withValues(alpha: .45);
+    final tint = accent ?? c.cyan;
+    return Container(
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            tint.withValues(alpha: .22),
+            const Color(0xff071726),
+          ],
+        ),
+        border: Border.all(color: border, width: size < 32 ? 1.2 : 2),
+      ),
+      child: _hasImage
+          ? Image.network(
+              imageUrl!.trim(),
+              // Key by URL so a changed image always rebuilds a fresh element
+              // and never shows a stale (previous player's) frame.
+              key: ValueKey(imageUrl!.trim()),
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return _initialsBox(context);
+              },
+              errorBuilder: (_, __, ___) => _initialsBox(context),
+            )
+          : _initialsBox(context),
+    );
+  }
+
+  Widget _initialsBox(BuildContext context) {
+    final c = context.cric;
+    return Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Padding(
+          padding: EdgeInsets.all(size * 0.18),
+          child: Text(
+            _initials(name),
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w900,
+              fontSize: size * .36,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PlayerAvatar extends StatelessWidget {
   const PlayerAvatar({
     super.key,
@@ -461,6 +562,19 @@ class PlayerAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final asset = player.asset;
+    final isNetwork = asset != null && asset.startsWith('http');
+    // Network/no-image cases route through the shared PlayerAvatarWidget so the
+    // admin/provider/initials behaviour is identical everywhere. Only local
+    // asset paths keep the bespoke asset rendering.
+    if (asset == null || isNetwork) {
+      return PlayerAvatarWidget(
+        name: player.name,
+        imageUrl: isNetwork ? asset : null,
+        size: size,
+        borderColor: borderColor,
+      );
+    }
     return Container(
       width: size,
       height: size,
@@ -470,38 +584,10 @@ class PlayerAvatar extends StatelessWidget {
         color: c.card2,
         border: Border.all(color: borderColor ?? c.border, width: 1.2),
       ),
-      child: player.asset != null
-          ? (player.asset!.startsWith('http')
-              ? Image.network(
-                  player.asset!,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                  loadingBuilder: (context, child, progress) {
-                    if (progress == null) return child;
-                    return _loading(context);
-                  },
-                  errorBuilder: (_, __, ___) => _initials(context),
-                )
-              : Image.asset(
-                  player.asset!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _initials(context),
-                ))
-          : _initials(context),
-    );
-  }
-
-  Widget _loading(BuildContext context) {
-    final c = context.cric;
-    return Center(
-      child: SizedBox(
-        width: size * .32,
-        height: size * .32,
-        child: CircularProgressIndicator(
-          strokeWidth: 2.2,
-          valueColor: AlwaysStoppedAnimation<Color>(c.cyan),
-        ),
+      child: Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _initials(context),
       ),
     );
   }

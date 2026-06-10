@@ -272,7 +272,10 @@ export default async function adminPanelRoutes(fastify) {
 
   const simpleList = async (table, order = 'created_at DESC') => ({ success: true, data: await query(`SELECT * FROM ${table} ORDER BY ${order} LIMIT 500`).catch(() => []) });
   fastify.get('/admin/series', { preHandler: [adminAuth, requirePermissions('series.view')] }, () => simpleList('series', 'start_date DESC'));
-  fastify.get('/admin/players', { preHandler: [adminAuth, requirePermissions('players.view')] }, () => simpleList('players', 'name ASC'));
+  // NOTE: GET /admin/players is intentionally NOT registered here. The richer
+  // player-image-aware list (admin/provider image fields, global mode, resolved
+  // URL) lives in routes/extra.routes.js. Registering it in both places throws
+  // FST_ERR_DUPLICATED_ROUTE on boot.
   fastify.get('/admin/schedule', { preHandler: [adminAuth, requirePermissions('schedule.view')] }, () => simpleList('matches', 'start_time ASC'));
   fastify.get('/admin/news', { preHandler: [adminAuth, requirePermissions('news.view')] }, () => simpleList('custom_news'));
   fastify.get('/admin/notifications', { preHandler: [adminAuth, requirePermissions('notifications.view')] }, () => simpleList('push_notifications'));

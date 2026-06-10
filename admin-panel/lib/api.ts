@@ -483,7 +483,8 @@ export const teamsApi = {
 };
 
 export const playersApi = {
-  list: () => adminFetch<{ success: true; data: any[] }>('/admin/players'),
+  list: () =>
+    adminFetch<{ success: true; data: any[]; globalMode: string }>('/admin/players'),
   get: (id: string) =>
     adminFetch<{ success: true; data: any }>(`/admin/players/${id}`),
   refresh: (id: string) =>
@@ -492,7 +493,80 @@ export const playersApi = {
     adminFetch<{ success: true }>(`/admin/players/${id}/cache-clear`, {
       method: 'POST',
     }),
+  // Persist a player's image fields / override. The app resolves the shown
+  // image from these according to the global/per-player mode.
+  update: (id: string | number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/players/${id}`, {
+      method: 'PUT',
+      body: j(body),
+    }),
+  create: (body: Record<string, unknown>) =>
+    adminFetch<{ success: true; id: number; data?: { id: number } }>('/admin/players', {
+      method: 'POST',
+      body: j(body),
+    }),
+  delete: (id: string | number) =>
+    adminFetch<{ success: true }>(`/admin/players/${id}`, { method: 'DELETE' }),
+  // Upload a player photo as a base64 data URL; returns a public URL.
+  uploadImage: (dataUrl: string, mimeType?: string) =>
+    adminFetch<{ success: true; url: string; relativeUrl: string; bytes: number }>(
+      '/admin/players/upload-image',
+      { method: 'POST', body: j({ dataUrl, mimeType }) },
+    ),
+  // Persist ONLY the image fields for a player.
+  updateImage: (id: string | number, body: Record<string, unknown>) =>
+    adminFetch<{ success: true }>(`/admin/players/${id}/image`, {
+      method: 'PUT',
+      body: j(body),
+    }),
+  // Remove only the admin-uploaded image (keeps any provider image).
+  removeImage: (id: string | number) =>
+    adminFetch<{ success: true }>(`/admin/players/${id}/image`, { method: 'DELETE' }),
+  // Global image resolution mode (canonical endpoint + spec-named alias).
+  getImageMode: () =>
+    adminFetch<{ success: true; mode: string; modes: string[] }>(
+      '/admin/players/image-mode',
+    ),
+  setImageMode: (mode: string) =>
+    adminFetch<{ success: true; mode: string }>('/admin/players/image-mode', {
+      method: 'PUT',
+      body: j({ mode }),
+    }),
+  getImageSettings: () =>
+    adminFetch<{ success: true; data: { mode: string; modes: string[]; defaultMode: string } }>(
+      '/admin/player-image-settings',
+    ),
+  setImageSettings: (mode: string) =>
+    adminFetch<{ success: true; data: { mode: string } }>('/admin/player-image-settings', {
+      method: 'PUT',
+      body: j({ mode }),
+    }),
+  // Bulk tools.
+  refreshImages: (onlyMissing = true) =>
+    adminFetch<{ success: true; scanned: number; updated: number }>(
+      '/admin/players/refresh-images',
+      { method: 'POST', body: j({ onlyMissing }) },
+    ),
+  applyGlobalMode: () =>
+    adminFetch<{ success: true }>('/admin/players/apply-global-mode', {
+      method: 'POST',
+    }),
+  clearAdminImages: () =>
+    adminFetch<{ success: true; affected: number }>('/admin/players/clear-admin-images', {
+      method: 'POST',
+      body: j({ confirm: true }),
+    }),
 };
+
+export const PLAYER_IMAGE_MODES = [
+  'admin_first',
+  'cricbuzz_first',
+  'admin_only',
+  'cricbuzz_only',
+  'initials_only',
+] as const;
+
+export type PlayerImageMode = (typeof PLAYER_IMAGE_MODES)[number];
 
 export const scheduleApi = {
   list: () => adminFetch<{ success: true; data: any[] }>('/admin/schedule'),

@@ -910,6 +910,23 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'teams', 'team_type', "team_type VARCHAR(20) DEFAULT 'international'");
   await addColumnIfMissing(pool, 'teams', 'metadata', 'metadata JSON NULL');
 
+  // Player image management (admin-first, mirrors the teams logo split).
+  //   admin_image_url    — operator-uploaded photo (highest priority)
+  //   provider_image_url — Cricbuzz/provider photo (kept in sync separately
+  //                        from the legacy `image_url` so admins can clear an
+  //                        override without losing the provider source)
+  //   image_mode         — per-player override of the global resolution mode
+  //   is_image_active    — toggles the per-player override on/off
+  //   is_active          — soft-delete flag (parity with teams)
+  await addColumnIfMissing(pool, 'players', 'player_external_id', 'player_external_id VARCHAR(60) NULL');
+  await addColumnIfMissing(pool, 'players', 'country', 'country VARCHAR(120) NULL');
+  await addColumnIfMissing(pool, 'players', 'admin_image_url', 'admin_image_url TEXT NULL');
+  await addColumnIfMissing(pool, 'players', 'provider_image_url', 'provider_image_url TEXT NULL');
+  await addColumnIfMissing(pool, 'players', 'image_mode', 'image_mode VARCHAR(20) NULL');
+  await addColumnIfMissing(pool, 'players', 'image_updated_at', 'image_updated_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'players', 'is_image_active', 'is_image_active TINYINT(1) DEFAULT 1');
+  await addColumnIfMissing(pool, 'players', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+
   await addColumnIfMissing(pool, 'match_streams', 'match_title', 'match_title VARCHAR(250) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'team_a', 'team_a VARCHAR(180) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'team_b', 'team_b VARCHAR(180) NULL');

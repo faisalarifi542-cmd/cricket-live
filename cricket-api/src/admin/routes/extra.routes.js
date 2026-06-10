@@ -16,6 +16,14 @@ import { recordNotificationHistory, sendOneSignalNotification } from '../../lib/
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../rbac.js';
 import { saveBase64Image } from '../../lib/uploads.js';
 import { invalidateAdminTeamLogoIndex } from '../../lib/team-logos.js';
+import {
+  invalidateAdminPlayerImageIndex,
+  getPlayerImageMode,
+  resolvePlayerImage,
+  PLAYER_IMAGE_MODES,
+  PLAYER_IMAGE_MODE_SETTING_KEY,
+} from '../../lib/player-images.js';
+import { getPlayerImageUrl } from '../../lib/image-helper.js';
 import { CricbuzzProvider } from '../../providers/cricbuzz/index.js';
 
 async function clearPattern(redis, pattern) {
@@ -650,6 +658,353 @@ export default async function extraAdminRoutes(fastify) {
     );
     invalidateAdminTeamLogoIndex();
     return { success: true };
+  });
+
+  /* =====================================================
+   * PLAYERS — image management (admin-managed player photos)
+   * Mirrors the teams flag/logo system: operators upload a player photo
+   * (stored under /uploads, served publicly) or set a provider image URL, and
+   * a global resolution mode (admin_first by default) plus per-player override
+   * controls which image the app shows everywhere. enrichPlayerImages applies
+   * this to every public response carrying player objects.
+   * ===================================================== */
+  fastify.get('/players', { preHandler: [requirePermissions('players.view')] }, async (request) => {
+    const q = String(request.query?.search || request.query?.q || '').trim();
+    const params = [];
+    let where = `WHERE COALESCE(is_active, 1) IN (0, 1)`;
+    if (q) {
+      where = `WHERE (name LIKE ? OR full_name LIKE ? OR external_id LIKE ? OR player_external_id LIKE ?)`;
+      const like = `%${q}%`;
+      params.push(like, like, like, like);
+    }
+    const rows = await query(
+      `SELECT id, external_id, player_external_id, name, full_name, country, role,
+              batting_style, bowling_style,
+              image_url, admin_image_url, provider_image_url, image_mode,
+              image_updated_at, is_image_active, is_active, team_id,
+              created_at, updated_at
+         FROM players
+         ${where}
+        ORDER BY COALESCE(is_active, 1) DESC, name ASC
+        LIMIT 2000`,
+      params,
+    ).catch(() => []);
+    const mode = await getPlayerImageMode();
+    return {
+      success: true,
+      globalMode: mode,
+      data: rows.map((r) => ({
+        ...r,
+        is_active: r.is_active !== 0,
+        is_image_active: r.is_image_active !== 0,
+        resolved_image_url: resolvePlayerImage({
+          mode: r.image_mode && r.is_image_active !== 0 ? r.image_mode : mode,
+          adminImage: r.admin_image_url,
+          providerImage: r.provider_image_url || r.image_url,
+        }),
+      })),
+    };
+  });
+
+  // Global player-image mode (admin_first | cricbuzz_first | admin_only |
+  // cricbuzz_only | initials_only). Stored in app_settings.
+  fastify.get('/players/image-mode', { preHandler: [requirePermissions('players.view')] }, async () => {
+    const mode = await getPlayerImageMode();
+    return { success: true, mode, modes: PLAYER_IMAGE_MODES };
+  });
+
+  fastify.put('/players/image-mode', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const mode = String(request.body?.mode || '').trim().toLowerCase();
+    if (!PLAYER_IMAGE_MODES.includes(mode)) {
+      return reply.code(400).send({ success: false, error: 'Invalid mode' });
+    }
+    await withAudit(
+      request,
+      { action: 'players.imageMode.set', entityType: 'player', newValue: { mode } },
+      () => query(
+        `INSERT INTO app_settings (setting_key, setting_value, \`group\`, description, updated_by)
+         VALUES (?, ?, 'players', 'Global player image resolution mode', ?)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
+        [PLAYER_IMAGE_MODE_SETTING_KEY, JSON.stringify(mode), request.adminUser?.id || null],
+      ),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, mode };
+  });
+
+  // Upload a player photo (base64 data URL) → returns a public /uploads URL.
+  fastify.post(
+    '/players/upload-image',
+    { preHandler: [requirePermissions('players.write')], bodyLimit: 8 * 1024 * 1024 },
+    async (request, reply) => {
+      const body = request.body || {};
+      const data = body.dataUrl || body.data || body.image || '';
+      try {
+        const { relativeUrl, bytes } = saveBase64Image(data, body.mimeType || '');
+        const proto = request.headers['x-forwarded-proto'] || request.protocol || 'https';
+        const host = request.headers['x-forwarded-host'] || request.headers.host;
+        const url = host ? `${proto}://${host}${relativeUrl}` : relativeUrl;
+        await withAudit(
+          request,
+          { action: 'player.image.upload', entityType: 'player', newValue: { url, bytes } },
+          async () => null,
+        );
+        return reply.code(201).send({ success: true, url, relativeUrl, bytes });
+      } catch (err) {
+        return reply
+          .code(err.statusCode || 500)
+          .send({ success: false, error: err.message || 'Upload failed' });
+      }
+    },
+  );
+
+  // Bulk: fetch/refresh provider images from Cricbuzz for players that are
+  // missing a provider image. Best-effort; never throws.
+  fastify.post('/players/refresh-images', { preHandler: [requirePermissions('players.write')] }, async (request) => {
+    const onlyMissing = bool(request.body?.onlyMissing, 1) === 1;
+    const rows = await query(
+      `SELECT id, external_id, player_external_id, metadata, image_url, provider_image_url
+         FROM players
+        WHERE COALESCE(is_active, 1) = 1
+        ${onlyMissing ? `AND (provider_image_url IS NULL OR TRIM(provider_image_url) = '')` : ''}
+        LIMIT 2000`,
+    ).catch(() => []);
+    let updated = 0;
+    for (const r of rows) {
+      let imageId = null;
+      const meta = typeof r.metadata === 'string'
+        ? (() => { try { return JSON.parse(r.metadata); } catch { return null; } })()
+        : r.metadata;
+      if (meta && (meta.faceImageId || meta.imageId)) imageId = meta.faceImageId || meta.imageId;
+      const providerUrl = imageId ? getPlayerImageUrl(imageId) : null;
+      if (!providerUrl) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await query(
+        `UPDATE players
+            SET provider_image_url = ?, image_updated_at = NOW()
+          WHERE id = ?`,
+        [providerUrl, r.id],
+      ).catch(() => null);
+      updated += 1;
+    }
+    invalidateAdminPlayerImageIndex();
+    await withAudit(
+      request,
+      { action: 'players.refreshImages', entityType: 'player', newValue: { scanned: rows.length, updated } },
+      async () => null,
+    );
+    return { success: true, scanned: rows.length, updated };
+  });
+
+  // Bulk: apply the global mode to every player (clears per-player overrides).
+  fastify.post('/players/apply-global-mode', { preHandler: [requirePermissions('players.write')] }, async (request) => {
+    await withAudit(
+      request,
+      { action: 'players.applyGlobalMode', entityType: 'player' },
+      () => query(`UPDATE players SET image_mode = NULL WHERE COALESCE(is_active, 1) = 1`),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true };
+  });
+
+  // Bulk: clear all admin uploaded images (confirmation required in body).
+  fastify.post('/players/clear-admin-images', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    if (request.body?.confirm !== true) {
+      return reply.code(400).send({ success: false, error: 'Confirmation required' });
+    }
+    const result = await withAudit(
+      request,
+      { action: 'players.clearAdminImages', entityType: 'player' },
+      () => query(`UPDATE players SET admin_image_url = NULL, image_updated_at = NOW() WHERE admin_image_url IS NOT NULL`),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, affected: result?.affectedRows ?? 0 };
+  });
+
+  // Create a player record (admin-defined).
+  fastify.post('/players', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const body = request.body || {};
+    const name = String(body.name || '').trim();
+    if (!name) return reply.code(400).send({ success: false, message: 'name required' });
+    const mode = body.image_mode && PLAYER_IMAGE_MODES.includes(body.image_mode) ? body.image_mode : null;
+    const teamId = body.team_id === undefined || body.team_id === null || body.team_id === ''
+      ? null
+      : Number(body.team_id) || null;
+    const result = await withAudit(
+      request,
+      { action: 'player.create', entityType: 'player', newValue: { name } },
+      () => query(
+        `INSERT INTO players
+           (external_id, player_external_id, name, full_name, country, role,
+            batting_style, bowling_style, team_id,
+            image_url, admin_image_url, provider_image_url, image_mode,
+            is_image_active, is_active, image_updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          cleanTeamText(body.external_id) || null,
+          cleanTeamText(body.player_external_id || body.external_id) || null,
+          name,
+          cleanTeamText(body.full_name) || null,
+          cleanTeamText(body.country) || null,
+          cleanTeamText(body.role) || null,
+          cleanTeamText(body.batting_style) || null,
+          cleanTeamText(body.bowling_style) || null,
+          teamId,
+          cleanTeamText(body.image_url) || null,
+          cleanTeamText(body.admin_image_url) || null,
+          cleanTeamText(body.provider_image_url) || null,
+          mode,
+          bool(body.is_image_active, 1),
+          bool(body.is_active, 1),
+        ],
+      ),
+    );
+    invalidateAdminPlayerImageIndex();
+    return reply.code(201).send({ success: true, data: { id: result.insertId }, id: result.insertId });
+  });
+
+  // Update a player. Accepts profile fields and image fields together.
+  fastify.put('/players/:id', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const old = await query(
+      `SELECT * FROM players WHERE id = ? OR external_id = ? OR player_external_id = ? LIMIT 1`,
+      [request.params.id, request.params.id, request.params.id],
+    ).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, message: 'Not found' });
+    const body = request.body || {};
+    const allowed = [
+      'name', 'full_name', 'country', 'role', 'batting_style', 'bowling_style',
+      'team_id', 'external_id', 'player_external_id',
+      'image_url', 'admin_image_url', 'provider_image_url', 'image_mode',
+      'is_image_active', 'is_active',
+    ];
+    const set = [];
+    const vals = [];
+    for (const k of allowed) {
+      if (body[k] === undefined) continue;
+      if (k === 'image_mode') {
+        const m = body[k] == null || body[k] === ''
+          ? null
+          : (PLAYER_IMAGE_MODES.includes(body[k]) ? body[k] : undefined);
+        if (m === undefined) return reply.code(400).send({ success: false, message: 'Invalid image_mode' });
+        set.push('image_mode = ?');
+        vals.push(m);
+      } else if (k === 'is_image_active' || k === 'is_active') {
+        set.push(`${k} = ?`);
+        vals.push(bool(body[k], 1));
+      } else if (k === 'team_id') {
+        set.push('team_id = ?');
+        vals.push(body[k] === '' || body[k] === null ? null : Number(body[k]) || null);
+      } else {
+        set.push(`${k} = ?`);
+        vals.push(body[k] === '' ? null : body[k]);
+      }
+    }
+    if (!set.length) return reply.code(400).send({ success: false, message: 'No fields to update' });
+    set.push('image_updated_at = NOW()');
+    await withAudit(
+      request,
+      { action: 'player.update', entityType: 'player', entityId: old[0].id, oldValue: old[0], newValue: body },
+      () => query(`UPDATE players SET ${set.join(', ')} WHERE id = ?`, [...vals, old[0].id]),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, data: { id: old[0].id } };
+  });
+
+  // Update ONLY a player's image fields (upload URL, provider URL, mode, active).
+  fastify.put('/players/:id/image', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const old = await query(
+      `SELECT * FROM players WHERE id = ? OR external_id = ? OR player_external_id = ? LIMIT 1`,
+      [request.params.id, request.params.id, request.params.id],
+    ).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, message: 'Not found' });
+    const body = request.body || {};
+    const allowed = ['admin_image_url', 'provider_image_url', 'image_url', 'image_mode', 'is_image_active'];
+    const set = [];
+    const vals = [];
+    for (const k of allowed) {
+      if (body[k] === undefined) continue;
+      if (k === 'image_mode') {
+        const m = body[k] == null || body[k] === ''
+          ? null
+          : (PLAYER_IMAGE_MODES.includes(body[k]) ? body[k] : undefined);
+        if (m === undefined) return reply.code(400).send({ success: false, message: 'Invalid image_mode' });
+        set.push('image_mode = ?');
+        vals.push(m);
+      } else if (k === 'is_image_active') {
+        set.push('is_image_active = ?');
+        vals.push(bool(body[k], 1));
+      } else {
+        set.push(`${k} = ?`);
+        vals.push(body[k] === '' ? null : body[k]);
+      }
+    }
+    if (!set.length) return reply.code(400).send({ success: false, message: 'No image fields to update' });
+    set.push('image_updated_at = NOW()');
+    await withAudit(
+      request,
+      { action: 'player.image.update', entityType: 'player', entityId: old[0].id, oldValue: old[0], newValue: body },
+      () => query(`UPDATE players SET ${set.join(', ')} WHERE id = ?`, [...vals, old[0].id]),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, data: { id: old[0].id } };
+  });
+
+  // Delete a player. Referencing rows (matches/scorecards) use ON DELETE SET
+  // NULL so this is safe; we hard-delete so the player truly disappears.
+  fastify.delete('/players/:id', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const old = await query(
+      `SELECT * FROM players WHERE id = ? OR external_id = ? OR player_external_id = ? LIMIT 1`,
+      [request.params.id, request.params.id, request.params.id],
+    ).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, message: 'Not found' });
+    await withAudit(
+      request,
+      { action: 'player.delete', entityType: 'player', entityId: old[0].id, oldValue: old[0] },
+      () => query(`DELETE FROM players WHERE id = ?`, [old[0].id]),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, data: { id: old[0].id } };
+  });
+
+  // Remove an admin uploaded image for a single player (keeps provider image).
+  fastify.delete('/players/:id/image', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const old = await query(
+      `SELECT * FROM players WHERE id = ? OR external_id = ? OR player_external_id = ? LIMIT 1`,
+      [request.params.id, request.params.id, request.params.id],
+    ).catch(() => []);
+    if (!old.length) return reply.code(404).send({ success: false, message: 'Not found' });
+    await withAudit(
+      request,
+      { action: 'player.image.remove', entityType: 'player', entityId: old[0].id, oldValue: old[0] },
+      () => query(`UPDATE players SET admin_image_url = NULL, image_updated_at = NOW() WHERE id = ?`, [old[0].id]),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, data: { id: old[0].id } };
+  });
+
+  // Global player image settings (spec-named aliases of /players/image-mode).
+  fastify.get('/player-image-settings', { preHandler: [requirePermissions('players.view')] }, async () => {
+    const mode = await getPlayerImageMode();
+    return { success: true, data: { mode, modes: PLAYER_IMAGE_MODES, defaultMode: 'admin_first' } };
+  });
+
+  fastify.put('/player-image-settings', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const mode = String(request.body?.mode || '').trim().toLowerCase();
+    if (!PLAYER_IMAGE_MODES.includes(mode)) {
+      return reply.code(400).send({ success: false, message: 'Invalid mode' });
+    }
+    await withAudit(
+      request,
+      { action: 'players.imageSettings.set', entityType: 'player', newValue: { mode } },
+      () => query(
+        `INSERT INTO app_settings (setting_key, setting_value, \`group\`, description, updated_by)
+         VALUES (?, ?, 'players', 'Global player image resolution mode', ?)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
+        [PLAYER_IMAGE_MODE_SETTING_KEY, JSON.stringify(mode), request.adminUser?.id || null],
+      ),
+    );
+    invalidateAdminPlayerImageIndex();
+    return { success: true, data: { mode } };
   });
 
   fastify.post('/schedule/refresh', { preHandler: [requirePermissions('schedule.write')] }, async (request) => {

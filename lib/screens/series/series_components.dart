@@ -1034,63 +1034,14 @@ class SeriesPlayerAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    final hasImage = imageUrl != null && imageUrl!.trim().isNotEmpty;
-    return Container(
-      width: size,
-      height: size,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            c.cyan.withValues(alpha: .22),
-            const Color(0xff071726),
-          ],
-        ),
-        border: Border.all(
-          color: borderColor ?? c.cyan.withValues(alpha: .45),
-          width: 2,
-        ),
-      ),
-      child: hasImage
-          ? Image.network(
-              imageUrl!,
-              // Key by the URL so a changed image always rebuilds a fresh
-              // element — never displays a stale (previous player's) frame.
-              key: ValueKey(imageUrl),
-              fit: BoxFit.cover,
-              webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return _initials(context);
-              },
-              errorBuilder: (_, __, ___) => _initials(context),
-            )
-          : _initials(context),
-    );
-  }
-
-  Widget _initials(BuildContext context) {
-    final c = context.cric;
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    final initials = parts.isEmpty
-        ? '?'
-        : parts.length == 1
-            ? parts.first.substring(0, 1).toUpperCase()
-            : (parts.first[0] + parts.last[0]).toUpperCase();
-    return Center(
-      child: Text(
-        initials,
-        style: TextStyle(
-          color: c.text,
-          fontWeight: FontWeight.w900,
-          fontSize: size * .32,
-        ),
-      ),
+    // Delegate to the shared PlayerAvatarWidget so player photos resolve
+    // identically (admin → provider → initials, never a broken icon)
+    // everywhere they appear.
+    return PlayerAvatarWidget(
+      name: name,
+      imageUrl: imageUrl,
+      size: size,
+      borderColor: borderColor,
     );
   }
 }
