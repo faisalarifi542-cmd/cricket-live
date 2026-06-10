@@ -194,11 +194,7 @@ class MDGlassPanel extends StatelessWidget {
             blurRadius: 18,
             spreadRadius: -8,
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .38),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
+          ...c.heroShadow.skip(1),
         ],
       ),
       child: Stack(
@@ -214,7 +210,9 @@ class MDGlassPanel extends StatelessWidget {
             Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xff04142b).withValues(alpha: .68),
+                  color: c.isDark
+                      ? const Color(0xff04142b).withValues(alpha: .68)
+                      : Colors.white.withValues(alpha: .55),
                 ),
               ),
             ),
@@ -632,7 +630,7 @@ class MDTeamScoreBlock extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: .72),
+                color: c.onImageText,
                 fontWeight: FontWeight.w600,
                 fontSize: 12,
               ),
@@ -696,11 +694,7 @@ class MatchHeroScoreCard extends StatelessWidget {
             blurRadius: 26,
             spreadRadius: -8,
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .4),
-            blurRadius: 18,
-            offset: const Offset(0, 9),
-          ),
+          ...c.heroShadow.skip(1),
         ],
       ),
       child: Stack(
@@ -710,7 +704,7 @@ class MatchHeroScoreCard extends StatelessWidget {
               MDAsset.heroBg,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: Color(0xff071726)),
+                  ColoredBox(color: c.isDark ? const Color(0xff071726) : c.card),
             ),
           ),
           Positioned.fill(
@@ -719,11 +713,7 @@ class MatchHeroScoreCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    const Color(0xff04122a).withValues(alpha: .18),
-                    const Color(0xff04162e).withValues(alpha: .32),
-                    const Color(0xff020b18).withValues(alpha: .56),
-                  ],
+                  colors: c.heroOverlayColors,
                 ),
               ),
             ),
@@ -814,7 +804,7 @@ class MatchHeroScoreCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: .82),
+                            color: c.onImageText,
                             fontWeight: FontWeight.w600,
                             fontSize: 11.5,
                             height: 1.2,
@@ -946,7 +936,7 @@ class MDUpdatedRow extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .82),
+              color: c.onImageText,
               fontWeight: FontWeight.w700,
               fontSize: 12.5,
             ),

@@ -378,7 +378,9 @@ class _PremiumRankingCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .28),
+            color: c.isDark
+                ? Colors.black.withValues(alpha: .28)
+                : const Color(0xff4a7fb5).withValues(alpha: .10),
             blurRadius: 24,
             offset: const Offset(0, 10),
           ),

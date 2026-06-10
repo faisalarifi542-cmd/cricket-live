@@ -95,10 +95,7 @@ class HighlightDetailScreen extends StatelessWidget {
                                 gradient: LinearGradient(
                                   begin: Alignment.topCenter,
                                   end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.black.withValues(alpha: .2),
-                                    Colors.black.withValues(alpha: .6),
-                                  ],
+                                  colors: c.matchCardOverlayColors,
                                 ),
                               ),
                             ),
@@ -134,7 +131,7 @@ class HighlightDetailScreen extends StatelessWidget {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: .8),
+                                color: c.isDark ? Colors.black.withValues(alpha: .8) : c.card.withValues(alpha: .85),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
@@ -419,7 +416,7 @@ class _RelatedVideoCard extends StatelessWidget {
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .7),
+                      color: c.isDark ? Colors.black.withValues(alpha: .7) : c.card.withValues(alpha: .8),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.play_arrow_rounded,
@@ -433,7 +430,7 @@ class _RelatedVideoCard extends StatelessWidget {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .8),
+                      color: c.isDark ? Colors.black.withValues(alpha: .8) : c.card.withValues(alpha: .85),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(

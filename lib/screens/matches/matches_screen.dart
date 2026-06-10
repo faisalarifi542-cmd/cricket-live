@@ -335,12 +335,7 @@ class _MatchesScreenState extends State<MatchesScreen>
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          const Color(0xff04132a).withValues(alpha: .55),
-                          const Color(0xff04101f).withValues(alpha: .78),
-                          c.bg.withValues(alpha: .98),
-                          c.bg,
-                        ],
+                        colors: c.stadiumOverlayColors,
                         stops: const [0, .4, .85, 1],
                       ),
                     ),
@@ -882,18 +877,7 @@ class _MatchCardShell extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: c.cyan.withValues(alpha: .4)),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .1),
-              blurRadius: 20,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .3),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: Stack(
           children: [
@@ -915,11 +899,17 @@ class _MatchCardShell extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      const Color(0xff0a2240).withValues(alpha: .16),
-                      c.card.withValues(alpha: .08),
-                      const Color(0xff06182c).withValues(alpha: .32),
-                    ],
+                    colors: c.isDark
+                        ? [
+                            const Color(0xff0a2240).withValues(alpha: .16),
+                            c.card.withValues(alpha: .08),
+                            const Color(0xff06182c).withValues(alpha: .32),
+                          ]
+                        : [
+                            Colors.white.withValues(alpha: .30),
+                            c.card.withValues(alpha: .20),
+                            Colors.white.withValues(alpha: .45),
+                          ],
                   ),
                 ),
               ),
@@ -932,10 +922,15 @@ class _MatchCardShell extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
                     end: Alignment.center,
-                    colors: [
-                      const Color(0xff041020).withValues(alpha: .48),
-                      Colors.transparent,
-                    ],
+                    colors: c.isDark
+                        ? [
+                            const Color(0xff041020).withValues(alpha: .48),
+                            Colors.transparent,
+                          ]
+                        : [
+                            Colors.white.withValues(alpha: .55),
+                            Colors.transparent,
+                          ],
                   ),
                 ),
               ),

@@ -42,8 +42,7 @@ class FeaturedVideoCard extends StatelessWidget {
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
                             colors: [
-                  Colors.black.withValues(alpha: .10),
-                  Colors.black.withValues(alpha: .74)
+                  ...c.matchCardOverlayColors
                 ])))),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,

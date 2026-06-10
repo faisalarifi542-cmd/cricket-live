@@ -42,12 +42,7 @@ class HomeHeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: c.border),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: .32),
-              blurRadius: 26,
-              offset: const Offset(0, 12))
-        ],
+        boxShadow: c.heroShadow,
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -66,10 +61,7 @@ class HomeHeroCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: .22),
-                    Colors.black.withValues(alpha: .68)
-                  ],
+                  colors: c.matchCardOverlayColors,
                 ),
               ),
             ),
@@ -91,7 +83,7 @@ class HomeHeroCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                color: Colors.white.withValues(alpha: .88),
+                                color: c.onImageText,
                                 fontWeight: FontWeight.w700))),
                 ],
               ),
@@ -149,7 +141,7 @@ class HomeHeroCard extends StatelessWidget {
                         height: compact ? 46 : 58,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Colors.black.withValues(alpha: .22),
+                          color: c.isDark ? Colors.black.withValues(alpha: .22) : c.card.withValues(alpha: .55),
                           border: Border.all(color: c.border),
                         ),
                         alignment: Alignment.center,
@@ -182,7 +174,7 @@ class HomeHeroCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          color: Colors.white.withValues(alpha: .82),
+                          color: c.onImageText,
                           fontWeight: FontWeight.w600)),
                 )
               else if (!finished && showVenue)
@@ -190,14 +182,14 @@ class HomeHeroCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.location_on_outlined,
-                        color: Colors.white.withValues(alpha: .72), size: 18),
+                        color: c.onImageText, size: 18),
                     const SizedBox(width: 6),
                     Flexible(
                         child: Text(fixture.venue.split('\n').first,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                color: Colors.white.withValues(alpha: .78),
+                                color: c.onImageText,
                                 fontWeight: FontWeight.w600))),
                   ],
                 ),
@@ -241,6 +233,7 @@ class HomeHeroCard extends StatelessWidget {
 
   Widget _heroTeamBlock(
       BuildContext context, TeamInfo team, String stat, double badgeSize) {
+    final c = context.cric;
     // Don't show stat if it's the same as the team code (avoids duplication)
     final showStat = stat != team.code && stat != team.shortName;
 
@@ -261,7 +254,7 @@ class HomeHeroCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  color: Colors.white.withValues(alpha: .95),
+                  color: c.onImageText,
                   fontSize: context.sp(14),
                   fontWeight: FontWeight.w700)),
         ],

@@ -101,10 +101,7 @@ class MatchDetailHeroCard extends StatelessWidget {
                       gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [
-                Colors.black.withValues(alpha: .18),
-                Colors.black.withValues(alpha: .76)
-              ])))),
+                          colors: c.matchCardOverlayColors)))),
           Column(
             children: [
               Row(
@@ -149,7 +146,7 @@ class MatchDetailHeroCard extends StatelessWidget {
                     children: [
                       Text('VS',
                           style: TextStyle(
-                              color: Colors.white.withValues(alpha: .88),
+                              color: c.onImageText,
                               fontWeight: FontWeight.w800)),
 
                     ],

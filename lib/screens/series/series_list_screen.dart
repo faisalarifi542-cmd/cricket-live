@@ -177,12 +177,7 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [
-                            const Color(0xff04132a).withValues(alpha: .3),
-                            const Color(0xff04101f).withValues(alpha: .58),
-                            c.bg.withValues(alpha: .9),
-                            c.bg,
-                          ],
+                          colors: c.stadiumOverlayColors,
                           stops: const [0, .5, .85, 1],
                         ),
                       ),
@@ -551,11 +546,7 @@ class _SeriesHeroBanner extends StatelessWidget {
               blurRadius: 30,
               spreadRadius: -6,
             ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .45),
-              blurRadius: 22,
-              offset: const Offset(0, 12),
-            ),
+            ...c.heroShadow.skip(1),
           ],
         ),
         child: Stack(
@@ -567,11 +558,7 @@ class _SeriesHeroBanner extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xff031126).withValues(alpha: .34),
-                      const Color(0xff041731).withValues(alpha: .5),
-                      const Color(0xff020b18).withValues(alpha: .72),
-                    ],
+                    colors: c.heroOverlayColors,
                   ),
                 ),
               ),
@@ -633,7 +620,7 @@ class _SeriesHeroBanner extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: .88),
+                              color: c.onImageText,
                               fontWeight: FontWeight.w700,
                               fontSize: tight ? 10 : 11.5,
                               letterSpacing: .4,

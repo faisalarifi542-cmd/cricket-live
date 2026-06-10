@@ -282,12 +282,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          const Color(0xff04132a).withValues(alpha: .5),
-                          const Color(0xff04101f).withValues(alpha: .72),
-                          c.bg.withValues(alpha: .97),
-                          c.bg,
-                        ],
+                        colors: c.stadiumOverlayColors,
                         stops: const [0, .45, .86, 1],
                       ),
                     ),
@@ -967,18 +962,7 @@ class _ScheduleMatchCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: c.cyan.withValues(alpha: .3)),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .12),
-              blurRadius: 26,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .34),
-              blurRadius: 26,
-              offset: const Offset(0, 12),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: Stack(
           children: [
@@ -1479,10 +1463,12 @@ class _VsBadge extends StatelessWidget {
             height: 33,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xff0e3155), Color(0xff04101f)],
+                colors: c.isDark
+                    ? const [Color(0xff0e3155), Color(0xff04101f)]
+                    : [c.primary, c.cyan],
               ),
               border:
                   Border.all(color: c.cyan.withValues(alpha: .98), width: 1.6),

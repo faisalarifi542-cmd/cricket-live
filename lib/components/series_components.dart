@@ -55,10 +55,7 @@ class SeriesHeroCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: .15),
-                    Colors.black.withValues(alpha: .72),
-                  ],
+                  colors: c.matchCardOverlayColors,
                 ),
               ),
             ),

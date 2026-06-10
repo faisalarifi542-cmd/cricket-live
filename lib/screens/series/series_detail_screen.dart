@@ -233,11 +233,17 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                         gradient: LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: [
-                            const Color(0xff04132a).withValues(alpha: .3),
-                            c.bg.withValues(alpha: .85),
-                            c.bg,
-                          ],
+                          colors: c.isDark
+                              ? [
+                                  const Color(0xff04132a).withValues(alpha: .3),
+                                  c.bg.withValues(alpha: .85),
+                                  c.bg,
+                                ]
+                              : [
+                                  Colors.white.withValues(alpha: .15),
+                                  c.bg.withValues(alpha: .85),
+                                  c.bg,
+                                ],
                           stops: const [0, .7, 1],
                         ),
                       ),
@@ -465,11 +471,7 @@ class SeriesDetailHero extends StatelessWidget {
             blurRadius: 28,
             spreadRadius: -8,
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .4),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
+          ...c.heroShadow.skip(1),
         ],
       ),
       child: Stack(
@@ -492,11 +494,7 @@ class SeriesDetailHero extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    const Color(0xff031126).withValues(alpha: .35),
-                    const Color(0xff041731).withValues(alpha: .55),
-                    const Color(0xff020b18).withValues(alpha: .72),
-                  ],
+                  colors: c.heroOverlayColors,
                 ),
               ),
             ),
@@ -520,7 +518,7 @@ class SeriesDetailHero extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: .85),
+                            color: c.onImageText,
                             fontWeight: FontWeight.w700,
                             fontStyle: FontStyle.italic,
                             fontSize: phone ? 10.5 : 12,
@@ -1400,7 +1398,7 @@ class _StatusSummaryCard extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .82),
+              color: c.onImageText,
               fontWeight: FontWeight.w700,
               fontSize: 10.5,
             ),
@@ -1560,7 +1558,7 @@ class _MetaRow extends StatelessWidget {
           child: Text(
             text,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .85),
+              color: c.onImageText,
               fontWeight: FontWeight.w600,
               fontSize: 12.5,
               height: 1.3,
@@ -1904,7 +1902,7 @@ class _SeriesMatchCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: .82),
+                      color: c.onImageText,
                       fontWeight: FontWeight.w800,
                       fontSize: phone ? 10 : 11,
                       letterSpacing: .3,
@@ -1971,7 +1969,7 @@ class _SeriesMatchCard extends StatelessWidget {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withValues(alpha: .72),
+                                color: c.onImageText,
                                 fontWeight: FontWeight.w600,
                                 fontSize: 10.5,
                                 height: 1.2,
@@ -2532,7 +2530,7 @@ class _SquadPlayerCard extends StatelessWidget {
                       captainTag,
                       style: TextStyle(
                         color: captainTag == 'C'
-                            ? const Color(0xff04101f)
+                            ? c.text
                             : Colors.white,
                         fontWeight: FontWeight.w900,
                         fontSize: 8.5,
@@ -2549,7 +2547,7 @@ class _SquadPlayerCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .82),
+              color: c.onImageText,
               fontWeight: FontWeight.w600,
               fontSize: 11,
               height: 1.05,
@@ -3027,7 +3025,7 @@ class _StatRow extends StatelessWidget {
                 matches,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: Colors.white.withValues(alpha: .85),
+                    color: c.onImageText,
                     fontWeight: FontWeight.w700,
                     fontSize: 12),
               ),

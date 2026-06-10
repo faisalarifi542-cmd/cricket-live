@@ -186,11 +186,7 @@ class PremiumGlassPanel extends StatelessWidget {
               blurRadius: 20,
               spreadRadius: -8,
             ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .36),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
+          ...c.heroShadow.skip(1),
         ],
       ),
       child: ConstrainedBox(
@@ -211,11 +207,7 @@ class PremiumGlassPanel extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [
-                        const Color(0xff04142b).withValues(alpha: .74),
-                        const Color(0xff051226).withValues(alpha: .82),
-                        const Color(0xff020a18).withValues(alpha: .9),
-                      ],
+                      colors: c.heroOverlayColors,
                       stops: const [0, .5, 1],
                     ),
                   ),
@@ -434,7 +426,7 @@ class PremiumTeamColumn extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .74),
+              color: c.onImageText,
               fontWeight: FontWeight.w600,
               fontSize: 11,
             ),
@@ -785,7 +777,9 @@ class SeriesStatusTabs extends StatelessWidget {
         border: Border.all(color: c.cyan.withValues(alpha: .4)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .28),
+            color: c.isDark
+                ? Colors.black.withValues(alpha: .28)
+                : const Color(0xff4a7fb5).withValues(alpha: .08),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1009,7 +1003,9 @@ class SeriesGlassTabBar extends StatelessWidget {
         border: Border.all(color: c.cyan.withValues(alpha: .4)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .28),
+            color: c.isDark
+                ? Colors.black.withValues(alpha: .28)
+                : const Color(0xff4a7fb5).withValues(alpha: .08),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1143,7 +1139,9 @@ class SeriesEmptyState extends StatelessWidget {
         border: Border.all(color: c.cyan.withValues(alpha: .32)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .3),
+            color: c.isDark
+                ? Colors.black.withValues(alpha: .3)
+                : const Color(0xff4a7fb5).withValues(alpha: .10),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -1164,10 +1162,7 @@ class SeriesEmptyState extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    const Color(0xff04142b).withValues(alpha: .72),
-                    const Color(0xff020a18).withValues(alpha: .9),
-                  ],
+                  colors: c.matchCardOverlayColors,
                 ),
               ),
             ),
@@ -1209,7 +1204,7 @@ class SeriesEmptyState extends StatelessWidget {
                   message,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: .72),
+                    color: c.onImageText,
                     height: 1.4,
                     fontSize: 13,
                   ),
