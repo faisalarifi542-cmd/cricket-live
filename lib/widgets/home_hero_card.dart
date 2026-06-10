@@ -30,12 +30,7 @@ class HomeHeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: c.border),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: .32),
-              blurRadius: 26,
-              offset: const Offset(0, 12))
-        ],
+        boxShadow: c.heroShadow,
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -54,10 +49,7 @@ class HomeHeroCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: .22),
-                    Colors.black.withValues(alpha: .68)
-                  ],
+                  colors: c.matchCardOverlayColors,
                 ),
               ),
             ),

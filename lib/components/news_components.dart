@@ -69,7 +69,7 @@ class FeaturedNewsCard extends StatelessWidget {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 10, vertical: 5),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: .22),
+                                    color: c.isDark ? Colors.black.withValues(alpha: .22) : c.card.withValues(alpha: .55),
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(color: c.border),
                                   ),
@@ -141,7 +141,7 @@ class FeaturedNewsCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: .18),
+                    color: c.isDark ? Colors.black.withValues(alpha: .18) : c.card.withValues(alpha: .55),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: c.border),
                   ),
