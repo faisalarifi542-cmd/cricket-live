@@ -67,18 +67,7 @@ class PremiumCard extends StatelessWidget {
         gradient: gradient ?? c.cardGradient,
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: borderColor ?? c.border, width: 1.15),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .28),
-            blurRadius: 26,
-            offset: const Offset(0, 12),
-          ),
-          BoxShadow(
-            color: c.cyan.withValues(alpha: .05),
-            blurRadius: 18,
-            offset: const Offset(0, 0),
-          ),
-        ],
+        boxShadow: c.cardShadow,
       ),
       child: child,
     );
@@ -149,7 +138,7 @@ class GlowIconButton extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: .02),
+              color: c.subtleSurface,
               borderRadius: BorderRadius.circular(18),
             ),
             child: Icon(icon, color: c.text, size: 30),
@@ -378,6 +367,7 @@ class TeamLogoWidget extends StatelessWidget {
 
   /// Premium gradient circle used only when no real logo is available.
   Widget _fallbackCircle(BuildContext context) {
+    final c = context.cric;
     return Container(
       width: size,
       height: size,
@@ -387,13 +377,18 @@ class TeamLogoWidget extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            color.withValues(alpha: .34),
-            const Color(0xff08213d).withValues(alpha: .96),
-          ],
+          colors: c.isDark
+              ? [
+                  color.withValues(alpha: .34),
+                  const Color(0xff08213d).withValues(alpha: .96),
+                ]
+              : [
+                  color.withValues(alpha: .18),
+                  const Color(0xff1a3d60).withValues(alpha: .80),
+                ],
         ),
         border: Border.all(
-          color: borderColor ?? Colors.white.withValues(alpha: .62),
+          color: borderColor ?? (c.isDark ? Colors.white.withValues(alpha: .62) : c.border),
           width: 2,
         ),
         boxShadow: [
@@ -500,10 +495,15 @@ class PlayerAvatarWidget extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            tint.withValues(alpha: .22),
-            const Color(0xff071726),
-          ],
+          colors: c.isDark
+              ? [
+                  tint.withValues(alpha: .22),
+                  const Color(0xff071726),
+                ]
+              : [
+                  tint.withValues(alpha: .12),
+                  const Color(0xff1a3d60).withValues(alpha: .75),
+                ],
         ),
         border: Border.all(color: border, width: size < 32 ? 1.2 : 2),
       ),
@@ -664,7 +664,9 @@ class BottomNav extends StatelessWidget {
               Border(top: BorderSide(color: c.border.withValues(alpha: .85))),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: .35),
+              color: c.isDark
+                  ? Colors.black.withValues(alpha: .35)
+                  : const Color(0xff4a7fb5).withValues(alpha: .08),
               blurRadius: 26,
               offset: const Offset(0, -8),
             ),
@@ -874,7 +876,7 @@ class PillChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: BoxDecoration(
           gradient: selected ? c.primaryGradient : null,
-          color: selected ? null : Colors.white.withValues(alpha: .015),
+          color: selected ? null : (c.isDark ? Colors.white.withValues(alpha: .015) : c.card),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(
             color: selected ? c.cyan.withValues(alpha: .7) : c.border,
