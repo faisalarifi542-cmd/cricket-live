@@ -405,7 +405,7 @@ class SeriesFilterPills extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 gradient: isSel ? c.primaryGradient : null,
-                color: isSel ? null : Colors.white.withValues(alpha: .02),
+                color: isSel ? null : c.subtleSurface,
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: isSel ? c.cyan.withValues(alpha: .7) : c.border,
@@ -488,11 +488,7 @@ class SeriesListCard extends StatelessWidget {
               blurRadius: 24,
               spreadRadius: -6,
             ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .42),
-              blurRadius: 20,
-              offset: const Offset(0, 12),
-            ),
+            ...c.heroShadow.skip(1),
           ],
         ),
         child: Stack(
@@ -514,11 +510,7 @@ class SeriesListCard extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xff04142b).withValues(alpha: .7),
-                      const Color(0xff051226).withValues(alpha: .8),
-                      const Color(0xff020a18).withValues(alpha: .9),
-                    ],
+                    colors: c.heroOverlayColors,
                   ),
                 ),
               ),
@@ -566,7 +558,7 @@ class SeriesListCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.right,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: .72),
+                              color: c.onImageText,
                               fontWeight: FontWeight.w700,
                               fontSize: tight ? 10.5 : 11.5,
                             ),
@@ -596,7 +588,7 @@ class SeriesListCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: .82),
+                        color: c.onImageText,
                         fontWeight: FontWeight.w600,
                         fontSize: tight ? 11.5 : 12.5,
                       ),
@@ -752,11 +744,7 @@ class SeriesHeroCard extends StatelessWidget {
             blurRadius: 34,
             spreadRadius: -7,
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .34),
-            blurRadius: 26,
-            offset: const Offset(0, 12),
-          ),
+          ...c.heroShadow.skip(1),
         ],
       ),
       child: Stack(
@@ -766,7 +754,7 @@ class SeriesHeroCard extends StatelessWidget {
               'assets/images/stadium_live.png',
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: Color(0xff071726)),
+                  ColoredBox(color: c.isDark ? const Color(0xff071726) : c.card),
             ),
           ),
           Positioned.fill(
@@ -775,11 +763,7 @@ class SeriesHeroCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    const Color(0xff031028).withValues(alpha: .76),
-                    const Color(0xff061934).withValues(alpha: .88),
-                    const Color(0xff020914).withValues(alpha: .96),
-                  ],
+                  colors: c.heroOverlayColors,
                 ),
               ),
             ),
@@ -952,7 +936,7 @@ class SeriesTabBar extends StatelessWidget {
       height: 52,
       padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .02),
+        color: c.subtleSurface,
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: c.border),
       ),
