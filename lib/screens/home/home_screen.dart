@@ -2595,7 +2595,7 @@ class _FeaturedMatchesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 146,
+      height: 166,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.zero,
@@ -2631,109 +2631,54 @@ class _FeaturedMatchMini extends StatelessWidget {
         : (match.isFinished ? (match.statusText.isNotEmpty ? match.statusText : 'Finished') : _cardDateTime(match));
     return TapScale(
       onTap: onTap,
-      borderRadius: 16,
+      borderRadius: 18,
       child: Container(
-        width: 192,
-        padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+        width: 212,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              c.card.withValues(alpha: .9),
+              c.card.withValues(alpha: .92),
               c.card.withValues(alpha: .55),
             ],
           ),
-          border: Border.all(color: c.cyan.withValues(alpha: .35)),
+          border: Border.all(color: c.cyan.withValues(alpha: .38)),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .1),
+              blurRadius: 16,
+              spreadRadius: -8,
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .32),
+              blurRadius: 14,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                _StatusBadge(
-                    label: label, color: color, live: match.isLive, dense: true),
-                const Spacer(),
-                Text(
-                  match.versusTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.muted,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 10.5,
-                  ),
-                ),
-              ],
+            _StatusBadge(
+                label: label, color: color, live: match.isLive, dense: true),
+            const SizedBox(height: 12),
+            _FeaturedTeamLine(
+              logo: match.teamALogo,
+              name: match.teamA,
+              code: match.teamAShort,
+              score: match.teamAScoreText,
+              accent: c.cyan,
             ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                TeamLogoWidget(
-                  logoUrl: match.teamALogo,
-                  teamName: match.teamA,
-                  abbreviation: match.teamAShort,
-                  color: c.cyan,
-                  size: 30,
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    match.teamAShort,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12),
-                  ),
-                ),
-                if (match.teamAScoreText.isNotEmpty)
-                  Text(
-                    match.teamAScoreText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                TeamLogoWidget(
-                  logoUrl: match.teamBLogo,
-                  teamName: match.teamB,
-                  abbreviation: match.teamBShort,
-                  color: c.warning,
-                  size: 30,
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    match.teamBShort,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12),
-                  ),
-                ),
-                if (match.teamBScoreText.isNotEmpty)
-                  Text(
-                    match.teamBScoreText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11),
-                  ),
-              ],
+            const SizedBox(height: 9),
+            _FeaturedTeamLine(
+              logo: match.teamBLogo,
+              name: match.teamB,
+              code: match.teamBShort,
+              score: match.teamBScoreText,
+              accent: c.warning,
             ),
             const Spacer(),
             Row(
@@ -2742,10 +2687,10 @@ class _FeaturedMatchMini extends StatelessWidget {
                   match.isLive
                       ? Icons.podcasts_rounded
                       : Icons.schedule_rounded,
-                  size: 11,
+                  size: 12,
                   color: match.isLive ? c.live : c.cyan,
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 5),
                 Expanded(
                   child: Text(
                     centerText,
@@ -2754,7 +2699,7 @@ class _FeaturedMatchMini extends StatelessWidget {
                     style: TextStyle(
                       color: match.isLive ? c.live : c.muted,
                       fontWeight: FontWeight.w700,
-                      fontSize: 10,
+                      fontSize: 10.5,
                     ),
                   ),
                 ),
@@ -2763,6 +2708,65 @@ class _FeaturedMatchMini extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// One team row inside a Featured Match card: fixed circular logo + code + score.
+class _FeaturedTeamLine extends StatelessWidget {
+  const _FeaturedTeamLine({
+    required this.logo,
+    required this.name,
+    required this.code,
+    required this.score,
+    required this.accent,
+  });
+
+  final String? logo;
+  final String name;
+  final String code;
+  final String score;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Row(
+      children: [
+        TeamLogoWidget(
+          logoUrl: logo,
+          teamName: name,
+          abbreviation: code,
+          color: accent,
+          size: 34,
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            code.isNotEmpty ? code : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+            ),
+          ),
+        ),
+        if (score.isNotEmpty) ...[
+          const SizedBox(width: 6),
+          Text(
+            score,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
