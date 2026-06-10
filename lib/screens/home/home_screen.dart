@@ -2873,11 +2873,11 @@ class _FeaturedSeriesMini extends StatelessWidget {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: .10),
-                    Colors.black.withValues(alpha: .55),
-                    Colors.black.withValues(alpha: .90),
+                    Colors.black.withValues(alpha: .04),
+                    Colors.black.withValues(alpha: .42),
+                    Colors.black.withValues(alpha: .88),
                   ],
-                  stops: const [0.0, 0.5, 1.0],
+                  stops: const [0.0, 0.52, 1.0],
                 ),
               ),
             ),
@@ -2933,9 +2933,10 @@ class _FeaturedSeriesMini extends StatelessWidget {
               ),
             ),
             // Bottom content: teams (when available), title, dates/location.
+            // Right inset leaves room for the CTA chevron.
             Positioned(
               left: 12,
-              right: 12,
+              right: 48,
               bottom: 11,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3044,6 +3045,29 @@ class _FeaturedSeriesMini extends StatelessWidget {
                     ],
                   ),
                 ],
+              ),
+            ),
+            // Tappable CTA affordance, pinned bottom-right.
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.cyan.withValues(alpha: .18),
+                  border: Border.all(color: c.cyan.withValues(alpha: .7)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: c.cyan.withValues(alpha: .3),
+                      blurRadius: 10,
+                      spreadRadius: -3,
+                    ),
+                  ],
+                ),
+                child: Icon(Icons.arrow_forward_rounded,
+                    size: 16, color: c.cyan),
               ),
             ),
           ],
