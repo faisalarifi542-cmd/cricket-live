@@ -1277,7 +1277,7 @@ class _HomeCardShell extends StatelessWidget {
               // minHeight when the live score/venue/action bar need the room,
               // preventing the bottom overflow.
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
                 child: child,
               ),
             ],
@@ -1416,8 +1416,8 @@ class _CardTeamRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final phone = context.w <= 430;
-    final logoSize = phone ? 46.0 : 52.0;
-    final codeSize = phone ? 20.0 : 21.0;
+    final logoSize = phone ? 40.0 : 46.0;
+    final codeSize = phone ? 19.0 : 20.0;
     final scoreColor = match.isLive ? c.live : c.cyan;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -1517,7 +1517,7 @@ class _HomeLiveMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 195 : 215,
+      minHeight: context.w <= 430 ? 168 : 188,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1627,7 +1627,7 @@ class _HomeUpcomingMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 175 : 195,
+      minHeight: context.w <= 430 ? 150 : 168,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1675,7 +1675,7 @@ class _HomeFinishedMatchCard extends StatelessWidget {
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
-      minHeight: context.w <= 430 ? 175 : 195,
+      minHeight: context.w <= 430 ? 158 : 176,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
