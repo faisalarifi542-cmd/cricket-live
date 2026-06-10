@@ -16,31 +16,125 @@ import 'package:cricpro_flutter/services/ad_service.dart';
 import 'package:cricpro_flutter/widgets/ads/banner_ad_widget.dart';
 import 'package:cricpro_flutter/widgets/ads/rewarded_ad_manager.dart';
 
-/// Fixed quality model. The player only ever exposes SD / HD / FHD.
+enum QualitySource { admin, hlsVariant, auto }
+
+/// Fullscreen video scaling modes the user can cycle through.
+enum VideoFit { contain, cover, fill }
+
+extension VideoFitX on VideoFit {
+  String get label => switch (this) {
+        VideoFit.contain => 'Fit',
+        VideoFit.cover => 'Fill',
+        VideoFit.fill => 'Stretch',
+      };
+
+  IconData get icon => switch (this) {
+        VideoFit.contain => Icons.fit_screen_rounded,
+        VideoFit.cover => Icons.crop_landscape_rounded,
+        VideoFit.fill => Icons.aspect_ratio_rounded,
+      };
+
+  VideoFit get next => switch (this) {
+        VideoFit.contain => VideoFit.cover,
+        VideoFit.cover => VideoFit.fill,
+        VideoFit.fill => VideoFit.contain,
+      };
+}
+
+/// A single selectable stream quality. Built dynamically from admin-provided
+/// streams and/or parsed HLS master-playlist variants, so the menu only ever
+/// surfaces qualities that actually exist for the match.
 class StreamQuality {
   const StreamQuality({
     required this.code,
     required this.label,
     required this.resolution,
     required this.url,
+    this.source = QualitySource.admin,
+    this.bandwidth,
+    this.isAuto = false,
+    this.height = 0,
   });
 
-  final String code; // SD | HD | FHD
-  final String label; // SD | HD | FHD
-  final String resolution; // 480p | 720p | 1080p
+  final String code; // unique key: AUTO | 240p | 360p | 480p | 720p | 1080p
+  final String label; // display text: Auto | 240p | 720p ...
+  final String resolution; // optional subtitle, e.g. 1280x720 / Adaptive
   final String url; // resolved playback url (falls back to the master url)
+  final QualitySource source;
+  final int? bandwidth;
+  final bool isAuto;
+  final int height; // pixel height used purely for ordering
 
   bool get hasUrl => url.isNotEmpty;
 }
+
+/// One variant line parsed out of an HLS master playlist.
+class _HlsVariant {
+  const _HlsVariant({
+    required this.height,
+    required this.bandwidth,
+    required this.url,
+  });
+
+  final int height;
+  final int? bandwidth;
+  final String url;
+}
+
+/// Maps an admin quality tag (SD/HD/FHD/720p/...) to a canonical bucket key.
+/// Returns null for AUTO/unknown so it can be handled separately.
+String? _qualityKeyFromCode(String rawCode) {
+  final code = rawCode.toUpperCase().trim();
+  switch (code) {
+    case 'SD':
+      return '480p';
+    case 'HD':
+      return '720p';
+    case 'FHD':
+    case 'FULLHD':
+    case 'FULL HD':
+      return '1080p';
+    case 'UHD':
+    case '4K':
+      return '2160p';
+    case 'AUTO':
+    case '':
+      return null;
+  }
+  final match = RegExp(r'(\d{3,4})\s*[pi]?').firstMatch(code);
+  if (match != null) {
+    final h = int.tryParse(match.group(1)!);
+    if (h != null && h > 0) return _qualityKeyFromHeight(h);
+  }
+  return null;
+}
+
+/// Buckets a pixel height into one of the canonical quality labels.
+String _qualityKeyFromHeight(int h) {
+  if (h >= 2160) return '2160p';
+  if (h >= 1080) return '1080p';
+  if (h >= 720) return '720p';
+  if (h >= 480) return '480p';
+  if (h >= 360) return '360p';
+  return '240p';
+}
+
+int _heightForKey(String key) =>
+    int.tryParse(key.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
 
 /// Snapshot of the active playback shared with the fullscreen route so it can
 /// follow controller swaps (e.g. quality changes) without holding a disposed
 /// controller reference.
 class _Playback {
-  const _Playback({this.controller, required this.qualityCode});
+  const _Playback({
+    this.controller,
+    required this.qualityCode,
+    this.isLive = true,
+  });
 
   final VideoPlayerController? controller;
   final String qualityCode;
+  final bool isLive;
 }
 
 class LivePlayerScreen extends StatefulWidget {
@@ -71,9 +165,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   StreamQuality? _selectedQuality;
   String? _currentUrl;
   String _matchTitle = 'Live Stream';
+  bool _isLiveStream = true; // HLS live by default until detection says VOD
 
   final ValueNotifier<_Playback> _playback =
-      ValueNotifier<_Playback>(const _Playback(qualityCode: 'HD'));
+      ValueNotifier<_Playback>(const _Playback(qualityCode: 'Auto'));
   final Set<String> _rewardUnlockedStreamIds = <String>{};
 
   bool get _hasMatchId => widget.matchId.isNotEmpty;
@@ -117,7 +212,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   void _publishPlayback() {
     _playback.value = _Playback(
       controller: _videoController,
-      qualityCode: _selectedQuality?.code ?? 'HD',
+      qualityCode: _selectedQuality?.label ?? 'Auto',
+      isLive: _isLiveStream,
     );
   }
 
@@ -166,10 +262,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     }
 
     final primary = streams.first;
-    final qualities = _buildQualities(streams, primary, const {});
+    final qualities = _buildQualities(streams, primary, const []);
     final keepCode = _selectedQuality?.code;
     StreamQuality pickDefault() => qualities.firstWhere(
-          (q) => q.code == 'HD' && q.hasUrl,
+          (q) => q.isAuto && q.hasUrl,
           orElse: () => qualities.firstWhere(
             (q) => q.hasUrl,
             orElse: () => qualities.first,
@@ -197,6 +293,105 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     if (primary.isHls) {
       _refineQualitiesFromHls(primary, streams);
     }
+    _detectLiveStream(primary);
+  }
+
+  /// Best-effort live detection: an HLS media playlist without `#EXT-X-ENDLIST`
+  /// is live; a playlist that has it (or a non-HLS source) is VOD. We default
+  /// to live when the playlist can't be read, since this is a live app.
+  Future<void> _detectLiveStream(StreamSource primary) async {
+    final live = await _isLivePlaylist(primary.url);
+    if (!mounted || live == _isLiveStream) return;
+    setState(() => _isLiveStream = live);
+    _publishPlayback();
+  }
+
+  Future<bool> _isLivePlaylist(String url) async {
+    if (!url.toLowerCase().contains('.m3u8')) return false; // mp4/etc => VOD
+    final body = await _fetchText(url);
+    if (body == null) return true; // unknown => assume live
+    if (body.contains('#EXT-X-ENDLIST')) return false;
+    if (body.contains('#EXT-X-STREAM-INF')) {
+      // Master playlist: inspect the first media variant for ENDLIST.
+      final lines = body.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        if (!lines[i].trim().startsWith('#EXT-X-STREAM-INF')) continue;
+        for (var j = i + 1; j < lines.length; j++) {
+          final v = lines[j].trim();
+          if (v.isEmpty || v.startsWith('#')) continue;
+          final variantBody = await _fetchText(_resolveUrl(url, v));
+          if (variantBody == null) return true;
+          return !variantBody.contains('#EXT-X-ENDLIST');
+        }
+      }
+      return true;
+    }
+    return true; // media playlist without ENDLIST => live
+  }
+
+  Future<String?> _fetchText(String url) async {
+    try {
+      final response =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return null;
+      return response.body;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Jumps back to the live edge. Seeks to the end of the seekable window when
+  /// supported, otherwise cleanly reloads the current stream.
+  void _goLive() {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      _reloadCurrent();
+      return;
+    }
+    final duration = controller.value.duration;
+    if (duration > Duration.zero) {
+      controller.seekTo(duration);
+      controller.play();
+    } else {
+      _reloadCurrent();
+    }
+  }
+
+  void _reloadCurrent() {
+    final url = _currentUrl ?? _selectedQuality?.url ?? _primaryStream?.url;
+    if (url != null && url.isNotEmpty) _loadUrl(url);
+  }
+
+  void _showCastComingSoon() {
+    final c = context.cric;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: c.card,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.cast_rounded, color: c.cyan),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('Casting', style: TextStyle(color: c.text)),
+            ),
+          ],
+        ),
+        content: Text(
+          'Casting to your TV is coming soon. For now you can watch the '
+          'stream right here in the app.',
+          style: TextStyle(color: c.muted, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _initialLoad(StreamSource primary, StreamQuality quality) async {
@@ -207,33 +402,84 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     await _loadUrl(quality.url);
   }
 
-  /// Builds the fixed SD / HD / FHD list. For each quality we look for, in
-  /// order: a backend stream tagged with that quality code, a parsed HLS
-  /// variant, then finally the primary (master) url so playback never breaks
-  /// even when the backend only exposes a single HLS url.
+  /// Builds the dynamic quality list. Admin-tagged streams win, then parsed
+  /// HLS variants fill any gaps, an `Auto` entry is offered for adaptive HLS
+  /// masters, and a single safe fallback is used when nothing is detected so
+  /// playback never breaks.
   List<StreamQuality> _buildQualities(
     List<StreamSource> streams,
     StreamSource primary,
-    Map<String, String> hlsVariants,
+    List<_HlsVariant> hlsVariants,
   ) {
-    String resolve(String code) {
-      final tagged = streams.where(
-        (s) => s.qualityCode == code && s.url.isNotEmpty,
+    final byKey = <String, StreamQuality>{};
+
+    // 1. Admin-provided streams tagged with a concrete quality.
+    for (final s in streams) {
+      if (s.url.isEmpty) continue;
+      final key = _qualityKeyFromCode(s.qualityCode);
+      if (key == null) continue; // AUTO/unknown handled below
+      byKey.putIfAbsent(
+        key,
+        () => StreamQuality(
+          code: key,
+          label: key,
+          resolution: '',
+          url: s.url,
+          source: QualitySource.admin,
+          height: _heightForKey(key),
+        ),
       );
-      if (tagged.isNotEmpty) return tagged.first.url;
-      final variant = hlsVariants[code];
-      if (variant != null && variant.isNotEmpty) return variant;
-      return primary.url;
     }
 
-    return [
-      StreamQuality(
-          code: 'SD', label: 'SD', resolution: '480p', url: resolve('SD')),
-      StreamQuality(
-          code: 'HD', label: 'HD', resolution: '720p', url: resolve('HD')),
-      StreamQuality(
-          code: 'FHD', label: 'FHD', resolution: '1080p', url: resolve('FHD')),
-    ];
+    // 2. Parsed HLS variants (do not override an admin-tagged quality).
+    for (final v in hlsVariants) {
+      if (v.url.isEmpty) continue;
+      final key = _qualityKeyFromHeight(v.height);
+      byKey.putIfAbsent(
+        key,
+        () => StreamQuality(
+          code: key,
+          label: key,
+          resolution: v.height > 0 ? '${v.height}p stream' : '',
+          url: v.url,
+          source: QualitySource.hlsVariant,
+          bandwidth: v.bandwidth,
+          height: v.height,
+        ),
+      );
+    }
+
+    final ranked = byKey.values.toList()
+      ..sort((a, b) => b.height.compareTo(a.height));
+
+    final result = <StreamQuality>[];
+
+    // 3. Auto (adaptive) for HLS masters – lets the player pick the bitrate.
+    if (primary.isHls) {
+      result.add(StreamQuality(
+        code: 'AUTO',
+        label: 'Auto',
+        resolution: 'Adaptive',
+        url: primary.url,
+        source: QualitySource.auto,
+        isAuto: true,
+        height: 1 << 20, // keep at the top of the list
+      ));
+    }
+    result.addAll(ranked);
+
+    // 4. Nothing detected → single safe fallback so playback still works.
+    if (result.isEmpty) {
+      result.add(StreamQuality(
+        code: 'AUTO',
+        label: 'Auto',
+        resolution: '',
+        url: primary.url,
+        source: QualitySource.auto,
+        isAuto: true,
+      ));
+    }
+    return result;
   }
 
   Future<void> _refineQualitiesFromHls(
@@ -248,48 +494,51 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       if (_selectedQuality != null) {
         _selectedQuality = refined.firstWhere(
           (q) => q.code == _selectedQuality!.code,
-          orElse: () => _selectedQuality!,
+          orElse: () => refined.first,
         );
       }
     });
+    _publishPlayback();
   }
 
-  Future<Map<String, String>> _parseHlsVariants(String masterUrl) async {
+  Future<List<_HlsVariant>> _parseHlsVariants(String masterUrl) async {
     try {
       final response = await http
           .get(Uri.parse(masterUrl))
           .timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) return const {};
+      if (response.statusCode != 200) return const [];
       final lines = response.body.split('\n');
-      final urls = <String, String>{};
-      final heights = <String, int>{};
+      final variants = <_HlsVariant>[];
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i].trim();
         if (!line.startsWith('#EXT-X-STREAM-INF:')) continue;
         final resMatch = RegExp(r'RESOLUTION=(\d+)x(\d+)').firstMatch(line);
-        if (resMatch == null) continue;
-        final height = int.tryParse(resMatch.group(2)!) ?? 0;
-        String? code;
-        if (height >= 1080) {
-          code = 'FHD';
-        } else if (height >= 720) {
-          code = 'HD';
-        } else if (height >= 480) {
-          code = 'SD';
-        }
-        if (code == null || i + 1 >= lines.length) continue;
+        final bwMatch = RegExp(r'BANDWIDTH=(\d+)').firstMatch(line);
+        final height =
+            resMatch != null ? (int.tryParse(resMatch.group(2)!) ?? 0) : 0;
+        final bandwidth =
+            bwMatch != null ? int.tryParse(bwMatch.group(1)!) : null;
+        if (i + 1 >= lines.length) continue;
         final variantLine = lines[i + 1].trim();
         if (variantLine.isEmpty || variantLine.startsWith('#')) continue;
-        final abs = _resolveUrl(masterUrl, variantLine);
-        if (!heights.containsKey(code) || height > heights[code]!) {
-          heights[code] = height;
-          urls[code] = abs;
-        }
+        variants.add(_HlsVariant(
+          height: height,
+          bandwidth: bandwidth,
+          url: _resolveUrl(masterUrl, variantLine),
+        ));
       }
-      return urls;
+      // Collapse duplicate resolution buckets, keeping the highest bitrate.
+      final byKey = <String, _HlsVariant>{};
+      for (final v in variants) {
+        if (v.height <= 0) continue;
+        final key = _qualityKeyFromHeight(v.height);
+        final existing = byKey[key];
+        if (existing == null || v.height > existing.height) byKey[key] = v;
+      }
+      return byKey.values.toList();
     } catch (e) {
       debugPrint('HLS parsing failed: $e');
-      return const {};
+      return const [];
     }
   }
 
@@ -471,19 +720,42 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
 
   void _openSettings() {
     if (_qualities.isEmpty) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (sheetContext) => _QualitySheet(
-        qualities: _qualities,
-        selectedCode: _selectedQuality?.code,
-        onSelected: (quality) {
-          Navigator.pop(sheetContext);
-          _selectQuality(quality);
-        },
-      ),
-    );
+    final media = MediaQuery.of(context);
+    final landscape = media.size.width > media.size.height;
+    void handle(BuildContext ctx, StreamQuality quality) {
+      Navigator.pop(ctx);
+      _selectQuality(quality);
+    }
+
+    if (landscape) {
+      // Compact centered dialog so the sheet never covers the whole screen
+      // (and never overflows) in fullscreen landscape.
+      showDialog<void>(
+        context: context,
+        barrierColor: Colors.black54,
+        builder: (dialogContext) => Align(
+          alignment: Alignment.center,
+          child: _QualitySheet(
+            landscape: true,
+            qualities: _qualities,
+            selectedCode: _selectedQuality?.code,
+            onSelected: (quality) => handle(dialogContext, quality),
+          ),
+        ),
+      );
+    } else {
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (sheetContext) => _QualitySheet(
+          landscape: false,
+          qualities: _qualities,
+          selectedCode: _selectedQuality?.code,
+          onSelected: (quality) => handle(sheetContext, quality),
+        ),
+      );
+    }
   }
 
   Future<void> _openFullscreen() async {
@@ -496,6 +768,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
           matchTitle: _matchTitle,
           onToggleMute: _toggleMute,
           onOpenSettings: _openSettings,
+          onGoLive: _goLive,
         ),
       ),
     );
@@ -561,6 +834,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
                 _LivePlayerHeader(
                   onShare: _shareStream,
                   onRefresh: _refresh,
+                  onCast: _showCastComingSoon,
                 ),
                 const SizedBox(height: 16),
                 _MatchInfoSection(
@@ -575,12 +849,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
                   error: _playerError,
                   switching: _switchingQuality,
                   hasStream: _primaryStream != null,
-                  qualityCode: _selectedQuality?.code ?? 'HD',
+                  qualityCode: _selectedQuality?.label ?? 'Auto',
                   matchTitle: _matchTitle,
+                  isLive: _isLiveStream,
                   onRetry: _retry,
                   onToggleMute: _toggleMute,
                   onSettings: _openSettings,
                   onFullscreen: _openFullscreen,
+                  onGoLive: _goLive,
+                  canTryOtherQuality: _qualities.length > 1,
                 ),
                 const SizedBox(height: 22),
                 _StreamQualitySection(
@@ -607,20 +884,15 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
 // =============================================================================
 
 class _LivePlayerHeader extends StatelessWidget {
-  const _LivePlayerHeader({required this.onShare, required this.onRefresh});
+  const _LivePlayerHeader({
+    required this.onShare,
+    required this.onRefresh,
+    required this.onCast,
+  });
 
   final VoidCallback onShare;
   final Future<void> Function() onRefresh;
-
-  void _showCastNotAvailable(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Casting is not available yet'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: context.cric.card,
-      ),
-    );
-  }
+  final VoidCallback onCast;
 
   void _showMoreOptions(BuildContext context) {
     showModalBottomSheet<void>(
@@ -679,12 +951,11 @@ class _LivePlayerHeader extends StatelessWidget {
             ],
           ),
         ),
-        // Cast is not implemented yet – shown as a disabled state so the UI
-        // stays consistent without crashing.
+        // Cast is not fully implemented yet – the button opens an honest
+        // "coming soon" dialog instead of being a dead control.
         _HeaderActionButton(
           icon: Icons.cast_rounded,
-          enabled: false,
-          onTap: () => _showCastNotAvailable(context),
+          onTap: onCast,
         ),
         const SizedBox(width: 8),
         _HeaderActionButton(
@@ -705,12 +976,10 @@ class _HeaderActionButton extends StatelessWidget {
   const _HeaderActionButton({
     required this.icon,
     this.onTap,
-    this.enabled = true,
   });
 
   final IconData icon;
   final VoidCallback? onTap;
-  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -722,26 +991,18 @@ class _HeaderActionButton extends StatelessWidget {
         width: 42,
         height: 42,
         decoration: BoxDecoration(
-          color: c.card.withValues(alpha: enabled ? .7 : .35),
+          color: c.card.withValues(alpha: .7),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: c.border.withValues(alpha: enabled ? .75 : .35),
-          ),
-          boxShadow: enabled
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: .22),
-                    blurRadius: 16,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
+          border: Border.all(color: c.border.withValues(alpha: .75)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .22),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
-        child: Icon(
-          icon,
-          color: enabled ? c.text : c.muted.withValues(alpha: .6),
-          size: 22,
-        ),
+        child: Icon(icon, color: c.text, size: 22),
       ),
     );
   }
@@ -1361,10 +1622,13 @@ class _PlayerSurface extends StatelessWidget {
     required this.hasStream,
     required this.qualityCode,
     required this.matchTitle,
+    required this.isLive,
     required this.onRetry,
     required this.onToggleMute,
     required this.onSettings,
     required this.onFullscreen,
+    required this.onGoLive,
+    this.canTryOtherQuality = false,
   });
 
   final VideoPlayerController? controller;
@@ -1374,10 +1638,13 @@ class _PlayerSurface extends StatelessWidget {
   final bool hasStream;
   final String qualityCode;
   final String matchTitle;
+  final bool isLive;
   final VoidCallback onRetry;
   final VoidCallback onToggleMute;
   final VoidCallback onSettings;
   final VoidCallback onFullscreen;
+  final VoidCallback onGoLive;
+  final bool canTryOtherQuality;
 
   @override
   Widget build(BuildContext context) {
@@ -1391,6 +1658,8 @@ class _PlayerSurface extends StatelessWidget {
         color: c.warning,
         message: error!,
         onRetry: onRetry,
+        onSecondary: canTryOtherQuality ? onSettings : null,
+        secondaryLabel: canTryOtherQuality ? 'Try another quality' : null,
       );
     } else if (initialized && controller != null) {
       content = _VideoStage(
@@ -1398,10 +1667,12 @@ class _PlayerSurface extends StatelessWidget {
         fullscreen: false,
         qualityCode: qualityCode,
         matchTitle: matchTitle,
+        isLive: isLive,
         onToggleMute: onToggleMute,
         onSettings: onSettings,
         onFullscreen: onFullscreen,
         onExitFullscreen: () {},
+        onGoLive: onGoLive,
       );
     } else {
       content = _PlayerLoading(
@@ -1490,42 +1761,84 @@ class _PlayerMessage extends StatelessWidget {
     required this.color,
     required this.message,
     required this.onRetry,
+    this.onSecondary,
+    this.secondaryLabel,
   });
 
   final IconData icon;
   final Color color;
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onSecondary;
+  final String? secondaryLabel;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 34),
-            const SizedBox(height: 10),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.text,
-                fontWeight: FontWeight.w800,
-                height: 1.35,
+    // The player surface is a fixed 16:9 box, so on short / landscape screens
+    // the available height can be tiny. LayoutBuilder + a scroll view keeps the
+    // content from ever overflowing, and we scale spacing/icon down when short.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 170;
+        final iconSize = compact ? 24.0 : 34.0;
+        final gap = compact ? 6.0 : 10.0;
+        return SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: compact ? 8 : 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: color, size: iconSize),
+                    SizedBox(height: gap),
+                    Text(
+                      message,
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w800,
+                        fontSize: compact ? 12.5 : 14,
+                        height: 1.3,
+                      ),
+                    ),
+                    SizedBox(height: gap + 2),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        GradientButton(
+                          label: 'Retry',
+                          icon: Icons.refresh_rounded,
+                          height: compact ? 38 : 44,
+                          onTap: onRetry,
+                        ),
+                        if (onSecondary != null && secondaryLabel != null)
+                          GradientButton(
+                            label: secondaryLabel!,
+                            icon: Icons.tune_rounded,
+                            outlined: true,
+                            height: compact ? 38 : 44,
+                            onTap: onSecondary!,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 14),
-            GradientButton(
-              label: 'Retry',
-              icon: Icons.refresh_rounded,
-              onTap: onRetry,
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1539,20 +1852,24 @@ class _VideoStage extends StatefulWidget {
     required this.fullscreen,
     required this.qualityCode,
     required this.matchTitle,
+    required this.isLive,
     required this.onToggleMute,
     required this.onSettings,
     required this.onFullscreen,
     required this.onExitFullscreen,
+    required this.onGoLive,
   });
 
   final VideoPlayerController controller;
   final bool fullscreen;
   final String qualityCode;
   final String matchTitle;
+  final bool isLive;
   final VoidCallback onToggleMute;
   final VoidCallback onSettings;
   final VoidCallback onFullscreen;
   final VoidCallback onExitFullscreen;
+  final VoidCallback onGoLive;
 
   @override
   State<_VideoStage> createState() => _VideoStageState();
@@ -1562,6 +1879,9 @@ class _VideoStageState extends State<_VideoStage> {
   bool _showControls = true;
   bool _lastPlaying = false;
   Timer? _hideTimer;
+  VideoFit _fit = VideoFit.contain;
+  String? _fitToast;
+  Timer? _fitToastTimer;
 
   @override
   void initState() {
@@ -1584,8 +1904,20 @@ class _VideoStageState extends State<_VideoStage> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _fitToastTimer?.cancel();
     widget.controller.removeListener(_onUpdate);
     super.dispose();
+  }
+
+  void _cycleFit() {
+    setState(() {
+      _fit = _fit.next;
+      _fitToast = _fit.label;
+    });
+    _fitToastTimer?.cancel();
+    _fitToastTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _fitToast = null);
+    });
   }
 
   void _onUpdate() {
@@ -1628,42 +1960,105 @@ class _VideoStageState extends State<_VideoStage> {
     _scheduleHide();
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildVideo(BoxConstraints constraints) {
     final controller = widget.controller;
+    final size = controller.value.size;
     final aspect = controller.value.aspectRatio > 0
         ? controller.value.aspectRatio
         : 16 / 9;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _toggleControls,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          const ColoredBox(color: Colors.black),
-          Center(
-            child: AspectRatio(
-              aspectRatio: aspect,
+    // The fit toggle is only exposed in fullscreen; inline always uses contain.
+    final fit = widget.fullscreen ? _fit : VideoFit.contain;
+    switch (fit) {
+      case VideoFit.contain:
+        return Center(
+          child: AspectRatio(
+            aspectRatio: aspect,
+            child: VideoPlayer(controller),
+          ),
+        );
+      case VideoFit.cover:
+        return ClipRect(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: size.width <= 0 ? constraints.maxWidth : size.width,
+              height: size.height <= 0 ? constraints.maxHeight : size.height,
               child: VideoPlayer(controller),
             ),
           ),
-          _ControlsOverlay(
-            controller: controller,
-            visible: _showControls,
-            fullscreen: widget.fullscreen,
-            qualityCode: widget.qualityCode,
-            matchTitle: widget.matchTitle,
-            onTogglePlay: () => _bump(() {
-              controller.value.isPlaying
-                  ? controller.pause()
-                  : controller.play();
-            }),
-            onToggleMute: () => _bump(widget.onToggleMute),
-            onSettings: () => _bump(widget.onSettings),
-            onFullscreen: () => _bump(widget.onFullscreen),
-            onExitFullscreen: () => _bump(widget.onExitFullscreen),
+        );
+      case VideoFit.fill:
+        return SizedBox.expand(
+          child: FittedBox(
+            fit: BoxFit.fill,
+            child: SizedBox(
+              width: size.width <= 0 ? constraints.maxWidth : size.width,
+              height: size.height <= 0 ? constraints.maxHeight : size.height,
+              child: VideoPlayer(controller),
+            ),
           ),
-        ],
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleControls,
+      child: LayoutBuilder(
+        builder: (context, constraints) => Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Colors.black),
+            _buildVideo(constraints),
+            _ControlsOverlay(
+              controller: controller,
+              visible: _showControls,
+              fullscreen: widget.fullscreen,
+              qualityCode: widget.qualityCode,
+              matchTitle: widget.matchTitle,
+              isLive: widget.isLive,
+              fit: widget.fullscreen ? _fit : null,
+              onTogglePlay: () => _bump(() {
+                controller.value.isPlaying
+                    ? controller.pause()
+                    : controller.play();
+              }),
+              onToggleMute: () => _bump(widget.onToggleMute),
+              onSettings: () => _bump(widget.onSettings),
+              onFullscreen: () => _bump(widget.onFullscreen),
+              onExitFullscreen: () => _bump(widget.onExitFullscreen),
+              onGoLive: () => _bump(widget.onGoLive),
+              onCycleFit: widget.fullscreen ? () => _bump(_cycleFit) : null,
+            ),
+            if (_fitToast != null)
+              Center(
+                child: AnimatedOpacity(
+                  opacity: _fitToast != null ? 1 : 0,
+                  duration: const Duration(milliseconds: 150),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .7),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      _fitToast!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1676,11 +2071,15 @@ class _ControlsOverlay extends StatelessWidget {
     required this.fullscreen,
     required this.qualityCode,
     required this.matchTitle,
+    required this.isLive,
     required this.onTogglePlay,
     required this.onToggleMute,
     required this.onSettings,
     required this.onFullscreen,
     required this.onExitFullscreen,
+    required this.onGoLive,
+    this.fit,
+    this.onCycleFit,
   });
 
   final VideoPlayerController controller;
@@ -1688,11 +2087,15 @@ class _ControlsOverlay extends StatelessWidget {
   final bool fullscreen;
   final String qualityCode;
   final String matchTitle;
+  final bool isLive;
   final VoidCallback onTogglePlay;
   final VoidCallback onToggleMute;
   final VoidCallback onSettings;
   final VoidCallback onFullscreen;
   final VoidCallback onExitFullscreen;
+  final VoidCallback onGoLive;
+  final VideoFit? fit;
+  final VoidCallback? onCycleFit;
 
   @override
   Widget build(BuildContext context) {
@@ -1701,6 +2104,12 @@ class _ControlsOverlay extends StatelessWidget {
     final playing = value.isPlaying;
     final muted = value.volume == 0;
     final pad = fullscreen ? 18.0 : 12.0;
+    // For live streams the gap between the live edge (duration) and the current
+    // position tells us whether the viewer has fallen behind.
+    final behindLive = isLive &&
+        value.isInitialized &&
+        value.duration > Duration.zero &&
+        (value.duration - value.position) > const Duration(seconds: 12);
 
     return AnimatedOpacity(
       opacity: visible ? 1 : 0,
@@ -1738,9 +2147,9 @@ class _ControlsOverlay extends StatelessWidget {
                     ),
                     const SizedBox(width: 10),
                   ],
-                  const _LivePill(),
+                  if (isLive) const _LivePill(),
                   if (fullscreen) ...[
-                    const SizedBox(width: 10),
+                    if (isLive) const SizedBox(width: 10),
                     Expanded(
                       child: Text(
                         matchTitle,
@@ -1815,14 +2224,17 @@ class _ControlsOverlay extends StatelessWidget {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Text(
-                        _timeLabel(value.position, value.duration),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
+                      if (isLive)
+                        _GoLiveChip(behind: behindLive, onTap: onGoLive)
+                      else
+                        Text(
+                          _timeLabel(value.position, value.duration),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
                       const Spacer(),
                       _PlayerMiniIcon(
                         icon: muted
@@ -1831,6 +2243,13 @@ class _ControlsOverlay extends StatelessWidget {
                         onTap: onToggleMute,
                       ),
                       const SizedBox(width: 8),
+                      if (fullscreen && onCycleFit != null && fit != null) ...[
+                        _PlayerMiniIcon(
+                          icon: fit!.icon,
+                          onTap: onCycleFit!,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       _PlayerMiniIcon(
                         icon: Icons.settings_rounded,
                         onTap: onSettings,
@@ -1845,6 +2264,59 @@ class _ControlsOverlay extends StatelessWidget {
                     ],
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom-bar live indicator. Shows a solid red "LIVE" when at the live edge,
+/// and a tappable "Go Live" pill (with a leading dot) when the viewer has
+/// fallen behind, mirroring YouTube/Cricbuzz live behaviour.
+class _GoLiveChip extends StatelessWidget {
+  const _GoLiveChip({required this.behind, required this.onTap});
+
+  final bool behind;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return GestureDetector(
+      onTap: behind ? onTap : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: behind
+              ? Colors.black.withValues(alpha: .55)
+              : c.live,
+          borderRadius: BorderRadius.circular(99),
+          border: behind
+              ? Border.all(color: c.cyan.withValues(alpha: .7))
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: behind ? c.cyan : Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              behind ? 'Go Live' : 'LIVE',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 12,
+                letterSpacing: .5,
               ),
             ),
           ],
@@ -1956,12 +2428,14 @@ class _FullscreenPlayerPage extends StatefulWidget {
     required this.matchTitle,
     required this.onToggleMute,
     required this.onOpenSettings,
+    required this.onGoLive,
   });
 
   final ValueListenable<_Playback> playback;
   final String matchTitle;
   final VoidCallback onToggleMute;
   final VoidCallback onOpenSettings;
+  final VoidCallback onGoLive;
 
   @override
   State<_FullscreenPlayerPage> createState() => _FullscreenPlayerPageState();
@@ -2014,10 +2488,12 @@ class _FullscreenPlayerPageState extends State<_FullscreenPlayerPage> {
             fullscreen: true,
             qualityCode: playback.qualityCode,
             matchTitle: widget.matchTitle,
+            isLive: playback.isLive,
             onToggleMute: widget.onToggleMute,
             onSettings: widget.onOpenSettings,
             onFullscreen: () {},
             onExitFullscreen: () => Navigator.of(context).maybePop(),
+            onGoLive: widget.onGoLive,
           );
         },
       ),
@@ -2139,20 +2615,24 @@ class _QualityCard extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 50,
+            width: 56,
             height: 44,
             alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
             decoration: BoxDecoration(
               color: selected ? c.cyan : c.card2,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: selected ? c.cyan : c.border),
             ),
-            child: Text(
-              quality.code,
-              style: TextStyle(
-                color: selected ? Colors.black : c.text,
-                fontWeight: FontWeight.w900,
-                fontSize: 13,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                quality.label,
+                style: TextStyle(
+                  color: selected ? Colors.black : c.text,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                ),
               ),
             ),
           ),
@@ -2162,22 +2642,28 @@ class _QualityCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  quality.label,
+                  quality.isAuto ? 'Auto' : '${quality.label} quality',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: c.text,
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  quality.resolution,
-                  style: TextStyle(
-                    color: selected ? c.cyan : c.muted,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                if (quality.resolution.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    quality.resolution,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected ? c.cyan : c.muted,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -2407,65 +2893,178 @@ class _MoreOption extends StatelessWidget {
   }
 }
 
+/// Compact, scrollable, height-capped quality picker. Renders as a bottom
+/// sheet in portrait and a centered dialog in landscape fullscreen, so it can
+/// never overflow regardless of how many qualities are available.
 class _QualitySheet extends StatelessWidget {
   const _QualitySheet({
     required this.qualities,
     required this.selectedCode,
     required this.onSelected,
+    required this.landscape,
   });
 
   final List<StreamQuality> qualities;
   final String? selectedCode;
   final ValueChanged<StreamQuality> onSelected;
+  final bool landscape;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            const Color(0xff0a1929).withValues(alpha: .98),
-            const Color(0xff0f2744).withValues(alpha: .98),
+    final media = MediaQuery.of(context);
+    final maxHeight = media.size.height * 0.7;
+    final maxWidth = landscape ? 440.0 : double.infinity;
+    final bottomInset = landscape ? 12.0 : (16.0 + media.padding.bottom);
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: maxWidth),
+      child: Container(
+        margin: EdgeInsets.all(landscape ? 12 : 16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(landscape ? 20 : 28),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xff0a1929).withValues(alpha: .98),
+              const Color(0xff0f2744).withValues(alpha: .98),
+            ],
+          ),
+          border: Border.all(color: c.cyan.withValues(alpha: .35)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: .6),
+              blurRadius: 40,
+              spreadRadius: 4,
+            ),
           ],
         ),
-        border: Border.all(color: c.cyan.withValues(alpha: .35)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .6),
-            blurRadius: 40,
-            spreadRadius: 4,
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _SheetHeader(
-            icon: Icons.hd_rounded,
-            title: 'Stream Quality',
-            onClose: () => Navigator.pop(context),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                for (final quality in qualities) ...[
-                  _QualityCard(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _SheetHeader(
+              icon: Icons.hd_rounded,
+              title: 'Stream Quality',
+              dense: landscape,
+              onClose: () => Navigator.pop(context),
+            ),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.fromLTRB(
+                  landscape ? 14 : 18,
+                  landscape ? 10 : 16,
+                  landscape ? 14 : 18,
+                  bottomInset,
+                ),
+                itemCount: qualities.length,
+                separatorBuilder: (_, __) =>
+                    SizedBox(height: landscape ? 8 : 10),
+                itemBuilder: (context, i) {
+                  final quality = qualities[i];
+                  return _QualityRow(
                     quality: quality,
                     selected: quality.code == selectedCode,
+                    dense: landscape,
                     onTap: () => onSelected(quality),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A single quality row inside [_QualitySheet]. `dense` shrinks it for the
+/// landscape dialog (YouTube/JW-style compact rows).
+class _QualityRow extends StatelessWidget {
+  const _QualityRow({
+    required this.quality,
+    required this.selected,
+    required this.onTap,
+    this.dense = false,
+  });
+
+  final StreamQuality quality;
+  final bool selected;
+  final VoidCallback onTap;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final subtitle = quality.isAuto ? 'Adapts to your connection' : null;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: dense ? 12 : 14,
+            vertical: dense ? 10 : 13,
+          ),
+          decoration: BoxDecoration(
+            color: selected ? c.cyan.withValues(alpha: .14) : c.card2,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? c.cyan : c.border,
+              width: selected ? 1.6 : 1,
             ),
           ),
-        ],
+          child: Row(
+            children: [
+              Icon(
+                quality.isAuto ? Icons.auto_awesome_rounded : Icons.hd_rounded,
+                color: selected ? c.cyan : c.muted,
+                size: dense ? 18 : 20,
+              ),
+              SizedBox(width: dense ? 10 : 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      quality.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w800,
+                        fontSize: dense ? 14 : 15.5,
+                      ),
+                    ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected ? c.cyan : c.muted,
+                          fontWeight: FontWeight.w600,
+                          fontSize: dense ? 11 : 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: selected ? c.cyan : c.muted,
+                size: dense ? 20 : 22,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2476,17 +3075,20 @@ class _SheetHeader extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.onClose,
+    this.dense = false,
   });
 
   final IconData icon;
   final String title;
   final VoidCallback onClose;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final badge = dense ? 34.0 : 40.0;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(dense ? 14 : 20),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(color: c.border.withValues(alpha: .4)),
@@ -2495,22 +3097,24 @@ class _SheetHeader extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: badge,
+            height: badge,
             decoration: BoxDecoration(
               gradient: c.primaryGradient,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: Colors.white, size: 22),
+            child: Icon(icon, color: Colors.white, size: dense ? 18 : 22),
           ),
-          const SizedBox(width: 14),
+          SizedBox(width: dense ? 10 : 14),
           Expanded(
             child: Text(
               title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: c.text,
                 fontWeight: FontWeight.w900,
-                fontSize: 20,
+                fontSize: dense ? 16 : 20,
               ),
             ),
           ),
@@ -2518,8 +3122,8 @@ class _SheetHeader extends StatelessWidget {
             onTap: onClose,
             borderRadius: BorderRadius.circular(12),
             child: Container(
-              width: 36,
-              height: 36,
+              width: dense ? 32 : 36,
+              height: dense ? 32 : 36,
               decoration: BoxDecoration(
                 color: c.card2,
                 borderRadius: BorderRadius.circular(12),
