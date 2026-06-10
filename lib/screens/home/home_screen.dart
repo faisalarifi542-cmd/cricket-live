@@ -1419,8 +1419,11 @@ class _CardTeamRow extends StatelessWidget {
     final logoSize = phone ? 40.0 : 46.0;
     final codeSize = phone ? 19.0 : 20.0;
     final scoreColor = match.isLive ? c.live : c.cyan;
+    // Align both columns at the top so the two logos always sit on the same
+    // baseline regardless of differing score/text height below them. The VS
+    // badge is vertically centred against the logo band.
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: _HomeTeamBlock(
@@ -1435,10 +1438,15 @@ class _CardTeamRow extends StatelessWidget {
             score: showScore ? match.teamAScoreText : null,
           ),
         ),
-        _HomeVsBadge(
-          width: phone ? 46 : 50,
-          height: phone ? 32 : 34,
-          intensity: 0.85,
+        SizedBox(
+          height: logoSize,
+          child: Center(
+            child: _HomeVsBadge(
+              width: phone ? 46 : 50,
+              height: phone ? 32 : 34,
+              intensity: 0.85,
+            ),
+          ),
         ),
         Expanded(
           child: _HomeTeamBlock(
