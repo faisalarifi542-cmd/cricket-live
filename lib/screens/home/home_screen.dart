@@ -425,12 +425,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          const Color(0xff04132a).withValues(alpha: .30),
-                          const Color(0xff04101f).withValues(alpha: .58),
-                          c.bg.withValues(alpha: .90),
-                          c.bg,
-                        ],
+                        colors: c.stadiumOverlayColors,
                         stops: const [0, .5, .85, 1],
                       ),
                     ),
@@ -702,7 +697,7 @@ class _CarouselDots extends StatelessWidget {
             decoration: BoxDecoration(
               color: i == active
                   ? c.cyan
-                  : const Color(0xff3a5780).withValues(alpha: .7),
+                  : c.dotInactive,
               borderRadius: BorderRadius.circular(99),
               boxShadow: i == active
                   ? [
@@ -744,18 +739,7 @@ class _HeroMatchCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: c.cyan.withValues(alpha: .6), width: 1.3),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .18),
-              blurRadius: 22,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .38),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: Stack(
           children: [
@@ -773,11 +757,7 @@ class _HeroMatchCard extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xff031126).withValues(alpha: .16),
-                      const Color(0xff031126).withValues(alpha: .2),
-                      const Color(0xff031126).withValues(alpha: .48),
-                    ],
+                    colors: c.heroOverlayColors,
                     stops: const [0, .5, 1],
                   ),
                 ),
@@ -855,7 +835,7 @@ class _HeroMatchCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: .88),
+                            color: c.onImageText,
                             fontWeight: FontWeight.w600,
                             fontSize: phone ? 11 : 11.5,
                           ),
@@ -959,7 +939,9 @@ class _HomeStatusTabs extends StatelessWidget {
         border: Border.all(color: c.cyan.withValues(alpha: .4)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: .28),
+            color: c.isDark
+                ? Colors.black.withValues(alpha: .28)
+                : const Color(0xff4a7fb5).withValues(alpha: .08),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1217,18 +1199,7 @@ class _HomeCardShell extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
           border: Border.all(color: c.cyan.withValues(alpha: .42), width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .1),
-              blurRadius: 18,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .38),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: ConstrainedBox(
           constraints: BoxConstraints(minHeight: minHeight ?? 0),
@@ -1248,11 +1219,13 @@ class _HomeCardShell extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [
-                        const Color(0xff031126).withValues(alpha: .22),
-                        const Color(0xff031126).withValues(alpha: .34),
-                        const Color(0xff020b18).withValues(alpha: .62),
-                      ],
+                      colors: c.matchCardOverlayColors.length >= 3
+                          ? c.matchCardOverlayColors
+                          : [
+                              c.matchCardOverlayColors.first,
+                              Color.lerp(c.matchCardOverlayColors.first, c.matchCardOverlayColors.last, .5)!,
+                              c.matchCardOverlayColors.last,
+                            ],
                       stops: const [0, .45, 1],
                     ),
                   ),
@@ -1511,7 +1484,7 @@ class _CardMetaRow extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: .82),
+                color: c.onImageText,
                 fontWeight: FontWeight.w600,
                 fontSize: 10.8,
               ),
@@ -1657,7 +1630,7 @@ class _HomeLiveMatchCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: .78),
+                color: c.onImageText,
                 fontWeight: FontWeight.w600,
                 fontSize: 11.5,
               ),
@@ -1976,7 +1949,7 @@ class _HomeTeamBlock extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .72),
+              color: c.onImageText,
               fontWeight: FontWeight.w600,
               fontSize: 11,
             ),
@@ -2862,18 +2835,7 @@ class _FeaturedMatchMini extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: c.cyan.withValues(alpha: .38), width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .1),
-              blurRadius: 14,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .34),
-              blurRadius: 14,
-              offset: const Offset(0, 8),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: Stack(
           children: [
@@ -2891,10 +2853,7 @@ class _FeaturedMatchMini extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xff031126).withValues(alpha: .28),
-                      const Color(0xff020b18).withValues(alpha: .66),
-                    ],
+                    colors: c.matchCardOverlayColors,
                   ),
                 ),
               ),
@@ -2972,7 +2931,7 @@ class _FeaturedMatchMini extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: .84),
+                            color: c.onImageText,
                             fontWeight: FontWeight.w600,
                             fontSize: 10.5,
                           ),
@@ -2988,7 +2947,7 @@ class _FeaturedMatchMini extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: .84),
+                            color: c.onImageText,
                             fontWeight: FontWeight.w600,
                             fontSize: 10.5,
                           ),
@@ -3055,7 +3014,7 @@ class _MiniTeam extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: .68),
+              color: c.onImageText,
               fontWeight: FontWeight.w600,
               fontSize: 10,
               height: 1,
@@ -3120,18 +3079,7 @@ class _FeaturedSeriesCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: c.cyan.withValues(alpha: .4), width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: c.cyan.withValues(alpha: .12),
-              blurRadius: 18,
-              spreadRadius: -8,
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: .4),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
+          boxShadow: c.heroShadow,
         ),
         child: Stack(
           fit: StackFit.expand,
@@ -3156,17 +3104,23 @@ class _FeaturedSeriesCard extends StatelessWidget {
               ),
             // Strong left-to-right + bottom gradient so the title/date/location
             // stay readable over any poster.
-            const DecoratedBox(
+            DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.centerLeft,
                   end: Alignment.centerRight,
-                  colors: [
-                    Color(0xF2020B18),
-                    Color(0xB3020B18),
-                    Color(0x40020B18),
-                  ],
-                  stops: [0, .55, 1],
+                  colors: c.isDark
+                      ? const [
+                          Color(0xF2020B18),
+                          Color(0xB3020B18),
+                          Color(0x40020B18),
+                        ]
+                      : [
+                          Colors.white.withValues(alpha: .92),
+                          Colors.white.withValues(alpha: .72),
+                          Colors.white.withValues(alpha: .35),
+                        ],
+                  stops: const [0, .55, 1],
                 ),
               ),
             ),
@@ -3175,10 +3129,15 @@ class _FeaturedSeriesCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: .12),
-                    Colors.black.withValues(alpha: .66),
-                  ],
+                  colors: c.isDark
+                      ? [
+                          Colors.black.withValues(alpha: .12),
+                          Colors.black.withValues(alpha: .66),
+                        ]
+                      : [
+                          Colors.white.withValues(alpha: .10),
+                          Colors.white.withValues(alpha: .55),
+                        ],
                   stops: const [.35, 1],
                 ),
               ),
