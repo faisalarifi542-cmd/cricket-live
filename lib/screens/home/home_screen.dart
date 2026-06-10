@@ -611,7 +611,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
   @override
   Widget build(BuildContext context) {
     final phone = context.w <= 430;
-    final heroHeight = phone ? 202.0 : 220.0;
+    final heroHeight = phone ? 196.0 : 208.0;
     return FutureBuilder<List<CricketMatch>>(
       future: widget.future,
       builder: (context, snapshot) {
@@ -626,7 +626,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
         // neighbours are visible like the target.
         _loop = items.length > 1;
         _controller ??= PageController(
-          viewportFraction: phone ? 0.82 : 0.78,
+          viewportFraction: phone ? 0.88 : 0.82,
           initialPage: _loop ? items.length * 1000 : 0,
         );
 
@@ -731,7 +731,7 @@ class _HeroMatchCard extends StatelessWidget {
         : finished
             ? ('FINISHED', c.success)
             : ('UPCOMING', c.cyan);
-    final logoSize = phone ? 46.0 : 52.0;
+    final logoSize = phone ? 40.0 : 46.0;
     final codeSize = phone ? 16.0 : 18.0;
     return TapScale(
       onTap: onTap,
@@ -781,7 +781,7 @@ class _HeroMatchCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.max,
                 children: [
@@ -789,7 +789,7 @@ class _HeroMatchCard extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: _StatusBadge(label: label, color: color, live: live),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 5),
                   Text(
                     match.series,
                     maxLines: 1,
@@ -813,7 +813,7 @@ class _HeroMatchCard extends StatelessWidget {
                       fontSize: phone ? 16 : 17,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 5),
                   // Team row fills the remaining space so the venue row always
                   // fits inside the fixed hero height (no overflow).
                   Expanded(
@@ -850,7 +850,7 @@ class _HeroMatchCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 4),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -2356,7 +2356,7 @@ class _HomeCategoryFilter extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.zero,
         itemCount: _labels.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (context, index) {
           if (index == _labels.length) {
             return _filterChip(
@@ -2393,8 +2393,8 @@ class _HomeCategoryFilter extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: EdgeInsets.symmetric(
-          horizontal: label != null ? 14 : 10,
-          vertical: 8,
+          horizontal: label != null ? 11 : 9,
+          vertical: 7,
         ),
         decoration: BoxDecoration(
           color: active
@@ -2412,8 +2412,8 @@ class _HomeCategoryFilter extends StatelessWidget {
           children: [
             if (icon != null) ...[
               Icon(icon,
-                  size: 15, color: active ? c.cyan : c.muted),
-              if (label != null) const SizedBox(width: 6),
+                  size: 14, color: active ? c.cyan : c.muted),
+              if (label != null) const SizedBox(width: 5),
             ],
             if (label != null)
               Text(
@@ -2421,7 +2421,7 @@ class _HomeCategoryFilter extends StatelessWidget {
                 style: TextStyle(
                   color: active ? c.cyan : c.muted,
                   fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-                  fontSize: 12.5,
+                  fontSize: 11.5,
                 ),
               ),
           ],
