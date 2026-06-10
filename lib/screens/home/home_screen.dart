@@ -1373,32 +1373,37 @@ class _CardTopRow extends StatelessWidget {
     final c = context.cric;
     final shortDate =
         context.w <= 430 ? dateTime.replaceAll(' • ', '  ') : dateTime;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+    // Badge + date on the top line; the series/match title gets its own
+    // full-width line below so long titles aren't truncated early.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _StatusBadge(label: label, color: color, live: live, dense: true),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Text(
-            series,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: c.cyan,
-              fontWeight: FontWeight.w800,
-              fontSize: 12.2,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _StatusBadge(label: label, color: color, live: live, dense: true),
+            const Spacer(),
+            Text(
+              shortDate,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: .92),
+                fontWeight: FontWeight.w700,
+                fontSize: 10.5,
+              ),
             ),
-          ),
+          ],
         ),
-        const SizedBox(width: 6),
+        const SizedBox(height: 5),
         Text(
-          shortDate,
+          series,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: .92),
-            fontWeight: FontWeight.w700,
-            fontSize: 10.5,
+            color: c.cyan,
+            fontWeight: FontWeight.w800,
+            fontSize: 12.5,
           ),
         ),
       ],
