@@ -611,7 +611,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
   @override
   Widget build(BuildContext context) {
     final phone = context.w <= 430;
-    final heroHeight = phone ? 196.0 : 208.0;
+    final heroHeight = phone ? 200.0 : 212.0;
     return FutureBuilder<List<CricketMatch>>(
       future: widget.future,
       builder: (context, snapshot) {
@@ -626,7 +626,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
         // neighbours are visible like the target.
         _loop = items.length > 1;
         _controller ??= PageController(
-          viewportFraction: phone ? 0.88 : 0.82,
+          viewportFraction: phone ? 0.9 : 0.84,
           initialPage: _loop ? items.length * 1000 : 0,
         );
 
@@ -650,8 +650,8 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
                       if (_controller!.position.haveDimensions) {
                         diff = (_controller!.page ?? index.toDouble()) - index;
                       }
-                      final scale = (1 - diff.abs() * 0.07).clamp(0.9, 1.0);
-                      final opacity = (1 - diff.abs() * 0.45).clamp(0.55, 1.0);
+                      final scale = (1 - diff.abs() * 0.09).clamp(0.88, 1.0);
+                      final opacity = (1 - diff.abs() * 0.55).clamp(0.45, 1.0);
                       return Opacity(
                         opacity: opacity,
                         child: Transform.scale(scale: scale, child: child),
@@ -668,7 +668,7 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
                 },
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             if (widget.showDots)
               _CarouselDots(count: items.length, active: _current),
           ],
@@ -781,7 +781,7 @@ class _HeroMatchCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 9),
               child: Column(
                 mainAxisSize: MainAxisSize.max,
                 children: [
@@ -789,7 +789,7 @@ class _HeroMatchCard extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: _StatusBadge(label: label, color: color, live: live),
                   ),
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 6),
                   Text(
                     match.series,
                     maxLines: 1,
