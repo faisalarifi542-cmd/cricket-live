@@ -1,4 +1,5 @@
 import 'package:cricpro_flutter/api_models.dart';
+import 'package:cricpro_flutter/core/api/api_config.dart';
 
 import 'cricket_match.dart';
 
@@ -18,6 +19,13 @@ class HomeFeaturedSeries {
     required this.imageUrl,
     required this.ctaLabel,
     required this.ctaUrl,
+    required this.formatText,
+    required this.teamAName,
+    required this.teamAShort,
+    required this.teamALogo,
+    required this.teamBName,
+    required this.teamBShort,
+    required this.teamBLogo,
   });
 
   final String id;
@@ -30,8 +38,18 @@ class HomeFeaturedSeries {
   final String ctaLabel;
   final String ctaUrl;
 
+  /// Optional descriptors from the Admin Panel row (e.g. `3 T20s , 3 ODIs`).
+  final String formatText;
+  final String teamAName;
+  final String teamAShort;
+  final String teamALogo;
+  final String teamBName;
+  final String teamBShort;
+  final String teamBLogo;
+
   bool get hasImage => imageUrl.trim().isNotEmpty;
   bool get hasSeriesLink => seriesExternalId.trim().isNotEmpty;
+  bool get hasTeams => teamAShort.isNotEmpty || teamBShort.isNotEmpty;
   bool get isRenderable => title.isNotEmpty || hasImage;
 
   factory HomeFeaturedSeries.fromJson(dynamic value) {
@@ -52,10 +70,29 @@ class HomeFeaturedSeries {
       subtitle: pick(const ['subtitle']),
       dateRange: pick(const ['date_range', 'dateRange', 'dates']),
       location: pick(const ['location', 'country', 'host', 'venue']),
-      imageUrl: pick(const ['image_url', 'imageUrl', 'poster', 'image']),
+      imageUrl: _resolveUrl(pick(const ['image_url', 'imageUrl', 'poster', 'image'])),
       ctaLabel: pick(const ['cta_label', 'ctaLabel']),
       ctaUrl: pick(const ['cta_url', 'ctaUrl']),
+      formatText: pick(const ['format_text', 'formatText', 'format']),
+      teamAName: pick(const ['team_a_name', 'teamAName', 'team_a']),
+      teamAShort: pick(const ['team_a_short', 'teamAShort']),
+      teamALogo: _resolveUrl(pick(const ['team_a_logo', 'teamALogo'])),
+      teamBName: pick(const ['team_b_name', 'teamBName', 'team_b']),
+      teamBShort: pick(const ['team_b_short', 'teamBShort']),
+      teamBLogo: _resolveUrl(pick(const ['team_b_logo', 'teamBLogo'])),
     );
+  }
+
+  /// Admin-uploaded media can be returned either as a full `https://…` URL or
+  /// as a server-relative path like `/uploads/…`; resolve the latter against
+  /// the API base so the image actually loads on-device.
+  static String _resolveUrl(String url) {
+    final u = url.trim();
+    if (u.isEmpty) return '';
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    const base = ApiConfig.baseUrl;
+    if (u.startsWith('/')) return '$base$u';
+    return '$base/$u';
   }
 }
 

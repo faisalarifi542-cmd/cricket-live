@@ -2350,7 +2350,6 @@ class _HomeCategoryFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
     return SizedBox(
       height: 38,
       child: ListView.separated(
@@ -2720,12 +2719,12 @@ class _FeaturedSeriesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 140,
+      height: 176,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.zero,
         itemCount: series.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           return _FeaturedSeriesMini(
             series: series[index],
@@ -2748,22 +2747,43 @@ class _FeaturedSeriesMini extends StatelessWidget {
     final c = context.cric;
     return TapScale(
       onTap: onTap,
-      borderRadius: 14,
+      borderRadius: 20,
       child: Container(
-        width: 200,
+        width: 272,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: c.card.withValues(alpha: .5),
-          border: Border.all(color: c.cyan.withValues(alpha: .3)),
+          borderRadius: BorderRadius.circular(20),
+          color: c.card,
+          border: Border.all(color: c.cyan.withValues(alpha: .45)),
+          boxShadow: [
+            BoxShadow(
+              color: c.cyan.withValues(alpha: .18),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Always render a stadium fallback so the image area is never
-            // empty; the network poster paints over it when available.
+            // Premium navy base so the poster never looks empty even before
+            // the admin image loads or when no image is configured.
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    c.cyan.withValues(alpha: .22),
+                    c.card,
+                    const Color(0xFF0A1622),
+                  ],
+                ),
+              ),
+            ),
+            // Stadium texture, then the admin poster paints over it.
             Image.asset(
-              _HAsset.liveCardBg,
+              _HAsset.heroBg,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
@@ -2771,64 +2791,173 @@ class _FeaturedSeriesMini extends StatelessWidget {
               Image.network(
                 series.imageUrl,
                 fit: BoxFit.cover,
-                // Keep the stadium fallback visible on error instead of
-                // collapsing the image area.
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 loadingBuilder: (context, child, progress) {
                   if (progress == null) return child;
                   return const SizedBox.shrink();
                 },
               ),
+            // Legibility overlay: keep the top airy and darken the bottom so
+            // the title/metadata stay readable over any poster art.
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: .15),
-                    Colors.black.withValues(alpha: .78),
+                    Colors.black.withValues(alpha: .10),
+                    Colors.black.withValues(alpha: .55),
+                    Colors.black.withValues(alpha: .90),
                   ],
-                  stops: const [0.35, 1],
+                  stops: const [0.0, 0.5, 1.0],
                 ),
               ),
             ),
+            // Top badges: SERIES tag + optional format chip.
             Positioned(
-              left: 10,
-              right: 10,
-              bottom: 10,
+              left: 12,
+              right: 12,
+              top: 12,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: c.cyan,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: const Text(
+                      'SERIES',
+                      style: TextStyle(
+                        color: Color(0xFF06121E),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 9,
+                        letterSpacing: .8,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (series.formatText.isNotEmpty)
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .45),
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(
+                              color: c.cyan.withValues(alpha: .35)),
+                        ),
+                        child: Text(
+                          series.formatText.replaceAll(' ,', ','),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .92),
+                            fontWeight: FontWeight.w700,
+                            fontSize: 9.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Bottom content: teams (when available), title, dates/location.
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 11,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (series.hasTeams) ...[
+                    Row(
+                      children: [
+                        TeamLogoWidget(
+                          logoUrl: series.teamALogo,
+                          teamName: series.teamAName,
+                          abbreviation: series.teamAShort,
+                          color: c.cyan,
+                          size: 22,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          series.teamAShort,
+                          style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(
+                          'v',
+                          style: TextStyle(
+                            color: c.cyan,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 10,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(
+                          series.teamBShort,
+                          style: TextStyle(
+                            color: c.text,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        TeamLogoWidget(
+                          logoUrl: series.teamBLogo,
+                          teamName: series.teamBName,
+                          abbreviation: series.teamBShort,
+                          color: c.warning,
+                          size: 22,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                  ],
                   Text(
                     series.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: c.text,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                      height: 1.2,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 13.5,
+                      height: 1.18,
                     ),
                   ),
-                  if (series.dateRange.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      series.dateRange,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: .82),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 10.5,
-                      ),
-                    ),
-                  ],
-                  if (series.location.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on_outlined,
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (series.dateRange.isNotEmpty) ...[
+                        Icon(Icons.calendar_today_rounded,
+                            size: 10.5, color: c.cyan),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            series.dateRange,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .85),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (series.dateRange.isNotEmpty &&
+                          series.location.isNotEmpty)
+                        const SizedBox(width: 10),
+                      if (series.location.isNotEmpty) ...[
+                        Icon(Icons.location_on_rounded,
                             size: 11, color: c.cyan),
                         const SizedBox(width: 3),
                         Flexible(
@@ -2837,15 +2966,15 @@ class _FeaturedSeriesMini extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withValues(alpha: .8),
+                              color: Colors.white.withValues(alpha: .85),
                               fontWeight: FontWeight.w600,
                               fontSize: 10.5,
                             ),
                           ),
                         ),
                       ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ],
               ),
             ),
