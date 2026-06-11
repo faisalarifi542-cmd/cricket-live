@@ -1107,7 +1107,7 @@ class MDBallChip extends StatelessWidget {
     final filled = isW || isSix || isFour;
 
     // Opaque base so the timeline line behind the marker is fully hidden.
-    const opaqueBase = Color(0xff0a1f33);
+    final opaqueBase = c.isDark ? const Color(0xff0a1f33) : c.card;
     return Container(
       width: size,
       height: size,
@@ -1131,9 +1131,9 @@ class MDBallChip extends StatelessWidget {
           ? Container(
               width: size * 0.2,
               height: size * 0.2,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white,
+                color: c.isDark ? Colors.white : c.muted,
               ),
             )
           : Text(

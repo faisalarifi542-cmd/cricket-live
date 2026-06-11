@@ -100,6 +100,24 @@ class CricColors extends ThemeExtension<CricColors> {
           ),
         ];
 
+  /// Opacity applied to the full-screen *stadium backdrop* photos behind
+  /// headers. The art is a dark night-stadium image; in light mode it is
+  /// rendered as a faint ice-blue texture (so it never reads as a grey scrim)
+  /// while staying full-strength in dark mode.
+  double get stadiumImageOpacity => isDark ? 1.0 : .16;
+
+  /// Opacity applied to stadium photos used *inside* cards (live/featured hero
+  /// cards). Slightly stronger than the backdrop so the art stays visible, but
+  /// still light enough that navy/cyan text on top reads cleanly.
+  double get heroImageOpacity => isDark ? 1.0 : .34;
+
+  /// White screen-tint blended onto stadium photos in light mode to push the
+  /// dark pixels toward white. `null` in dark mode (no tint — keep the art).
+  Color? get stadiumImageTint =>
+      isDark ? null : Colors.white.withValues(alpha: .55);
+  BlendMode get stadiumImageBlend =>
+      isDark ? BlendMode.dst : BlendMode.lighten;
+
   /// Stadium backdrop overlay gradient (top fade for readability).
   List<Color> get stadiumOverlayColors => isDark
       ? [
@@ -109,9 +127,9 @@ class CricColors extends ThemeExtension<CricColors> {
           bg,
         ]
       : [
-          Colors.white.withValues(alpha: .25),
-          Colors.white.withValues(alpha: .55),
-          bg.withValues(alpha: .88),
+          Colors.white.withValues(alpha: .45),
+          Colors.white.withValues(alpha: .70),
+          bg.withValues(alpha: .92),
           bg,
         ];
 
@@ -123,9 +141,9 @@ class CricColors extends ThemeExtension<CricColors> {
           const Color(0xff031126).withValues(alpha: .48),
         ]
       : [
-          Colors.white.withValues(alpha: .30),
-          Colors.white.withValues(alpha: .45),
-          Colors.white.withValues(alpha: .72),
+          Colors.white.withValues(alpha: .42),
+          Colors.white.withValues(alpha: .58),
+          Colors.white.withValues(alpha: .82),
         ];
 
   /// Match card stadium overlay for list cards.
@@ -135,8 +153,8 @@ class CricColors extends ThemeExtension<CricColors> {
           const Color(0xff031126).withValues(alpha: .78),
         ]
       : [
-          Colors.white.withValues(alpha: .50),
-          Colors.white.withValues(alpha: .82),
+          Colors.white.withValues(alpha: .68),
+          Colors.white.withValues(alpha: .90),
         ];
 
   /// Inactive carousel dot color.

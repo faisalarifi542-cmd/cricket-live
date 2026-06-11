@@ -2160,7 +2160,7 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
               height: 16,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xff0a1f33),
+                color: c.isDark ? const Color(0xff0a1f33) : c.card,
                 border: Border.all(
                     color: c.muted.withValues(alpha: .75), width: 2),
               ),

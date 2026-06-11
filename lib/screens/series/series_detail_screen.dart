@@ -476,16 +476,10 @@ class SeriesDetailHero extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
+          const Positioned.fill(
+            child: StadiumImage(
               SAsset.detailHeroBg,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Image.asset(
-                SAsset.homeStadiumBackdrop,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    const ColoredBox(color: Color(0xff071726)),
-              ),
+              hero: true,
             ),
           ),
           Positioned.fill(

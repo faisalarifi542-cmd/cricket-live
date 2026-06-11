@@ -493,15 +493,11 @@ class SeriesListCard extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            Positioned.fill(
-              child: Image.asset(
+            const Positioned.fill(
+              child: StadiumImage(
                 SAsset.listCardBg,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Image.asset(
-                  SAsset.homeStadiumBackdrop,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
+                hero: true,
+                alignment: Alignment.center,
               ),
             ),
             Positioned.fill(
@@ -749,12 +745,11 @@ class SeriesHeroCard extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
+          const Positioned.fill(
+            child: StadiumImage(
               'assets/images/stadium_live.png',
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
-                  ColoredBox(color: c.isDark ? const Color(0xff071726) : c.card),
+              hero: true,
+              alignment: Alignment.center,
             ),
           ),
           Positioned.fill(
@@ -1058,7 +1053,9 @@ class SeriesSectionCard extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [c.card.withValues(alpha: .96), const Color(0xff081a30)],
+          colors: c.isDark
+              ? [c.card.withValues(alpha: .96), const Color(0xff081a30)]
+              : [c.card, c.card2],
         ),
         border: Border.all(color: c.border),
       ),

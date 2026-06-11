@@ -18,7 +18,6 @@ import '../../widgets/ads/native_ad_card.dart';
 class _MAsset {
   static const _base = 'assets/images/matches';
   static const topBg = '$_base/matches_top_bg.png';
-  static const cardBg = '$_base/match_card_bg.png';
   static const cardBgLive = '$_base/match_card_bg_live.png';
   static const cardBgUpcoming = '$_base/match_card_bg_upcoming.png';
   static const cardBgFinished = '$_base/match_card_bg_finished.png';
@@ -324,11 +323,9 @@ class _MatchesScreenState extends State<MatchesScreen>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(
+                  const StadiumImage(
                     _MAsset.topBg,
-                    fit: BoxFit.cover,
                     alignment: Alignment.topCenter,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                   DecoratedBox(
                     decoration: BoxDecoration(
@@ -882,14 +879,10 @@ class _MatchCardShell extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(
-              child: Image.asset(
+              child: StadiumImage(
                 bg,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Image.asset(
-                  _MAsset.cardBg,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
+                hero: true,
+                alignment: Alignment.center,
               ),
             ),
             // Readability overlay — kept very light so the stadium shows.
@@ -906,9 +899,9 @@ class _MatchCardShell extends StatelessWidget {
                             const Color(0xff06182c).withValues(alpha: .32),
                           ]
                         : [
-                            Colors.white.withValues(alpha: .30),
-                            c.card.withValues(alpha: .20),
-                            Colors.white.withValues(alpha: .45),
+                            Colors.white.withValues(alpha: .62),
+                            c.card.withValues(alpha: .52),
+                            Colors.white.withValues(alpha: .72),
                           ],
                   ),
                 ),

@@ -19,6 +19,46 @@ export 'widgets/responsive.dart'
 
 enum AppTab { home, matches, schedule, series, more }
 
+/// A stadium-atmosphere background image with built-in light-mode treatment.
+///
+/// In dark mode it renders the (dark night-stadium) art at full strength. In
+/// light mode it lowers opacity and screen-blends a white tint so the dark
+/// photo becomes a faint ice-blue texture instead of bleeding through as a
+/// grey scrim. Use this anywhere a stadium `Image.asset` sits behind content;
+/// pair it with `c.stadiumOverlayColors` / `c.heroOverlayColors` for the fade.
+class StadiumImage extends StatelessWidget {
+  const StadiumImage(
+    this.asset, {
+    super.key,
+    this.fit = BoxFit.cover,
+    this.alignment = Alignment.topCenter,
+    this.hero = false,
+  });
+
+  final String asset;
+  final BoxFit fit;
+  final Alignment alignment;
+
+  /// When true uses the stronger `heroImageOpacity` (stadium art inside cards);
+  /// otherwise the fainter backdrop opacity used behind headers.
+  final bool hero;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Opacity(
+      opacity: hero ? c.heroImageOpacity : c.stadiumImageOpacity,
+      child: Image.asset(
+        asset,
+        fit: fit,
+        alignment: alignment,
+        color: c.stadiumImageTint,
+        colorBlendMode: c.stadiumImageBlend,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
+    );
+  }
+}
 String tabLabel(AppTab tab) => switch (tab) {
       AppTab.home => 'Home',
       AppTab.matches => 'Matches',

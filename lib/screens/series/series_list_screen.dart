@@ -151,16 +151,9 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.asset(
+                    const StadiumImage(
                       SAsset.topBackdrop,
-                      fit: BoxFit.cover,
                       alignment: Alignment.topCenter,
-                      errorBuilder: (_, __, ___) => Image.asset(
-                        SAsset.homeStadiumBackdrop,
-                        fit: BoxFit.cover,
-                        alignment: Alignment.topCenter,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      ),
                     ),
                     Positioned(
                       top: -40,
@@ -699,19 +692,10 @@ class _HeroBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget asset() => Image.asset(
+    Widget asset() => const StadiumImage(
           SAsset.detailHeroBg,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Image.asset(
-            SAsset.featuredCarouselBg,
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => Image.asset(
-              SAsset.homeStadiumBackdrop,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) =>
-                  const ColoredBox(color: Color(0xff071726)),
-            ),
-          ),
+          hero: true,
+          alignment: Alignment.center,
         );
     final url = image?.trim() ?? '';
     if (url.startsWith('http')) {

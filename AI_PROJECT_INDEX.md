@@ -12,7 +12,7 @@
 | File | Purpose |
 |------|---------|
 | `lib/app_theme.dart` | `CricColors` ThemeExtension — all color tokens, light/dark definitions |
-| `lib/components.dart` | Shared widgets: PremiumCard, GradientButton, BottomNav, TeamLogoWidget, PlayerAvatarWidget, PillChip, StatusBadge |
+| `lib/components.dart` | Shared widgets: PremiumCard, GradientButton, BottomNav, TeamLogoWidget, PlayerAvatarWidget, PillChip, StatusBadge, **StadiumImage** |
 | `lib/models.dart` | Data models (re-exports) |
 | `lib/api_models.dart` | API response models |
 
@@ -32,6 +32,9 @@
 | `matchCardOverlayColors` | White semi-transparent | Dark semi-transparent | Match list card overlays |
 | `onImageText` | Navy `#0a1e3d` | White `.88` alpha | Text on image surfaces |
 | `subtleSurface` | Blue-tinted `#e0ecf6` | White `.02` alpha | Subtle button/chip bg |
+| `stadiumImageOpacity` | `.16` faint | `1.0` full | Stadium **backdrop** photo opacity |
+| `heroImageOpacity` | `.34` | `1.0` full | Stadium photo **inside cards** opacity |
+| `stadiumImageTint` / `stadiumImageBlend` | white `.55` + `lighten` | null + `dst` | Lightens dark stadium art in light mode |
 
 ## Screen File Map
 | Screen | File |
@@ -52,11 +55,24 @@
 
 ## Design Rules
 1. **Never hardcode dark-mode colors** — always use `c.isDark` branching or CricColors tokens
+   - Common bug: a `const Color(0xff0…)` navy literal (or a hardcoded `Colors.white` dot)
+     inside a widget renders in BOTH themes → muddy dark cards / invisible dots in light mode.
+     Audit with: `grep -rn "Color(0xff0" lib/screens lib/components` and check each isn't
+     a non-branching surface. Known intentional exceptions below.
+   - Intentional dark-in-both: VS badge dark-glass chip + cyan→blue VS gradient
+     (`0xff35e2ff/0a86ff`), `live_player_screen.dart` video surfaces, white-text-on-image
+     bottom fades, and `ColoredBox` image-load placeholders.
 2. **Image overlays**: Use `c.heroOverlayColors` / `c.matchCardOverlayColors` — white-based in light, dark-based in dark
 3. **Text on images**: Use `c.onImageText` — navy in light mode, white in dark mode
 4. **Shadows**: Use `c.cardShadow` or `c.heroShadow` — blue-tinted in light, black in dark
 5. **Image priority**: Admin uploaded → Provider (Cricbuzz) → Initials fallback
 6. **Live player/video screens**: Keep dark overlays (intentional for video readability)
+7. **Stadium artwork is a DARK photo** — never place it behind content with a raw
+   `Image.asset` in light mode; it bleeds through weak overlays as a grey scrim
+   (was the #1 "light mode looks like dark mode" bug). Always use the shared
+   `StadiumImage` widget (`hero: true` for in-card art), which lowers opacity +
+   screen-blends white in light mode. Admin/network marketing posters stay full
+   opacity; only their stadium *fallback* asset uses `StadiumImage`.
 
 ## Build Commands
 - `flutter pub get` — Install dependencies

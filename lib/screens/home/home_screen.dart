@@ -400,11 +400,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(
+                  const StadiumImage(
                     _HAsset.stadiumBackdrop,
-                    fit: BoxFit.cover,
                     alignment: Alignment.topCenter,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                   // Left floodlight glow.
                   Positioned(
@@ -743,11 +741,11 @@ class _HeroMatchCard extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            Positioned.fill(
-              child: Image.asset(
+            const Positioned.fill(
+              child: StadiumImage(
                 _HAsset.heroBg,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                hero: true,
+                alignment: Alignment.center,
               ),
             ),
             // Light overlay only — keep the stadium and floodlights visible.
@@ -1206,10 +1204,10 @@ class _HomeCardShell extends StatelessWidget {
           child: Stack(
             children: [
               Positioned.fill(
-                child: Image.asset(
+                child: StadiumImage(
                   bgAsset,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  hero: true,
+                  alignment: Alignment.center,
                 ),
               ),
               // Stadium visible with a clean dark overlay for readable text.
@@ -2840,11 +2838,11 @@ class _FeaturedMatchMini extends StatelessWidget {
         child: Stack(
           children: [
             // Stadium background.
-            Positioned.fill(
-              child: Image.asset(
+            const Positioned.fill(
+              child: StadiumImage(
                 _HAsset.liveCardBg,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                hero: true,
+                alignment: Alignment.center,
               ),
             ),
             Positioned.fill(
@@ -3086,10 +3084,10 @@ class _FeaturedSeriesCard extends StatelessWidget {
           children: [
             // Premium stadium fallback — always present so the image area is
             // never empty; the admin poster paints over it when available.
-            Image.asset(
+            const StadiumImage(
               _HAsset.heroBg,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              hero: true,
+              alignment: Alignment.center,
             ),
             if (series.hasImage)
               Image.network(

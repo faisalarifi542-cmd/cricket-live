@@ -270,11 +270,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset(
+                  const StadiumImage(
                     _Asset.stadiumTop,
-                    fit: BoxFit.cover,
                     alignment: Alignment.topCenter,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                   // Darken + fade into the page background for readability.
                   DecoratedBox(
@@ -967,11 +965,11 @@ class _ScheduleMatchCard extends StatelessWidget {
         child: Stack(
           children: [
             // Premium stadium card background.
-            Positioned.fill(
-              child: Image.asset(
+            const Positioned.fill(
+              child: StadiumImage(
                 _Asset.matchCardBg,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                hero: true,
+                alignment: Alignment.center,
               ),
             ),
             Positioned.fill(
@@ -980,11 +978,17 @@ class _ScheduleMatchCard extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      const Color(0xff0c2c50).withValues(alpha: .68),
-                      c.card.withValues(alpha: .74),
-                      const Color(0xff06182c).withValues(alpha: .82),
-                    ],
+                    colors: c.isDark
+                        ? [
+                            const Color(0xff0c2c50).withValues(alpha: .68),
+                            c.card.withValues(alpha: .74),
+                            const Color(0xff06182c).withValues(alpha: .82),
+                          ]
+                        : [
+                            Colors.white.withValues(alpha: .82),
+                            Colors.white.withValues(alpha: .88),
+                            c.card2.withValues(alpha: .94),
+                          ],
                   ),
                 ),
               ),
@@ -1202,7 +1206,7 @@ class _SeriesBadge extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: const Color(0xff0e2742),
+        color: c.isDark ? const Color(0xff0e2742) : c.card,
         border: Border.all(color: c.cyan.withValues(alpha: .55), width: 1.3),
         boxShadow: [
           BoxShadow(
@@ -1230,20 +1234,25 @@ class _SeriesBadge extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        Image.asset(
+        const StadiumImage(
           'assets/images/stadium_live.png',
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          hero: true,
+          alignment: Alignment.center,
         ),
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                const Color(0xff0b2238).withValues(alpha: .82),
-                const Color(0xff061528).withValues(alpha: .92),
-              ],
+              colors: c.isDark
+                  ? [
+                      const Color(0xff0b2238).withValues(alpha: .82),
+                      const Color(0xff061528).withValues(alpha: .92),
+                    ]
+                  : [
+                      Colors.white.withValues(alpha: .80),
+                      c.card2.withValues(alpha: .90),
+                    ],
             ),
           ),
         ),
@@ -1766,10 +1775,15 @@ class _SheetShell extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              const Color(0xff0a1929).withValues(alpha: .99),
-              const Color(0xff0f2744).withValues(alpha: .99),
-            ],
+            colors: c.isDark
+                ? [
+                    const Color(0xff0a1929).withValues(alpha: .99),
+                    const Color(0xff0f2744).withValues(alpha: .99),
+                  ]
+                : [
+                    c.card,
+                    c.card2,
+                  ],
           ),
           border: Border.all(color: c.cyan.withValues(alpha: .32)),
         ),
