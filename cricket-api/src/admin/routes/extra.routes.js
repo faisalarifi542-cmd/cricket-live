@@ -25,6 +25,10 @@ import {
 } from '../../lib/player-images.js';
 import { getPlayerImageUrl } from '../../lib/image-helper.js';
 import { CricbuzzProvider } from '../../providers/cricbuzz/index.js';
+import {
+  fetchPlayerByProviderId,
+  fetchTeamByProviderId,
+} from '../../lib/provider-fetch.js';
 
 async function clearPattern(redis, pattern) {
   let cursor = '0';
@@ -505,6 +509,22 @@ export default async function extraAdminRoutes(fastify) {
     return { success: true, data: { ...rows[0], is_active: rows[0].is_active !== 0 } };
   });
 
+  // Fetch a team by provider ID for the admin auto-fill form. Runs through
+  // providerManager (DB priority + failover); returns shaped fields + provider.
+  fastify.post('/teams/fetch-by-provider-id', { preHandler: [requirePermissions('teams.write')] }, async (request, reply) => {
+    const id = String(request.body?.team_id ?? request.body?.external_id ?? request.body?.id ?? '').trim();
+    if (!id) return reply.code(400).send({ success: false, error: 'team_id is required' });
+    try {
+      const result = await fetchTeamByProviderId(id);
+      if (!result || !result.data) {
+        return reply.code(404).send({ success: false, error: `No team found for ID ${id}` });
+      }
+      return { success: true, provider: result.provider, data: result.data };
+    } catch (err) {
+      return reply.code(502).send({ success: false, error: `Provider fetch failed: ${err.message || 'all providers unavailable'}` });
+    }
+  });
+
   fastify.post('/teams/sync-from-api', { preHandler: [requirePermissions('teams.write')] }, async (request) => {
     const candidates = new Map();
     const addMatchTeams = (matches = []) => {
@@ -704,6 +724,24 @@ export default async function extraAdminRoutes(fastify) {
         }),
       })),
     };
+  });
+
+  // Fetch a player by provider ID for the admin auto-fill form. Runs through
+  // providerManager (DB priority + failover); returns shaped fields + provider.
+  fastify.post('/players/fetch-by-provider-id', { preHandler: [requirePermissions('players.write')] }, async (request, reply) => {
+    const id = String(
+      request.body?.provider_player_id ?? request.body?.player_id ?? request.body?.external_id ?? request.body?.id ?? '',
+    ).trim();
+    if (!id) return reply.code(400).send({ success: false, error: 'player_id is required' });
+    try {
+      const result = await fetchPlayerByProviderId(id);
+      if (!result || !result.data) {
+        return reply.code(404).send({ success: false, error: `No player found for ID ${id}` });
+      }
+      return { success: true, provider: result.provider, data: result.data };
+    } catch (err) {
+      return reply.code(502).send({ success: false, error: `Provider fetch failed: ${err.message || 'all providers unavailable'}` });
+    }
   });
 
   // Global player-image mode (admin_first | cricbuzz_first | admin_only |

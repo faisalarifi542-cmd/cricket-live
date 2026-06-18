@@ -1,4 +1,4 @@
-import { cacheGet, cacheGetOrFetch, cacheSet, KEYS, TTL } from '../lib/redis.js';
+import { cacheGet, cacheGetOrFetch, cacheGetOrFetchSWR, cacheSet, KEYS, SWR_WINDOW, TTL, unwrapSWR } from '../lib/redis.js';
 import providerManager from '../providers/provider-manager.js';
 import { cacheMiddleware } from '../middleware/cache.js';
 import { indexMatchListItems, indexScheduleMatches, getMatchSummary, summaryToMatchDetail } from '../lib/match-index.js';
@@ -43,6 +43,18 @@ export default async function matchRoutes(fastify) {
       || !data.bowlingTeam
       || !latestBall
       || (Number(latestBall.over || 0) === 0 && Number(latestBall.ball || 0) === 0);
+  }
+
+  // Conservative guard for the match-detail SWR cache: only block clearly-empty
+  // payloads so invalid/broken data is never cached (or served stale). A valid
+  // match detail must carry at least a match id, a status, or one team identity.
+  function isInvalidMatchDetailPayload(data) {
+    if (!data || typeof data !== 'object') return true;
+    const hasId = !!(data.match_id || data.matchId);
+    const hasStatus = !!data.status;
+    const hasTeam = !!(data.team1?.name || data.team1?.short_name
+      || data.team2?.name || data.team2?.short_name);
+    return !(hasId || hasStatus || hasTeam);
   }
 
   async function fetchRecentMatches() {
@@ -222,23 +234,42 @@ export default async function matchRoutes(fastify) {
             success: { type: 'boolean' },
             data: { type: 'array' },
             cache: { type: 'boolean' },
+            fromCache: { type: 'boolean' },
           },
         },
       },
     },
-    preHandler: cacheMiddleware(KEYS.matchesList('live'), TTL.LIVE_SCORE),
+    // No preHandler cacheMiddleware: it does a plain cacheGet that would read the
+    // SWR envelope as raw data and short-circuit with a different shape. SWR is
+    // handled inside the handler instead (fourth wired route, after live-line +
+    // scorecard + commentary). X-Cache is set manually below.
   }, async (request, reply) => {
-    const { data } = await cacheGetOrFetch(
+    // SWR: serve the cached provider live list instantly and refresh in the
+    // background within the stale window. TTL.LIVE_LIST (8s) + SWR_WINDOW.LIVE_LIST
+    // (4s) → max served age 12s. Validation INSIDE the fetchFn: only an actual
+    // array is cached (an empty array is valid — it means no live matches right
+    // now — and is cached to avoid hammering the provider); a non-array/broken
+    // payload returns null so SWR skips caching.
+    const { data, fromCache } = await cacheGetOrFetchSWR(
       KEYS.matchesList('live'),
-      TTL.LIVE_SCORE,
+      TTL.LIVE_LIST,
+      SWR_WINDOW.LIVE_LIST,
       async () => {
         const result = await providerManager.execute('getLiveMatches');
-        return result.data;
+        const list = result?.data;
+        return Array.isArray(list) ? list : null;
       }
     );
+    reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
+    // Manual match merge + stream enrichment run per-request on top of the cached
+    // provider list (unchanged) so manual matches and live stream gating fields
+    // are never stale-cached.
     const merged = await mergeManualMatches(data || [], { status: 'live' });
     if (merged?.length) indexMatchListItems(merged).catch(() => {});
-    return { success: true, data: await enrichMatchListWithStreams(merged, { allowReplay: false }).catch(() => merged) };
+    // Expose top-level fromCache (boolean, never null) so the response shape
+    // matches the other SWR routes and Flutter can read cache state. X-Cache
+    // header above is derived from the same value.
+    return { success: true, data: await enrichMatchListWithStreams(merged, { allowReplay: false }).catch(() => merged), fromCache };
   });
 
   // GET /matches/upcoming
@@ -285,22 +316,26 @@ export default async function matchRoutes(fastify) {
         required: ['id'],
       },
     },
-    preHandler: cacheMiddleware((req) => KEYS.matchLive(req.params.id), TTL.LIVE_SCORE),
+    // No preHandler cacheMiddleware: it does a plain cacheGet that would read the
+    // SWR envelope as raw data and short-circuit with a different shape. The SWR
+    // helper handles the cache below and we set X-Cache manually.
   }, async (request, reply) => {
     const { id } = request.params;
     try {
-      const { data } = await cacheGetOrFetch(
+      const { data, fromCache } = await cacheGetOrFetchSWR(
         KEYS.matchLive(id),
         TTL.LIVE_SCORE,
+        SWR_WINDOW.MATCH_DETAIL,
         async () => {
           const result = await providerManager.execute('getMatchInfo', id);
-          return result.data;
+          return isInvalidMatchDetailPayload(result?.data) ? null : result.data;
         }
       );
 
       if (data) {
+        reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
         const summary = await streamSummaryForMatch(id);
-        return { success: true, data: { ...data, ...summary } };
+        return { success: true, data: { ...data, ...summary }, fromCache };
       }
     } catch {
       // Livescore endpoint failed — try matchHeader fallback for upcoming/preview matches
@@ -317,6 +352,7 @@ export default async function matchRoutes(fastify) {
             ...headerResult.data,
             ...summary,
           },
+          fromCache: false,
         };
       }
     } catch { /* ignore */ }
@@ -332,6 +368,7 @@ export default async function matchRoutes(fastify) {
             ...summaryToMatchDetail(summary),
             ...streamSummary,
           },
+          fromCache: false,
         };
       }
     } catch { /* ignore */ }
@@ -352,6 +389,7 @@ export default async function matchRoutes(fastify) {
                   ...summaryToMatchDetail(summary),
                   ...streamSummary,
                 },
+                fromCache: false,
               };
             }
           }
@@ -371,6 +409,7 @@ export default async function matchRoutes(fastify) {
             ...detail,
             ...streams,
           },
+          fromCache: false,
         };
       }
     } catch { /* ignore */ }
@@ -409,6 +448,7 @@ export default async function matchRoutes(fastify) {
         defaultStreamId: null,
         streams: [],
       },
+      fromCache: false,
     };
   });
 
@@ -423,33 +463,36 @@ export default async function matchRoutes(fastify) {
         required: ['id'],
       },
     },
-    preHandler: cacheMiddleware((req) => KEYS.matchScorecard(req.params.id), TTL.SCORECARD),
   }, async (request, reply) => {
     const { id } = request.params;
     try {
-      // [FIXED] Validate data before caching - don't cache empty failures
-      let data = await cacheGet(KEYS.matchScorecard(id));
-      let fromCache = !!data;
-      
-      if (!data) {
-        const result = await providerManager.execute('getScorecard', id);
-        data = result?.data || null;
-        
-        // [FIXED] Only cache if we have valid scorecard data
-        if (data && data.innings && data.innings.length > 0) {
-          await cacheSet(KEYS.matchScorecard(id), data, TTL.SCORECARD);
-        } else {
-          logger.warn({ msg: '[FIXED] Not caching empty scorecard', matchId: id, innings: data?.innings?.length });
-          fromCache = false;
-        }
-      }
+      // SWR (second wired route, after live-line): serve cached scorecard
+      // instantly and refresh in the background within the stale window.
+      // TTL.SCORECARD (5s) + SWR_WINDOW.SCORECARD (3s) → max served age 8s.
+      // Validation is preserved INSIDE the fetchFn: only a scorecard with >=1
+      // innings is returned (and therefore cached); empty/broken data returns
+      // null so SWR skips caching, exactly as the prior [FIXED] guard did.
+      const { data, fromCache } = await cacheGetOrFetchSWR(
+        KEYS.matchScorecard(id),
+        TTL.SCORECARD,
+        SWR_WINDOW.SCORECARD,
+        async () => {
+          const result = await providerManager.execute('getScorecard', id);
+          const sc = result?.data || null;
+          if (sc && Array.isArray(sc.innings) && sc.innings.length > 0) {
+            return sc;
+          }
+          logger.warn({ msg: '[FIXED] Not caching empty scorecard', matchId: id, innings: sc?.innings?.length });
+          return null;
+        },
+      );
 
       reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
-      
+
       if (data && data.innings && data.innings.length > 0) {
         return { success: true, data, fromCache };
       }
-    } catch (err) { 
+    } catch (err) {
       logger.error({ msg: '[FIXED] Scorecard fetch failed', matchId: id, error: err.message });
     }
 
@@ -480,21 +523,33 @@ export default async function matchRoutes(fastify) {
         },
       },
     },
-    preHandler: cacheMiddleware((req) => KEYS.matchCommentary(req.params.id), TTL.COMMENTARY),
+    // No preHandler cacheMiddleware: it does a plain cacheGet that would read the
+    // SWR envelope as raw data and short-circuit with a different shape. SWR is
+    // handled inside the handler instead (third wired route, after live-line +
+    // scorecard).
   }, async (request, reply) => {
     const { id } = request.params;
     const { page = 1, limit = 50 } = request.query;
 
-    const { data: commentary } = await cacheGetOrFetch(
+    // SWR: serve cached commentary instantly and refresh in the background within
+    // the stale window. TTL.COMMENTARY (5s) + SWR_WINDOW.COMMENTARY (3s) → max
+    // served age 8s. Validation is preserved INSIDE the fetchFn: only a non-empty
+    // commentary array is returned (and therefore cached); empty/broken data
+    // returns null so SWR skips caching and never serves stale junk.
+    const { data: commentary, fromCache } = await cacheGetOrFetchSWR(
       KEYS.matchCommentary(id),
       TTL.COMMENTARY,
+      SWR_WINDOW.COMMENTARY,
       async () => {
         const result = await providerManager.execute('getCommentary', id);
-        return result.data;
+        const list = result?.data || null;
+        return Array.isArray(list) && list.length > 0 ? list : null;
       }
     );
 
-    if (!commentary) return { success: true, data: [], pagination: { page, limit, total: 0, pages: 0 }, message: 'Commentary not available for this match' };
+    reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
+
+    if (!commentary) return { success: true, data: [], pagination: { page, limit, total: 0, pages: 0 }, fromCache, message: 'Commentary not available for this match' };
 
     // Paginate
     const start = (page - 1) * limit;
@@ -509,6 +564,7 @@ export default async function matchRoutes(fastify) {
         total: commentary.length,
         pages: Math.ceil(commentary.length / limit),
       },
+      fromCache,
     };
   });
 
@@ -526,7 +582,7 @@ export default async function matchRoutes(fastify) {
   }, async (request, reply) => {
     const { id } = request.params;
     try {
-      const match = await cacheGet(KEYS.matchLive(id));
+      const match = unwrapSWR(await cacheGet(KEYS.matchLive(id)));
       if (match) return { success: true, data: match.innings || [] };
 
       const result = await providerManager.execute('getMatchInfo', id);
@@ -986,10 +1042,17 @@ export default async function matchRoutes(fastify) {
     // Pull match detail first to decide on the live/finished cache TTL.
     let detail = null;
     try {
-      const res = await cacheGetOrFetch(
+      // Shares the match-detail SWR key, so it MUST read/write the same envelope
+      // as the /match/:id route — otherwise the two clobber each other and the
+      // route degrades to a permanent cache miss.
+      const res = await cacheGetOrFetchSWR(
         KEYS.matchLive(id),
         TTL.LIVE_SCORE,
-        async () => (await providerManager.execute('getMatchInfo', id)).data,
+        SWR_WINDOW.MATCH_DETAIL,
+        async () => {
+          const d = (await providerManager.execute('getMatchInfo', id)).data;
+          return isInvalidMatchDetailPayload(d) ? null : d;
+        },
       );
       detail = res?.data || null;
     } catch { /* detail optional */ }
@@ -1011,15 +1074,31 @@ export default async function matchRoutes(fastify) {
     // optional and merged best-effort, so one partial endpoint never empties
     // the whole Live Center.
     const [commentaryRes, scorecardRes] = await Promise.allSettled([
-      cacheGetOrFetch(
+      // Shares the commentary SWR key, so it MUST read/write the same envelope
+      // as the /commentary route — otherwise the two clobber each other and the
+      // route degrades to a permanent cache miss. Returns the commentary array
+      // (or null on empty/invalid), never a raw envelope.
+      cacheGetOrFetchSWR(
         KEYS.matchCommentary(id),
         TTL.COMMENTARY,
-        async () => (await providerManager.execute('getCommentary', id)).data,
+        SWR_WINDOW.COMMENTARY,
+        async () => {
+          const list = (await providerManager.execute('getCommentary', id)).data;
+          return Array.isArray(list) && list.length > 0 ? list : null;
+        },
       ),
-      cacheGetOrFetch(
+      // Shares the scorecard SWR key, so it MUST read/write the same envelope
+      // as the /scorecard route — otherwise the two clobber each other and the
+      // route degrades to a permanent cache miss. Returns the sc payload (or
+      // null), never a raw envelope, so downstream `scorecard.innings` is intact.
+      cacheGetOrFetchSWR(
         KEYS.matchScorecard(id),
         TTL.SCORECARD,
-        async () => (await providerManager.execute('getScorecard', id)).data,
+        SWR_WINDOW.SCORECARD,
+        async () => {
+          const sc = (await providerManager.execute('getScorecard', id)).data;
+          return sc && Array.isArray(sc.innings) && sc.innings.length > 0 ? sc : null;
+        },
       ),
     ]);
 
@@ -1187,7 +1266,7 @@ export default async function matchRoutes(fastify) {
           // This avoids hammering 404s that would trip the circuit breaker.
           let inningsCount = 2;
           try {
-            const sc = await cacheGet(KEYS.matchScorecard(id));
+            const sc = unwrapSWR(await cacheGet(KEYS.matchScorecard(id)));
             if (Array.isArray(sc?.innings) && sc.innings.length > 2) {
               inningsCount = Math.min(4, sc.innings.length);
             }
@@ -1533,32 +1612,27 @@ export default async function matchRoutes(fastify) {
   }, async (request) => {
     const { id } = request.params;
     try {
-      const cached = await cacheGet(KEYS.matchLiveLine(id));
-      if (cached && !isInvalidLiveLinePayload(cleanLiveLinePayload(cached, id))) {
-        return {
-          success: true,
-          matchId: id,
-          data: cleanLiveLinePayload(cached, id),
-          updatedAt: new Date().toISOString(),
-          fromCache: true,
-          message: null,
-        };
-      }
-
-      const result = await providerManager.execute('getLiveLine', id);
-      const liveData = cleanLiveLinePayload(result?.data || null, id);
-
-      if (liveData && !isInvalidLiveLinePayload(liveData)) {
-        // Cache for only 5 seconds - live data should be fresh
-        await cacheSet(KEYS.matchLiveLine(id), liveData, TTL.LIVE_LINE);
-      }
+      // SWR (first wired route): serve cached live-line instantly and refresh in
+      // the background while within the stale window. TTL.LIVE_LINE (5s) +
+      // SWR_WINDOW.LIVE_LINE (3s) → max served age 8s. Only valid, cleaned
+      // payloads are cached (fetchFn returns null otherwise, so SWR skips them).
+      const { data: liveData, fromCache } = await cacheGetOrFetchSWR(
+        KEYS.matchLiveLine(id),
+        TTL.LIVE_LINE,
+        SWR_WINDOW.LIVE_LINE,
+        async () => {
+          const result = await providerManager.execute('getLiveLine', id);
+          const cleaned = cleanLiveLinePayload(result?.data || null, id);
+          return cleaned && !isInvalidLiveLinePayload(cleaned) ? cleaned : null;
+        },
+      );
 
       return {
         success: true,
         matchId: id,
-        data: liveData,
+        data: liveData || null,
         updatedAt: new Date().toISOString(),
-        fromCache: false,
+        fromCache,
         message: !liveData ? 'Live line data not available for this match' : null,
       };
     } catch (err) {

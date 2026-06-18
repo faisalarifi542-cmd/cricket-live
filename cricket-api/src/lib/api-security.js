@@ -181,10 +181,15 @@ export function resolveEndpointGroup(method, rawUrl) {
   // System / never-block routes.
   if (path === '/health' || path.startsWith('/health/') || path === '/metrics'
     || path === '/providers' || path === '/docs' || path.startsWith('/docs/')
-    || path === '/uploads' || path.startsWith('/uploads/')) {
+    || path === '/uploads' || path.startsWith('/uploads/')
+    || path === '/app/assets') {
     return 'health';
   }
   if (path.startsWith('/admin')) return 'admin';
+
+  // Public analytics ingest — no api-key required (anonymous app telemetry).
+  // Auth 'none' + own group so it is rate-limited independently of data routes.
+  if (path === '/analytics/events') return 'analytics_ingest';
 
   // Streams (check before generic /match details).
   if (/\/match\/[^/]+\/streams/.test(path)) return 'streams';
@@ -424,7 +429,9 @@ export async function apiSecurityMiddleware(request, reply) {
     ? { ...DEFAULT_RULE, authRequired: 'admin_jwt', enabled: true }
     : group === 'health'
       ? { ...DEFAULT_RULE, authRequired: 'none', enabled: true }
-      : DEFAULT_RULE);
+      : group === 'analytics_ingest'
+        ? { ...DEFAULT_RULE, authRequired: 'none', enabled: true, rateLimitPerMinute: 100 }
+        : DEFAULT_RULE);
 
   request.security.loggingEnabled = rule.loggingEnabled;
 

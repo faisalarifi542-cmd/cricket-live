@@ -3,9 +3,22 @@ import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import { loadHomeLayout, saveHomeLayout } from '../../lib/home-layout.js';
 import { saveBase64Image } from '../../lib/uploads.js';
- 
+import { invalidatePublicConfigCaches } from '../../lib/public-cache-invalidation.js';
+
 export default async function homepageRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
+
+  // Every mutating homepage endpoint (layout, sections, banners, featured
+  // series/matches/news, reorder) changes data the public /app/home + /app/config
+  // payloads embed. Invalidate the shared public caches once, after any successful
+  // write, instead of repeating the call in all ~13 handlers. GETs and failed
+  // writes (4xx/5xx) are skipped so reads stay cheap and a rejected edit doesn't
+  // needlessly clear warm caches.
+  fastify.addHook('onResponse', async (request, reply) => {
+    if (request.method === 'GET') return;
+    if (reply.statusCode >= 400) return;
+    await invalidatePublicConfigCaches();
+  });
 
   // ---------- Image upload (base64 JSON → saved file + public URL) ----------
   // Used by the Featured Series form to upload a poster instead of pasting a

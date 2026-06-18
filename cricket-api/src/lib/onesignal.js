@@ -1,10 +1,65 @@
 import { query } from './db.js';
 
+// Category key -> the OneSignal tag the app writes for it (see the Flutter
+// NotificationService.syncCategoryTags: tags are `notif_<key>` = '1' | '0').
+// A category send is delivered only to devices whose tag is not '0', so a user
+// who toggled the category off is never targeted.
+const CATEGORY_TAGS = new Set([
+  'live_scores',
+  'match_start',
+  'toss',
+  'wickets',
+  'innings_result',
+  'live_stream',
+  'favorite_team',
+  'news',
+  'announcements',
+]);
+
+function categoryFilter(categoryKey) {
+  const tag = `notif_${categoryKey}`;
+  // relation '!=' value '0' matches devices tagged '1' AND devices that never
+  // set the tag (defaults are on), while excluding anyone who set it to '0'.
+  return {
+    filters: [{ field: 'tag', key: tag, relation: '!=', value: '0' }],
+  };
+}
+
+// Favourite targeting: the app tags each followed country/team code as
+// `fav_<CODE>` = '1'. A favourite send ANDs the category opt-in with at least
+// one matching favourite tag (OneSignal OR-joins via {operator:'OR'}).
+function favoriteFilter(categoryKey, codesCsv) {
+  const codes = String(codesCsv || '')
+    .split(',')
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+  const filters = [{ field: 'tag', key: `notif_${categoryKey}`, relation: '!=', value: '0' }];
+  if (codes.length) {
+    filters.push({ operator: 'AND' });
+    codes.forEach((code, i) => {
+      if (i > 0) filters.push({ operator: 'OR' });
+      filters.push({ field: 'tag', key: `fav_${code}`, relation: '=', value: '1' });
+    });
+  }
+  return { filters };
+}
+
 function targetFilter(targetType, targetValue) {
   if (targetType === 'android') return { included_segments: ['Android Users'] };
   if (targetType === 'ios') return { included_segments: ['iOS Users'] };
   if (targetType === 'subscription' && targetValue) {
     return { include_subscription_ids: [targetValue] };
+  }
+  // Category-aware send: target_value is the category key (e.g. 'live_stream').
+  if (targetType === 'category' && targetValue && CATEGORY_TAGS.has(targetValue)) {
+    return categoryFilter(targetValue);
+  }
+  // Favourite send: target_value is "<categoryKey>:<CODE,CODE,...>". The
+  // category gates the opt-in; the codes restrict to followed teams/countries.
+  if (targetType === 'favorite' && targetValue) {
+    const [categoryKey, codesCsv] = String(targetValue).split(':');
+    const key = CATEGORY_TAGS.has(categoryKey) ? categoryKey : 'favorite_team';
+    return favoriteFilter(key, codesCsv);
   }
   return { included_segments: ['All'] };
 }

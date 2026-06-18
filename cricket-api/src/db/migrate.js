@@ -564,6 +564,24 @@ const TABLES = [
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  // App Assets — admin-managed decorative images served to the Flutter app at
+  // runtime. Lets large backgrounds/overlays be swapped without an app update
+  // and (later) removed from the bundle to shrink the APK. The app always ships
+  // a local fallback, so a missing/inactive row degrades gracefully.
+  `CREATE TABLE IF NOT EXISTS app_assets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    asset_key VARCHAR(100) NOT NULL,
+    theme VARCHAR(10) NOT NULL DEFAULT 'both',
+    url TEXT,
+    version VARCHAR(40),
+    is_active TINYINT(1) DEFAULT 1,
+    updated_by INT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_asset_key_theme (asset_key, theme),
+    INDEX idx_app_assets_active (is_active)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS push_notifications (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
@@ -839,6 +857,56 @@ const TABLES = [
     INDEX idx_req_logs_ip (ip),
     INDEX idx_req_logs_status (status_code)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // ====================================================
+  // ANALYTICS — privacy-safe app usage events (no PII)
+  // device_id / session_id are random anonymous IDs generated client-side.
+  // payload is a small JSON bag of non-identifying dimensions (screen name,
+  // match id, quality code, etc.). NEVER store name/email/phone/IMEI/GPS.
+  // ====================================================
+  `CREATE TABLE IF NOT EXISTS analytics_events (
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_name    VARCHAR(60) NOT NULL,
+    device_id     VARCHAR(64),
+    session_id    VARCHAR(64),
+    payload       JSON,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_analytics_event_created (event_name, created_at),
+    INDEX idx_analytics_device_created (device_id, created_at),
+    INDEX idx_analytics_session_created (session_id, created_at),
+    INDEX idx_analytics_created (created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // Deduplicated devices = approximate installs / first opens. Upserted on each
+  // app_open so first_seen is the install proxy and last_seen drives DAU/MAU.
+  `CREATE TABLE IF NOT EXISTS analytics_devices (
+    device_id     VARCHAR(64) PRIMARY KEY,
+    first_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    app_version   VARCHAR(20),
+    platform      VARCHAR(10),
+    os_version    VARCHAR(30),
+    country       VARCHAR(5),
+    INDEX idx_analytics_devices_last (last_seen),
+    INDEX idx_analytics_devices_first (first_seen),
+    INDEX idx_analytics_devices_platform (platform),
+    INDEX idx_analytics_devices_version (app_version)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+  // One row per app usage session. session_id is the PK so repeated heartbeats
+  // for the same session UPDATE last_seen instead of inserting duplicates — this
+  // is what keeps "Sessions" honest when a user opens/resumes the app many times
+  // inside the 30-minute session window. started_at drives "Sessions today".
+  `CREATE TABLE IF NOT EXISTS analytics_sessions (
+    session_id    VARCHAR(64) PRIMARY KEY,
+    device_id     VARCHAR(64),
+    started_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    app_version   VARCHAR(20),
+    platform      VARCHAR(10),
+    INDEX idx_analytics_sessions_started (started_at),
+    INDEX idx_analytics_sessions_device (device_id, started_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];
 
 async function migrate() {
@@ -881,6 +949,34 @@ async function addColumnIfMissing(pool, tableName, columnName, definition) {
   if (await columnExists(pool, tableName, columnName)) return;
   await pool.execute(`ALTER TABLE \`${tableName}\` ADD COLUMN ${definition}`);
   logger.info(`Added missing column ${tableName}.${columnName}`);
+}
+
+async function indexExists(pool, tableName, indexName) {
+  const [rows] = await pool.execute(
+    `SELECT 1
+       FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND INDEX_NAME = ?
+      LIMIT 1`,
+    [tableName, indexName],
+  );
+  return rows.length > 0;
+}
+
+// Adds an index via the given ALTER statement only if neither the index nor
+// (for safety) the underlying table is missing. Swallows duplicate-key races so
+// concurrent boots don't crash migration. The full ALTER is passed in so unique
+// vs plain indexes are explicit at the call site.
+async function addIndexIfMissing(pool, tableName, indexName, alterSql) {
+  try {
+    if (await indexExists(pool, tableName, indexName)) return;
+    await pool.execute(alterSql);
+    logger.info(`Added missing index ${tableName}.${indexName}`);
+  } catch (err) {
+    // Duplicate index or a benign race on parallel boot — log and continue.
+    logger.debug(`addIndexIfMissing(${tableName}.${indexName}) skipped: ${err.message}`);
+  }
 }
 
 async function applyCompatibilityMigrations(pool) {
@@ -941,6 +1037,19 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'match_streams', 'clear_key_key_id', 'clear_key_key_id VARCHAR(220) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'clear_key_key', 'clear_key_key TEXT NULL');
 
+  // Stream scheduling / visibility controls (Admin Panel "Live Stream" form).
+  //   lifecycle_state    — draft | scheduled | active | disabled | expired
+  //                        (admin intent; the public API still re-derives the
+  //                        effective visibility from time + is_active so a
+  //                        stale value can never wrongly reveal a stream)
+  //   timezone           — IANA tz the admin entered start/end in (display aid)
+  //   early_show_minutes — reveal "Watch Live" this many minutes before start
+  //   auto_hide_after_end — hide automatically once ends_at passes
+  await addColumnIfMissing(pool, 'match_streams', 'lifecycle_state', "lifecycle_state VARCHAR(20) DEFAULT 'scheduled'");
+  await addColumnIfMissing(pool, 'match_streams', 'timezone', 'timezone VARCHAR(64) NULL');
+  await addColumnIfMissing(pool, 'match_streams', 'early_show_minutes', 'early_show_minutes INT DEFAULT 0');
+  await addColumnIfMissing(pool, 'match_streams', 'auto_hide_after_end', 'auto_hide_after_end TINYINT(1) DEFAULT 1');
+
   await pool.query(`CREATE TABLE IF NOT EXISTS app_devices (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     subscription_id VARCHAR(220) UNIQUE NOT NULL,
@@ -975,6 +1084,42 @@ async function applyCompatibilityMigrations(pool) {
     INDEX idx_notification_history_created (created_at),
     INDEX idx_notification_history_status (status)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(() => null);
+  // Stable per-install identity (UUID generated once on the device, persisted
+  // locally). Decouples the device/user record from the OneSignal
+  // subscription_id, which can rotate when the OS refreshes the push token —
+  // the historical cause of the same install showing up as multiple devices.
+  // Nullable + idempotent so old apps that don't send installId keep working.
+  await addColumnIfMissing(pool, 'app_devices', 'install_id', 'install_id VARCHAR(64) NULL');
+  // Unique index on install_id (where present) so a re-register with the same
+  // install_id but a rotated subscription_id updates the existing row instead of
+  // creating a duplicate. MySQL allows multiple NULLs under a UNIQUE index, so
+  // legacy rows without an install_id are unaffected.
+  await addIndexIfMissing(
+    pool,
+    'app_devices',
+    'uniq_app_devices_install',
+    'ALTER TABLE `app_devices` ADD UNIQUE INDEX uniq_app_devices_install (install_id)',
+  );
+
+  // Analytics: ensure the sessions table and the first_seen index exist on
+  // databases created before session tracking / calendar-day metrics landed.
+  await pool.query(`CREATE TABLE IF NOT EXISTS analytics_sessions (
+    session_id    VARCHAR(64) PRIMARY KEY,
+    device_id     VARCHAR(64),
+    started_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    app_version   VARCHAR(20),
+    platform      VARCHAR(10),
+    INDEX idx_analytics_sessions_started (started_at),
+    INDEX idx_analytics_sessions_device (device_id, started_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(() => null);
+  await addIndexIfMissing(
+    pool,
+    'analytics_devices',
+    'idx_analytics_devices_first',
+    'ALTER TABLE `analytics_devices` ADD INDEX idx_analytics_devices_first (first_seen)',
+  );
+
   await addColumnIfMissing(pool, 'push_notifications', 'payload', 'payload JSON NULL');
   await addColumnIfMissing(pool, 'push_notifications', 'provider_response', 'provider_response JSON NULL');
   await addColumnIfMissing(pool, 'push_notifications', 'error_message', 'error_message TEXT NULL');
@@ -1123,6 +1268,7 @@ async function seedApiSecurityDefaults(pool) {
     { group: 'rankings', pattern: '/rankings', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
     { group: 'schedule', pattern: '/schedule', auth: 'api_key', types: ['android', 'ios', 'web', 'server'], rpm: 120, ttl: 0 },
     { group: 'notifications_device_register', pattern: '/app/device', auth: 'api_key', types: ['android', 'ios', 'web'], rpm: 60, ttl: 0 },
+    { group: 'analytics_ingest', pattern: '/analytics/events', auth: 'none', types: ['android', 'ios', 'web', 'server'], rpm: 100, ttl: 0 },
     { group: 'admin', pattern: '/admin', auth: 'admin_jwt', types: ['admin'], rpm: 600, ttl: 0 },
   ];
   for (const r of endpointRules) {

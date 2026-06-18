@@ -1,4 +1,6 @@
 import { query } from './db.js';
+import { SPLASH_SETTING_KEYS, buildSplashConfig } from './splash-config.js';
+import { getPlayerImageMode, DEFAULT_PLAYER_IMAGE_MODE } from './player-images.js';
 
 function parseJsonMaybe(value, fallback = null) {
   if (value == null) return fallback;
@@ -69,6 +71,8 @@ const PUBLIC_SETTING_KEYS = new Set([
   'accentColor',
   'oneSignalAppId',
   'adsTestMode',
+  // Premium animated splash screen (group `splash`). All public + safe.
+  ...SPLASH_SETTING_KEYS,
 ]);
 
 const SENSITIVE_KEY_RE = /(secret|password|token|jwt|private|rest.*key|api.*key|database|db_|connection)/i;
@@ -96,8 +100,18 @@ function pick(row, keys, fallback = null) {
   return fallback;
 }
 
-function normalizeStreamType(value) {
+function normalizeStreamType(value, url = '') {
   const type = String(value || 'hls').toLowerCase();
+  // A URL whose path contains `.m3u8` is HLS regardless of a stored type that
+  // is missing/unknown/wrong (covers pre-normalization DB rows).
+  if (url) {
+    let path = String(url).toLowerCase();
+    try { path = new URL(url).pathname.toLowerCase(); } catch { /* keep raw */ }
+    if (path.includes('.m3u8')) return 'hls';
+  }
+  const hlsAliases = new Set(['hls', 'm3u8', 'mpegurl', 'x-mpegurl',
+    'application/x-mpegurl', 'application/vnd.apple.mpegurl', 'vnd.apple.mpegurl']);
+  if (hlsAliases.has(type)) return 'hls';
   return type === 'mpd' ? 'dash' : type;
 }
 
@@ -138,7 +152,7 @@ export function publicStreamDto(row) {
   return {
     id: String(row.id),
     title: pick(row, ['title'], label || quality) || label || quality,
-    type: normalizeStreamType(pick(row, ['stream_type', 'streamType'], 'hls')),
+    type: normalizeStreamType(pick(row, ['stream_type', 'streamType'], 'hls'), url),
     url,
     backupUrl: pick(row, ['backup_stream_url', 'backupStreamUrl'], null),
     quality,
@@ -159,55 +173,94 @@ export function streamLifecycleStatus(row) {
   const now = Date.now();
   const startsAt = row?.starts_at ? new Date(row.starts_at).getTime() : null;
   const endsAt = row?.ends_at ? new Date(row.ends_at).getTime() : null;
+  const earlyMs = Math.max(0, Number(row?.early_show_minutes || 0)) * 60 * 1000;
+  const adminState = String(row?.lifecycle_state || '').trim().toLowerCase();
+  const autoHide = normalizeBool(row?.auto_hide_after_end, true);
+  // Admin intent can force-hide regardless of timing.
+  if (adminState === 'draft' || adminState === 'disabled') return adminState;
   if (normalizeBool(row?.is_active, true) === false) return 'inactive';
-  if (endsAt && endsAt < now) return 'expired';
-  if (startsAt && startsAt > now) return 'scheduled';
+  if (endsAt && autoHide && endsAt < now) return 'expired';
+  // Within the early-show window the stream counts as active.
+  if (startsAt && startsAt - earlyMs > now) return 'scheduled';
   return 'active';
+}
+
+// Effective, time-aware visibility used by every public surface. A stream is
+// only watchable when the admin has not hidden it (draft/disabled), it is
+// active, and the current time falls inside [starts_at - early_show, ends_at]
+// (open-ended where a bound is null). Kept in one place so Home / Matches /
+// Schedule / Match Details / Live entry all agree.
+export function isStreamWatchable(row) {
+  return streamLifecycleStatus(row) === 'active';
+}
+
+// Earliest moment "Watch Live" becomes visible (start minus early-show window).
+export function streamVisibleFrom(row) {
+  if (!row?.starts_at) return null;
+  const startsAt = new Date(row.starts_at).getTime();
+  if (!Number.isFinite(startsAt)) return null;
+  const earlyMs = Math.max(0, Number(row?.early_show_minutes || 0)) * 60 * 1000;
+  return new Date(startsAt - earlyMs).toISOString();
 }
 
 export async function fetchActiveStreamsForMatch(matchId) {
   if (!matchId) return [];
+  // Fetch all enabled streams for the match (cheap), then apply the schedule
+  // rules in JS so a pre-migration DB without the new columns still works.
   const rows = await query(
     `SELECT * FROM match_streams
       WHERE match_external_id = ?
         AND is_active = 1
-        AND (starts_at IS NULL OR starts_at <= NOW())
-        AND (ends_at IS NULL OR ends_at >= NOW())
       ORDER BY priority ASC, id ASC`,
     [matchId],
   ).catch(() => []);
-  return rows.map((row) => ({
-    ...row,
-    lifecycle_status: streamLifecycleStatus(row),
-  }));
+  return rows
+    .filter((row) => isStreamWatchable(row))
+    .map((row) => ({
+      ...row,
+      lifecycle_status: streamLifecycleStatus(row),
+      visible_from: streamVisibleFrom(row),
+    }));
 }
 
 export async function fetchStreamSummaryByMatchIds(matchIds = []) {
   const ids = [...new Set(matchIds.map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length) return new Map();
   const placeholders = ids.map(() => '?').join(', ');
+  // Pull enabled streams and apply schedule rules in JS (handles early-show,
+  // draft/disabled, and auto-hide uniformly and survives un-migrated DBs).
   const rows = await query(
-    `SELECT match_external_id, COUNT(*) AS stream_count,
-            SUM(CASE WHEN is_premium = 1 THEN 1 ELSE 0 END) AS premium_count,
-            MIN(priority) AS min_priority
+    `SELECT match_external_id, is_premium, priority, starts_at, ends_at,
+            lifecycle_state, early_show_minutes, auto_hide_after_end
        FROM match_streams
       WHERE match_external_id IN (${placeholders})
-        AND is_active = 1
-        AND (starts_at IS NULL OR starts_at <= NOW())
-        AND (ends_at IS NULL OR ends_at >= NOW())
-      GROUP BY match_external_id`,
+        AND is_active = 1`,
     ids,
-  ).catch(() => []);
-  return new Map(
-    rows.map((row) => [
-      String(row.match_external_id),
-      {
-        streamCount: Number(row.stream_count || 0),
-        premiumCount: Number(row.premium_count || 0),
-        minPriority: Number(row.min_priority || 100),
-      },
-    ]),
+  ).catch(async () =>
+    // Fallback for databases that have not yet run the scheduling migration.
+    query(
+      `SELECT match_external_id, is_premium, priority, starts_at, ends_at
+         FROM match_streams
+        WHERE match_external_id IN (${placeholders})
+          AND is_active = 1
+          AND (starts_at IS NULL OR starts_at <= NOW())
+          AND (ends_at IS NULL OR ends_at >= NOW())`,
+      ids,
+    ).catch(() => []),
   );
+  const watchable = rows.filter((row) => isStreamWatchable(row));
+  const grouped = new Map();
+  for (const row of watchable) {
+    const key = String(row.match_external_id);
+    const acc = grouped.get(key) || { streamCount: 0, premiumCount: 0, minPriority: 100, visibleFrom: null };
+    acc.streamCount += 1;
+    if (Number(row.is_premium) === 1) acc.premiumCount += 1;
+    acc.minPriority = Math.min(acc.minPriority, Number(row.priority || 100));
+    const vf = streamVisibleFrom(row);
+    if (vf && (!acc.visibleFrom || vf < acc.visibleFrom)) acc.visibleFrom = vf;
+    grouped.set(key, acc);
+  }
+  return grouped;
 }
 
 function matchIdFromItem(item) {
@@ -227,10 +280,17 @@ export function applyStreamMeta(match, summary = null, { allowReplay = false } =
   const status = String(match?.status || match?.matchStatus || '').toLowerCase();
   const isRecent = ['recent', 'completed', 'finished', 'result'].includes(status);
   const hasLiveStream = streamCount > 0 && (!isRecent || allowReplay);
+  const streamStartsAt = summary?.visibleFrom || null;
   return {
     ...match,
     hasLiveStream,
     watchLiveEnabled: hasLiveStream,
+    // Spec-clean aliases the Flutter client can rely on directly instead of
+    // guessing schedule locally. All three agree: a stream is watchable only
+    // when one is summarised here (the summary already applied the schedule).
+    hasStream: hasLiveStream,
+    watchLiveAvailable: hasLiveStream,
+    streamStartsAt,
     streamCount,
     isPremiumStreamAvailable: premiumCount > 0,
     streamBadgeText: hasLiveStream
@@ -259,9 +319,12 @@ export async function enrichMatchListWithStreams(matches = [], { allowReplay = f
   return matches.map((match) => {
     const id = matchIdFromItem(match);
     const enriched = applyStreamMeta(match, summaries.get(id) || null, { allowReplay });
+    const watchable = liveStreamsEnabled && enriched.watchLiveEnabled;
     return {
       ...enriched,
-      watchLiveEnabled: liveStreamsEnabled && enriched.watchLiveEnabled,
+      watchLiveEnabled: watchable,
+      hasStream: watchable,
+      watchLiveAvailable: watchable,
     };
   });
 }
@@ -547,6 +610,26 @@ export async function buildPublicAppConfig() {
       30,
     ),
     maxAppOpenAdsPerSession: toNumber(adsValue?.max_app_open_ads_per_session, 4),
+    // Stream pre-roll session capping (Watch Live / quality-switch pre-roll).
+    // Counted client-side only for ads that actually showed; resets per app
+    // process. Admin may override any of these via `frequency_config` JSON.
+    preRollSessionCapEnabled: normalizeBool(
+      adsValue?.pre_roll_session_cap_enabled,
+      true,
+    ),
+    preRollMaxPerSession: toNumber(adsValue?.pre_roll_max_per_session, 3),
+    preRollMinSecondsBetweenAds: toNumber(
+      adsValue?.pre_roll_min_seconds_between_ads,
+      180,
+    ),
+    preRollApplyToQualitySwitch: normalizeBool(
+      adsValue?.pre_roll_apply_to_quality_switch,
+      true,
+    ),
+    preRollApplyToServerSwitch: normalizeBool(
+      adsValue?.pre_roll_apply_to_server_switch,
+      true,
+    ),
     ...ads.frequencyConfig,
   };
   ads.rewardedRequiredForPremiumStreams = normalizeBool(
@@ -625,6 +708,17 @@ export async function buildPublicAppConfig() {
     accentColor: apiString(settings.accentColor, '#3b82f6'),
   };
 
+  // Global player-image resolution mode (admin_first | cricbuzz_first |
+  // admin_only | cricbuzz_only | initials_only). The backend already enriches
+  // every player object server-side; exposing the mode here lets the app refuse
+  // to rebuild a provider URL client-side when the mode says it must not.
+  let playerImageMode = DEFAULT_PLAYER_IMAGE_MODE;
+  try {
+    playerImageMode = await getPlayerImageMode();
+  } catch {
+    playerImageMode = DEFAULT_PLAYER_IMAGE_MODE;
+  }
+
   return {
     ...settings,
     ...app,
@@ -641,11 +735,17 @@ export async function buildPublicAppConfig() {
     enableSeries: features.series,
     enableNotifications: features.notifications,
     enableAds: features.ads,
+    // Surfaced at top level AND under `player` so older/newer clients both find
+    // it. The app reads `playerImageMode`.
+    playerImageMode,
     ads,
     notifications,
     features,
-    player,
+    player: { ...player, imageMode: playerImageMode },
     app,
+    // Premium animated splash screen config (enabled/duration/skip + asset
+    // URLs). The app always has bundled fallback art, so empty URLs are safe.
+    splash: buildSplashConfig(settings),
     legacy,
   };
 }

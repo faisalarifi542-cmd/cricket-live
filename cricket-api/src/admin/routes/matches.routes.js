@@ -11,6 +11,7 @@ import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import { getRedis } from '../../lib/redis.js';
+import { fetchMatchByProviderId } from '../../lib/provider-fetch.js';
  
 const STATUS_TABS = new Set(['live', 'upcoming', 'finished', 'all']);
  
@@ -65,6 +66,23 @@ export default async function matchAdminRoutes(fastify) {
     };
   });
  
+  // Fetch a match by provider ID for the admin auto-fill / preview tool. Runs
+  // through providerManager (DB priority + failover). Static path is declared
+  // before /:externalId so Fastify routes it here, not as an external id.
+  fastify.post('/fetch-by-provider-id', { preHandler: [requirePermissions('matches.write')] }, async (request, reply) => {
+    const id = String(request.body?.match_id ?? request.body?.external_id ?? request.body?.id ?? '').trim();
+    if (!id) return reply.code(400).send({ success: false, error: 'match_id is required' });
+    try {
+      const result = await fetchMatchByProviderId(id);
+      if (!result || !result.data) {
+        return reply.code(404).send({ success: false, error: `No match found for ID ${id}` });
+      }
+      return { success: true, provider: result.provider, data: result.data };
+    } catch (err) {
+      return reply.code(502).send({ success: false, error: `Provider fetch failed: ${err.message || 'all providers unavailable'}` });
+    }
+  });
+
   fastify.get('/:externalId', { preHandler: [requirePermissions('matches.view')] }, async (request, reply) => {
     const rows = await query(
       `SELECT m.*, s.name AS series_name,

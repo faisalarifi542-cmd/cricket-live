@@ -1,7 +1,8 @@
 import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
- 
+import { invalidatePublicConfigCaches } from '../../lib/public-cache-invalidation.js';
+
 export default async function settingsRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
  
@@ -50,6 +51,7 @@ export default async function settingsRoutes(fastify) {
           ],
         ),
     );
+    await invalidatePublicConfigCaches();
     const row = await query(`SELECT * FROM app_settings WHERE setting_key = ?`, [request.params.key]);
     return { success: true, data: row[0] };
   });

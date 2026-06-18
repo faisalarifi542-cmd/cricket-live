@@ -8,6 +8,9 @@ import settingsRoutes from './routes/settings.routes.js';
 import streamsRoutes from './routes/streams.routes.js';
 import extraRoutes from './routes/extra.routes.js';
 import dataControlRoutes from './routes/data-control.routes.js';
+import assetsRoutes from './routes/assets.routes.js';
+import splashRoutes from './routes/splash.routes.js';
+import analyticsAdminRoutes from './routes/analytics.routes.js';
 import { adminAuth, requirePermissions } from './auth.js';
 import { withAudit } from './audit.js';
 import { PERMISSIONS, ROLE_DEFINITIONS, ROLE_PERMISSIONS } from './rbac.js';
@@ -102,6 +105,9 @@ export default async function adminPanelRoutes(fastify) {
   await fastify.register(settingsRoutes, { prefix: '/admin/app-settings' });
   await fastify.register(homepageRoutes, { prefix: '/admin/home-config' });
   await fastify.register(dataControlRoutes, { prefix: '/admin/data-control' });
+  await fastify.register(assetsRoutes, { prefix: '/admin/assets' });
+  await fastify.register(splashRoutes, { prefix: '/admin/splash-settings' });
+  await fastify.register(analyticsAdminRoutes, { prefix: '/admin/analytics' });
   // API Security routes are optional: load dynamically so a partial deploy
   // that is missing this file degrades gracefully instead of crashing the
   // entire admin API (which would also take down /admin/home-config).

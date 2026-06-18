@@ -22,7 +22,17 @@ export async function sqlInjectionProtection(request, reply) {
     return SUSPICIOUS_PATTERNS.some(pattern => pattern.test(val));
   };
 
-  const params = { ...request.params, ...request.query, ...request.body };
+  // Base64 image-upload endpoints carry a large data-URL blob in the body that
+  // is NOT SQL/markup but can incidentally match these heuristics (e.g. the
+  // trailing `=`/`==` padding vs the `on\w+=` rule). That body is validated
+  // separately by saveBase64Image (MIME + size), so skip scanning the body for
+  // these paths. Params/query are still scanned.
+  const path = (request.url || '').split('?')[0];
+  const isImageUpload = path.endsWith('/upload-image');
+
+  const params = isImageUpload
+    ? { ...request.params, ...request.query }
+    : { ...request.params, ...request.query, ...request.body };
   for (const [key, value] of Object.entries(params)) {
     if (checkValue(value) || (Array.isArray(value) && value.some(checkValue))) {
       logger.warn({ msg: 'SQL injection attempt detected', ip: request.ip, key, value });
@@ -87,8 +97,9 @@ export async function blockSuspiciousIPs(request, reply) {
 export async function requestSizeLimit(request, reply) {
   const contentLength = request.headers['content-length'];
   // Image uploads (base64 JSON) need a larger ceiling than regular API calls.
+  // Applies to every *_/upload-image endpoint (home-config, assets, splash).
   const path = (request.url || '').split('?')[0];
-  const isUpload = path === '/admin/home-config/upload-image';
+  const isUpload = path.endsWith('/upload-image');
   const maxSize = isUpload ? 8 * 1048576 : 1048576;
 
   if (contentLength && parseInt(contentLength) > maxSize) {

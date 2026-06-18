@@ -3,6 +3,11 @@ import { withAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import { getRedis } from '../../lib/redis.js';
 import { ensureDefaultProvider, ensureProviderSchema } from '../provider-seed.js';
+import {
+  fetchPlayerByProviderId,
+  fetchTeamByProviderId,
+  fetchMatchByProviderId,
+} from '../../lib/provider-fetch.js';
 import axios from 'axios';
 
 const TEST_PATHS = [
@@ -169,6 +174,44 @@ export default async function providerRoutes(fastify) {
       message: status === 'healthy' ? 'All provider routes responded successfully' : 'One or more provider routes failed',
     };
   });
+
+  // ---------- Provider data-fetch tests (player / team / match by ID) ----------
+  // These run the request through the shared providerManager so they follow the
+  // DB-configured priority + failover. They report which provider answered and
+  // a clear error if every enabled provider failed.
+  const runFetchTest = async (kind, id, reply) => {
+    const value = String(id || '').trim();
+    if (!value) {
+      return reply.code(400).send({ success: false, error: 'An ID is required' });
+    }
+    const fetchers = {
+      player: fetchPlayerByProviderId,
+      team: fetchTeamByProviderId,
+      match: fetchMatchByProviderId,
+    };
+    try {
+      const result = await fetchers[kind](value);
+      if (!result || !result.data) {
+        return reply.code(404).send({ success: false, error: `No ${kind} found for ID ${value}` });
+      }
+      return { success: true, provider: result.provider, data: result.data };
+    } catch (err) {
+      return reply.code(502).send({
+        success: false,
+        error: `Provider fetch failed: ${err.message || 'all providers unavailable'}`,
+      });
+    }
+  };
+
+  fastify.post('/test-player', { preHandler: [requirePermissions('providers.write')] }, (request, reply) =>
+    runFetchTest('player', request.body?.player_id ?? request.body?.id, reply),
+  );
+  fastify.post('/test-team', { preHandler: [requirePermissions('providers.write')] }, (request, reply) =>
+    runFetchTest('team', request.body?.team_id ?? request.body?.id, reply),
+  );
+  fastify.post('/test-match', { preHandler: [requirePermissions('providers.write')] }, (request, reply) =>
+    runFetchTest('match', request.body?.match_id ?? request.body?.id, reply),
+  );
 
   fastify.post('/:id/toggle', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
     const rows = await query(`SELECT id, is_active FROM api_providers WHERE id = ?`, [request.params.id]);

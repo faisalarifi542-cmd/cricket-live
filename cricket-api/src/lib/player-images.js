@@ -150,6 +150,15 @@ const SHORT_KEYS = [
 ];
 // Image-ish fields we overwrite/clear when resolving a player image.
 const IMAGE_KEYS = ['imageUrl', 'image_url', 'faceImageUrl', 'faceImage', 'image'];
+// Raw provider image-id fields. The client can rebuild a Cricbuzz URL from any
+// of these, so when the resolved image is null (initials / admin-only with no
+// admin photo) we MUST clear them too — otherwise the app re-derives a provider
+// photo and bypasses the admin mode. When an image IS resolved we leave them
+// (the resolved URL already wins on the client).
+const IMAGE_ID_KEYS = [
+  'imageId', 'image_id', 'faceImageId', 'face_image_id',
+  'playerImageId', 'player_image_id', 'teamImageId', 'team_image_id',
+];
 
 function firstString(obj, keys) {
   for (const k of keys) {
@@ -263,6 +272,14 @@ export async function enrichPlayerImages(payload, { maxDepth = 14 } = {}) {
       }
       node.imageUrl = resolved;
       node.image_url = resolved;
+      // When no image is allowed (initials, or admin-only with no admin photo),
+      // strip the raw provider id fields so the client cannot rebuild a Cricbuzz
+      // URL from them and bypass the admin mode.
+      if (!resolved) {
+        for (const k of IMAGE_ID_KEYS) {
+          if (k in node) node[k] = null;
+        }
+      }
     }
     for (const key of Object.keys(node)) {
       walk(node[key], depth + 1);

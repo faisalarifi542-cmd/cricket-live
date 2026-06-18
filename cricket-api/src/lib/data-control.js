@@ -2,6 +2,13 @@ import { getRedis } from './redis.js';
 import { query } from './db.js';
 import providerManager from '../providers/provider-manager.js';
 import { ensureDefaultProvider } from '../admin/provider-seed.js';
+// Phase 1a — cross-process single-flight lock + provider-fallback budget.
+import {
+  acquireCacheLock,
+  releaseCacheLock,
+  consumeProviderBudget,
+  logProviderFallback,
+} from './cache-lock.js';
 
 export const DATA_SOURCES = [
   { dataType: 'homeData', label: 'Home Data', appScreen: 'Home', endpointPath: '/app/home', cacheKeyPrefix: 'app:home', providerMethod: null, ttl: 30, stale: true, strategy: 'aggregate' },
@@ -188,8 +195,28 @@ async function recordEvent(event) {
   }
 }
 
+// Data types whose payload reflects an in-progress (live) match. For these the
+// stale window must be TINY so a live score is never served minutes old. All
+// other (upcoming/recent/series/player/team/news/schedule) keep the long stale
+// fallback that protects against provider blips.
+const LIVE_DATA_TYPES = new Set([
+  'homeData', 'liveMatches', 'matchDetail', 'liveLine',
+  'scorecard', 'commentary', 'overs',
+]);
+
+// Seconds an EXPIRED envelope may still be served while a background refresh
+// runs. Live types: short, capped at 15s. Others: previous max(ttl*4,60).
+function staleWindowSeconds(dataType, ttl) {
+  if (LIVE_DATA_TYPES.has(dataType)) {
+    return Math.min(Math.max(ttl, 5), 15);
+  }
+  return Math.max(ttl * 4, 60);
+}
+
 async function writeEnvelope(key, data, ttl, meta) {
   const now = new Date().toISOString();
+  const staleWindow = staleWindowSeconds(meta.dataType, ttl);
+  const isLiveType = LIVE_DATA_TYPES.has(meta.dataType);
   const envelope = {
     data,
     meta: {
@@ -198,10 +225,17 @@ async function writeEnvelope(key, data, ttl, meta) {
       createdAt: now,
       lastUpdated: now,
       ttl,
-      staleUntil: Date.now() + Math.max(ttl * 4, 60) * 1000,
+      // Absolute ceiling from creation: fresh while age<=ttl, stale until here.
+      staleUntil: Date.now() + (ttl + staleWindow) * 1000,
     },
   };
-  await getRedis().setex(key, Math.max(ttl * 6, ttl + 60), JSON.stringify(envelope));
+  // Physical Redis TTL: for live types keep it tight (ttl+window+small grace) so
+  // a dead live key cannot linger and be served via the error-fallback path for
+  // minutes. Non-live keeps the generous retention for blip protection.
+  const physicalTtl = isLiveType
+    ? ttl + staleWindow + 5
+    : Math.max(ttl * 6, ttl + 60);
+  await getRedis().setex(key, physicalTtl, JSON.stringify(envelope));
   return envelope;
 }
 
@@ -215,8 +249,13 @@ export function sendAppResponse(reply, payload) {
   const meta = payload.meta || {};
   reply.header('X-Cache', meta.cache || 'MISS');
   reply.header('X-Cache-TTL', String(meta.ttl ?? 0));
-  if (meta.lastUpdated) reply.header('X-Last-Updated', meta.lastUpdated);
+  if (meta.lastUpdated) {
+    reply.header('X-Last-Updated', meta.lastUpdated);
+    const ageMs = Date.now() - Date.parse(meta.lastUpdated);
+    if (Number.isFinite(ageMs)) reply.header('X-Cache-Age-Ms', String(Math.max(ageMs, 0)));
+  }
   if (meta.provider) reply.header('X-Provider', meta.provider);
+  if (meta.isStale) reply.header('X-Stale', '1');
   return payload;
 }
 
@@ -227,6 +266,9 @@ export async function controlledFetch({
   allowEmpty = false,
   requiredId = false,
   force = false,
+  // Phase 1b: background warmers set this so their provider refreshes do NOT
+  // consume the public-route fallback budget (same exemption BullMQ workers get).
+  budgetExempt = false,
 }) {
   const source = await getDataSource(dataType).catch(() => null);
   const key = cacheKeyFor(dataType, targetId);
@@ -257,16 +299,70 @@ export async function controlledFetch({
   const inflightKey = `${dataType}:${targetId}`;
   if (!force && inflight.has(inflightKey)) return inflight.get(inflightKey);
 
+  // Phase 1a — wrap the provider rebuild in a cross-process Redis lock
+  // (lock:cache:{key}) so that under PM2 cluster mode only ONE process calls the
+  // provider for a missing key; the others wait briefly, re-read cache, and serve
+  // stale/last-good. In the current single-process runtime the lock is acquired
+  // uncontended, so behavior is identical to before. Worker calls do not pass
+  // through here. `force` (stale background refresh / admin warm) skips the
+  // waiter path — it must always attempt a real provider refresh.
   const promise = (async () => {
     const started = Date.now();
+
+    const lockToken = await acquireCacheLock(key);
+
+    // Not the holder (only possible across cluster processes) and this is a
+    // normal user-facing miss: wait for the holder, then serve fresh/stale.
+    if (!lockToken && !force) {
+      const deadline = Date.now() + 1500;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+        const fresh = await readEnvelope(key);
+        if (fresh?.meta?.createdAt) {
+          const age = Math.floor((Date.now() - Date.parse(fresh.meta.createdAt)) / 1000);
+          if (age <= ttl) {
+            return { data: fresh.data, meta: { cache: 'HIT', provider: fresh.meta.provider, lastUpdated: fresh.meta.lastUpdated, ttl: Math.max(ttl - age, 0), isStale: false } };
+          }
+        }
+      }
+      const stale = await readEnvelope(key);
+      if (stale?.data) {
+        logProviderFallback({ route: 'controlledFetch', key, dataType, reason: 'miss', outcome: 'served-stale-waiter' });
+        return { data: stale.data, meta: { cache: 'STALE', provider: stale.meta.provider, lastUpdated: stale.meta.lastUpdated, ttl: 0, isStale: true } };
+      }
+      // No data at all and we are not allowed to call the provider — surface a
+      // clear miss so the caller's own fallbacks (route-level) can handle it.
+      logProviderFallback({ route: 'controlledFetch', key, dataType, reason: 'cold-start', outcome: 'waiter-empty' });
+      throw new Error('cache miss: rebuild in progress by another process');
+    }
+
     try {
+      // Budget gate for the actual provider call (public-route fallback only).
+      // Warmers are exempt — they are scheduled background refreshes, not
+      // user-triggered fallbacks.
+      const budget = budgetExempt
+        ? { allowed: true, count: 0, max: Infinity }
+        : await consumeProviderBudget(`controlledFetch:${dataType}`);
+      if (!budget.allowed) {
+        if (staleEnabled) {
+          const cached = await readEnvelope(key);
+          if (cached?.data) {
+            logProviderFallback({ route: 'controlledFetch', key, dataType, reason: 'miss', outcome: 'budget-exhausted-stale', budgetCount: budget.count, budgetMax: budget.max });
+            return { data: cached.data, meta: { cache: 'STALE', provider: cached.meta.provider, lastUpdated: cached.meta.lastUpdated, ttl: 0, isStale: true } };
+          }
+        }
+        // No stale to fall back to: let the provider call proceed rather than
+        // blank the app (budget is a soft shed, not a hard wall on cold start).
+        logProviderFallback({ route: 'controlledFetch', key, dataType, reason: 'cold-start', outcome: 'budget-exhausted-no-stale-proceeding', budgetCount: budget.count, budgetMax: budget.max });
+      }
+
       const result = await fetcher(source);
       const data = result?.data ?? result;
       const provider = result?.provider || source?.providerName || 'local';
       if (!isValidPayload(data, { allowEmpty, requiredId })) {
         throw new Error('Provider returned invalid or unsafe data');
       }
-      if (cacheEnabled) await writeEnvelope(key, data, ttl, { provider, providerId: source?.providerId });
+      if (cacheEnabled) await writeEnvelope(key, data, ttl, { provider, providerId: source?.providerId, dataType });
       await query(`UPDATE api_data_sources SET last_success_at = NOW(), last_fetched_at = NOW(), health_status = 'healthy', last_error = NULL WHERE data_type = ?`, [dataType]).catch(() => null);
       await recordEvent({ cacheKey: key, dataType, action: force ? 'cache.refresh' : 'cache.miss', status: 'ok', providerId: source?.providerId, durationMs: Date.now() - started });
       return { data, meta: { cache: force ? 'BYPASS' : 'MISS', provider, lastUpdated: new Date().toISOString(), ttl, isStale: false } };
@@ -280,6 +376,8 @@ export async function controlledFetch({
         }
       }
       throw err;
+    } finally {
+      await releaseCacheLock(key, lockToken);
     }
   })();
 

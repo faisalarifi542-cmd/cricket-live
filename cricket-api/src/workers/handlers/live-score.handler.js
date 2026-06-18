@@ -1,5 +1,5 @@
 import providerManager from '../../providers/provider-manager.js';
-import { cacheSet, cacheGet, KEYS, TTL, getRedis } from '../../lib/redis.js';
+import { cacheSet, cacheSetSWR, cacheGet, unwrapSWR, KEYS, TTL, SWR_WINDOW, getRedis } from '../../lib/redis.js';
 import logger from '../../lib/logger.js';
 
 /**
@@ -12,10 +12,13 @@ export async function handleLiveScore(job) {
   const { data: match, provider } = await providerManager.execute('getMatchInfo', matchId);
   if (!match) return;
 
-  const prevMatch = await cacheGet(KEYS.matchLive(matchId));
+  // Shared SWR key match:{id}:live — unwrap on read, write the SWR envelope on
+  // write so the /match/:id + /live-center routes read it as a fresh envelope
+  // (a plain write would look like a hard miss and break the SWR HIT path).
+  const prevMatch = unwrapSWR(await cacheGet(KEYS.matchLive(matchId)));
 
   // Cache new data
-  await cacheSet(KEYS.matchLive(matchId), match, TTL.LIVE_SCORE);
+  await cacheSetSWR(KEYS.matchLive(matchId), match, TTL.LIVE_SCORE, SWR_WINDOW.MATCH_DETAIL);
   await cacheSet(KEYS.matchInfo(matchId), match, TTL.MATCH_INFO);
 
   // Detect changes and broadcast

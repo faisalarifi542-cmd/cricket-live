@@ -1,5 +1,5 @@
 import providerManager from '../../providers/provider-manager.js';
-import { cacheSet, cacheGet, KEYS, TTL, getRedis } from '../../lib/redis.js';
+import { cacheSetSWR, cacheGet, KEYS, TTL, SWR_WINDOW, getRedis } from '../../lib/redis.js';
 import { query } from '../../lib/db.js';
 import logger from '../../lib/logger.js';
 
@@ -13,8 +13,10 @@ export async function handleScorecard(job) {
   const { data: scorecard, provider } = await providerManager.execute('getScorecard', matchId);
   if (!scorecard || !scorecard.innings) return;
 
-  // Cache in Redis
-  await cacheSet(KEYS.matchScorecard(matchId), scorecard, TTL.SCORECARD);
+  // Cache in Redis as an SWR envelope so the /scorecard route (which reads SWR
+  // envelopes) does not treat a worker write as a hard miss. Same physical TTL
+  // (ttl + staleWindow = 8s); TTL.SCORECARD itself is unchanged.
+  await cacheSetSWR(KEYS.matchScorecard(matchId), scorecard, TTL.SCORECARD, SWR_WINDOW.SCORECARD);
 
   // Persist to MySQL (upsert innings + batting/bowling scores)
   for (const inn of scorecard.innings) {

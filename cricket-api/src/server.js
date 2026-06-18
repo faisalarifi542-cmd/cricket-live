@@ -14,6 +14,7 @@ import { shutdownRedis } from './lib/redis.js';
 import { shutdownDb } from './lib/db.js';
 import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
+import { startPhase1bWarmers, stopPhase1bWarmers } from './lib/phase1b-warmers.js';
 import { cacheOnSend } from './middleware/cache.js';
 import { enrichTeamLogos } from './lib/team-logos.js';
 import { enrichPlayerImages } from './lib/player-images.js';
@@ -42,6 +43,7 @@ import newsRoutes from './routes/news.js';
 import scheduleRoutes from './routes/schedule.js';
 import appRoutes from './routes/app.js';
 import rankingsRoutes from './routes/rankings.js';
+import analyticsRoutes from './routes/analytics.js';
 
 async function buildServer() {
   const fastify = Fastify({
@@ -92,6 +94,23 @@ async function buildServer() {
   // Strip the framework fingerprint header if any plugin sets it.
   fastify.addHook('onSend', async (request, reply, payload) => {
     reply.removeHeader('x-powered-by');
+    // Live endpoints must never be cached by the browser, Dio/OkHttp, or any
+    // CDN/proxy in front of the API — a stale live score is the exact bug we
+    // are fixing. Force no-store on the live family. Static/admin routes keep
+    // their own (long) Cache-Control set explicitly elsewhere.
+    const url = (request.raw?.url || '').split('?')[0];
+    const isLiveEndpoint =
+      url === '/app/home' ||
+      url === '/app/live-scores' ||
+      url === '/app/live-commentary' ||
+      url === '/matches/live' ||
+      /^\/match\/[^/]+$/.test(url) ||
+      /^\/match\/[^/]+\/(scorecard|commentary|overs|live-line|live-center|innings)$/.test(url) ||
+      /^\/app\/match\/[^/]+$/.test(url);
+    if (isLiveEndpoint) {
+      reply.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      reply.header('Pragma', 'no-cache');
+    }
     return payload;
   });
 
@@ -119,31 +138,39 @@ async function buildServer() {
     },
   });
 
-  await fastify.register(swagger, {
-    openapi: {
-      info: {
-        title: 'Cricket Scoring API',
-        description: 'Production-ready live cricket scoring API with real-time updates',
-        version: '1.0.0',
-      },
-      servers: [{ url: `http://localhost:${config.server.port}` }],
-      tags: [
-        { name: 'Matches', description: 'Live, upcoming, and recent matches' },
-        { name: 'Series', description: 'Series and points tables' },
-        { name: 'Players', description: 'Player info and stats' },
-        { name: 'Teams', description: 'Team info' },
-        { name: 'News', description: 'Cricket news stories' },
-        { name: 'Schedule', description: 'Upcoming match schedules by day' },
-        { name: 'System', description: 'Health, metrics, providers' },
-        { name: 'Admin', description: 'Admin management' },
-      ],
-    },
-  });
+  // Swagger/docs UI exposes the full API map. Off by default in production to
+  // avoid handing attackers an endpoint inventory. Override with SWAGGER_ENABLED=true.
+  const swaggerEnabled = process.env.SWAGGER_ENABLED
+    ? process.env.SWAGGER_ENABLED === 'true'
+    : !config.isProd;
 
-  await fastify.register(swaggerUi, {
-    routePrefix: '/docs',
-    uiConfig: { deepLinking: true },
-  });
+  if (swaggerEnabled) {
+    await fastify.register(swagger, {
+      openapi: {
+        info: {
+          title: 'Cricket Scoring API',
+          description: 'Production-ready live cricket scoring API with real-time updates',
+          version: '1.0.0',
+        },
+        servers: [{ url: `http://localhost:${config.server.port}` }],
+        tags: [
+          { name: 'Matches', description: 'Live, upcoming, and recent matches' },
+          { name: 'Series', description: 'Series and points tables' },
+          { name: 'Players', description: 'Player info and stats' },
+          { name: 'Teams', description: 'Team info' },
+          { name: 'News', description: 'Cricket news stories' },
+          { name: 'Schedule', description: 'Upcoming match schedules by day' },
+          { name: 'System', description: 'Health, metrics, providers' },
+          { name: 'Admin', description: 'Admin management' },
+        ],
+      },
+    });
+
+    await fastify.register(swaggerUi, {
+      routePrefix: '/docs',
+      uiConfig: { deepLinking: true },
+    });
+  }
 
   // ====================================================
   // Hooks
@@ -181,6 +208,28 @@ async function buildServer() {
       duration: `${(duration * 1000).toFixed(1)}ms`,
       ip: request.ip,
     });
+
+    // Dedicated live-score freshness log: makes stale-cache regressions visible
+    // in production (endpoint, matchId, cache status/age, provider time). Only
+    // fires for the live family so it does not flood logs.
+    const liveUrl = (request.raw?.url || '').split('?')[0];
+    const liveMatch = liveUrl.match(/^\/(?:app\/)?match\/([^/]+)/);
+    const isLiveFamily =
+      liveUrl === '/app/home' ||
+      liveUrl === '/matches/live' ||
+      Boolean(liveMatch);
+    if (isLiveFamily) {
+      logger.info({
+        msg: 'live-fetch',
+        endpoint: liveUrl,
+        matchId: liveMatch?.[1] || null,
+        cache: reply.getHeader('X-Cache') || null,
+        cacheAgeMs: reply.getHeader('X-Cache-Age-Ms') || null,
+        stale: reply.getHeader('X-Stale') ? true : false,
+        status: reply.statusCode,
+        durationMs: Number((duration * 1000).toFixed(1)),
+      });
+    }
   });
 
   // Cache response hook
@@ -258,6 +307,7 @@ async function buildServer() {
   await fastify.register(scheduleRoutes);
   await fastify.register(appRoutes);
   await fastify.register(rankingsRoutes);
+  await fastify.register(analyticsRoutes);
 
   // Keep the old username/password admin API away from the new admin panel.
   // The Next.js admin panel posts email/password to /admin/login.
@@ -295,6 +345,14 @@ async function start() {
     logger.info(`📖 API docs: http://localhost:${config.server.port}/docs`);
     logger.info(`🔌 WebSocket: ws://localhost:${config.server.port}/ws`);
     logger.info(`📊 Metrics: http://localhost:${config.server.port}/metrics`);
+
+    // Phase 1b — start in-process cache warmers a moment after the server is up
+    // (so Redis/DB connections are ready). Master kill switch: ENABLE_PHASE1B_WARMING.
+    setTimeout(() => {
+      try { startPhase1bWarmers(); } catch (err) {
+        logger.error({ msg: 'Failed to start Phase 1b warmers', error: err.message });
+      }
+    }, 3000);
   } catch (err) {
     logger.error({ msg: 'Server startup failed', error: err.message });
     console.error(err);
@@ -304,6 +362,7 @@ async function start() {
   // Graceful shutdown
   const shutdown = async (signal) => {
     logger.info({ msg: 'Shutting down server', signal });
+    stopPhase1bWarmers();
     shutdownGateway();
     await server.close();
     await shutdownRedis();

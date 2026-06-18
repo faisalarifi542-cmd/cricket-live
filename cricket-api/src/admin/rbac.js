@@ -109,6 +109,7 @@ export const PERMISSIONS = {
   'health.view': 'View system health and logs',
   'dataControl.view': 'View API data controls',
   'dataControl.write': 'Edit API data controls and warm caches',
+  'analytics.view': 'View app usage analytics',
  
   // Admin user management
   'adminUsers.view': 'View admin users',
@@ -140,6 +141,7 @@ export const ROLE_PERMISSIONS = {
     'cache.view', 'cache.write',
     'health.view',
     'dataControl.view', 'dataControl.write',
+    'analytics.view',
     'audit.view',
   ],
  
@@ -163,6 +165,7 @@ export const ROLE_PERMISSIONS = {
     'health.view',
     'dataControl.view',
     'cache.view',
+    'analytics.view',
     'audit.view',
   ],
  

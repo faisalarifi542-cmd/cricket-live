@@ -1,5 +1,5 @@
 import providerManager from '../../providers/provider-manager.js';
-import { cacheSet, cacheGet, KEYS, TTL, getRedis } from '../../lib/redis.js';
+import { cacheSet, cacheSetSWR, cacheGet, KEYS, TTL, SWR_WINDOW, getRedis } from '../../lib/redis.js';
 import { addLiveMatchJobs, removeLiveMatchJobs } from '../queues.js';
 import { activeMatchesGauge } from '../../lib/metrics.js';
 import logger from '../../lib/logger.js';
@@ -18,8 +18,16 @@ export async function handleMatchList(job) {
 
   if (!matches) return;
 
-  const ttl = type === 'live' ? TTL.LIVE_SCORE : type === 'upcoming' ? TTL.UPCOMING : TTL.RECENT;
-  await cacheSet(KEYS.matchesList(type), matches, ttl);
+  // The live list is read by the /matches/live route as an SWR envelope, so the
+  // worker MUST write the same envelope (cacheSetSWR) — a plain cacheSet would be
+  // treated as a hard miss by the SWR reader and the two would clobber each other.
+  // upcoming/recent are NOT SWR routes, so they keep plain cacheSet.
+  if (type === 'live') {
+    await cacheSetSWR(KEYS.matchesList(type), matches, TTL.LIVE_LIST, SWR_WINDOW.LIVE_LIST);
+  } else {
+    const ttl = type === 'upcoming' ? TTL.UPCOMING : TTL.RECENT;
+    await cacheSet(KEYS.matchesList(type), matches, ttl);
+  }
 
   // For live matches: manage per-match polling
   if (type === 'live') {

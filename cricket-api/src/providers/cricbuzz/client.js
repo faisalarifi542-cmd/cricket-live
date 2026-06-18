@@ -2364,7 +2364,55 @@ function generateShortName(teamName) {
  * Build enhanced live line data from multiple Cricbuzz API sources.
  * Aggregates livescore, commentary, and balls-map data.
  */
-function buildLiveLineData(liveData, commData, ballsData, matchId) {
+// Parse a ball outcome from natural-language commentary text. Cricbuzz live
+// commentary (e.g. "1 run, to cover", "FOUR", "no run", "wide down leg") is
+// often the only source of the ball result when the balls-map is empty, so the
+// normalizer falls back to this. Returns { runs, result, event } or null when
+// nothing parseable. `result` is the display token (e.g. '1', '4', 'Wd', 'W').
+export function parseBallResultFromCommentary(text) {
+  if (!text) return null;
+  const lower = String(text).trim().toLowerCase();
+  if (!lower) return null;
+
+  // Wicket (but not "not out"). Checked first: a wicket can also score runs but
+  // the canonical result token is W.
+  if (/\b(out\b|wicket|caught|bowled|lbw|run[\s-]?out|stumped|c\s*&\s*b|c and b)\b/.test(lower)
+    && !/\bnot out\b/.test(lower)) {
+    return { runs: 0, result: 'W', event: 'WICKET' };
+  }
+  // Extras carry their own marker.
+  if (/\bwide\b/.test(lower)) return { runs: 1, result: 'Wd', event: 'WIDE' };
+  if (/\bno[\s-]?ball\b/.test(lower)) return { runs: 1, result: 'Nb', event: 'NO_BALL' };
+  // Boundaries by word.
+  if (/\bfour\b|\bboundary\b/.test(lower)) return { runs: 4, result: '4', event: 'FOUR' };
+  if (/\bsix\b|\bmaximum\b/.test(lower)) return { runs: 6, result: '6', event: 'SIX' };
+  // Dot ball.
+  if (/\bno run\b|\bdot ball\b|^dot\b/.test(lower)) return { runs: 0, result: '0', event: 'NONE' };
+  // "N run" / "N runs".
+  const m = lower.match(/\b(\d+)\s+runs?\b/);
+  if (m) {
+    const r = Number(m[1]);
+    const event = r === 4 ? 'FOUR' : r === 6 ? 'SIX' : 'NONE';
+    return { runs: r, result: String(r), event };
+  }
+  return null;
+}
+
+// Normalize live-line status. Cricbuzz often omits a clean status enum, leaving
+// 'unknown' even for in-progress matches. When the provider state field or the
+// parent match context says the match is live, surface 'live' instead.
+export function normalizeLiveLineStatus(rawStatus, context = {}) {
+  const s = String(rawStatus || '').trim();
+  const lower = s.toLowerCase();
+  const stateLower = String(context.state || '').trim().toLowerCase();
+  const liveRe = /^(live|in[\s-]?progress)$/;
+  if (liveRe.test(lower)) return 'live';
+  if (liveRe.test(stateLower)) return 'live';
+  if ((!s || lower === 'unknown') && context.isLive === true) return 'live';
+  return s && lower !== 'unknown' ? s : 'unknown';
+}
+
+export function buildLiveLineData(liveData, commData, ballsData, matchId) {
   const header = liveData.matchHeader || {};
   const miniscore = liveData.miniscore || {};
   const scoreDetails = miniscore.matchScoreDetails || {};
@@ -2438,15 +2486,30 @@ function buildLiveLineData(liveData, commData, ballsData, matchId) {
   // Win probability (not available from Cricbuzz, set to null)
   const winProbability = null;
   
+  // Canonical display result token, used for both latestBall.result and the
+  // animation key. Boundaries/wickets keep their existing single-char tokens;
+  // everything else uses the parsed result (e.g. '1' for "1 run") and only
+  // falls back to runs when no result could be parsed.
+  const resultToken = !latestBall ? 'NONE'
+    : latestBall.event === 'WICKET' ? 'W'
+      : latestBall.event === 'FOUR' ? '4'
+        : latestBall.event === 'SIX' ? '6'
+          : latestBall.event === 'WIDE' ? (latestBall.result || 'Wd')
+            : latestBall.event === 'NO_BALL' ? (latestBall.result || 'Nb')
+              : (latestBall.result || String(latestBall.runs || 0));
+
   // Build unique key for latest ball (for Flutter animation)
   // Format: matchId-innings-over.ball-score-wickets-result
-  const latestBallKey = latestBall 
-    ? `${matchId}-${currentInningsId}-${latestBall.overNumber}.${latestBall.ballNumber}-${currentScore.runs}-${currentScore.wickets}-${latestBall.event}`
+  const latestBallKey = latestBall
+    ? `${matchId}-${currentInningsId}-${latestBall.overNumber}.${latestBall.ballNumber}-${currentScore.runs}-${currentScore.wickets}-${resultToken}`
     : `${matchId}-${currentInningsId}-0.0-0-0-NONE`;
-  
+
   return {
     matchId: String(matchId),
-    status: scoreDetails.status || header.status || 'unknown',
+    status: normalizeLiveLineStatus(scoreDetails.status || header.status, {
+      state: header.state,
+      isLive: Boolean(miniscore.inningsId) && !/(complete|abandon|stumps|no result)/i.test(String(header.state || header.status || '')),
+    }),
     innings: currentInningsId,
     battingTeam: batTeam ? {
       id: String(batTeam.id || batTeam.teamId || ''),
@@ -2469,10 +2532,7 @@ function buildLiveLineData(liveData, commData, ballsData, matchId) {
       key: latestBallKey,
       over: latestBall.overNumber || 0,
       ball: latestBall.ballNumber || 0,
-      result: latestBall.event === 'WICKET' ? 'W' : 
-              latestBall.event === 'FOUR' ? '4' : 
-              latestBall.event === 'SIX' ? '6' : 
-              String(latestBall.runs || 0),
+      result: resultToken,
       commentary: latestBall.commentary || '',
       batsman: latestBall.batsman || '',
       bowler: latestBall.bowler || '',
@@ -2555,7 +2615,7 @@ function calculateBallsRemaining(currentOvers, target, inningsList) {
 /**
  * Extract latest ball information from balls-map data.
  */
-function extractLatestBall(ballsData, inningsId, commData = null) {
+export function extractLatestBall(ballsData, inningsId, commData = null) {
   const latestCommentary = extractLatestCommentary(commData);
   const sourceBalls = ballsData?.balls || ballsData?.ball || ballsData?.ballMap || [];
   const balls = Array.isArray(sourceBalls)
@@ -2572,25 +2632,48 @@ function extractLatestBall(ballsData, inningsId, commData = null) {
   const overNumber = Number(useCommentaryBall ? latestCommentary.overNumber : (latest?.overNumber ?? latest?.overNum ?? latest?.over ?? latestCommentary?.overNumber ?? latestCommentary?.over ?? 0));
   const ballNumber = Number(useCommentaryBall ? latestCommentary.ballNumber : (latest?.ballNumber ?? latest?.ballNbr ?? latest?.ball ?? latestCommentary?.ballNumber ?? latestCommentary?.ball ?? 0));
   const rawEvent = String(latest?.event || latest?.eventType || latestCommentary?.event || '').toUpperCase();
-  const runs = Number(useCommentaryBall
-    ? (latestCommentary.runs ?? latest?.totalRuns ?? latest?.runs ?? latest?.scoreValue ?? 0)
-    : (latest?.totalRuns ?? latest?.runs ?? latest?.scoreValue ?? latestCommentary?.runs ?? 0));
-  const result = useCommentaryBall
-    ? (latestCommentary?.ballResult || (/no run/i.test(latestCommentary?.commentary || '') ? '0' : latestCommentary?.event || latest?.ballLabel || ''))
-    : (latest?.ballType || latest?.displayScore || latest?.ballLabel || latestCommentary?.ballResult || latestCommentary?.event || '');
-  const event = rawEvent
-    || (/(WICKET|OUT)$/i.test(result) ? 'WICKET'
+  const commentaryText = latest?.commentary || latestCommentary?.commentary || latestCommentary?.text || '';
+  const parsed = parseBallResultFromCommentary(commentaryText);
+
+  // Runs: structured ball-map/commentary fields first, parsed commentary as
+  // fallback (the balls-map is frequently empty on live matches).
+  let runs = Number(useCommentaryBall
+    ? (latestCommentary.runs ?? latest?.totalRuns ?? latest?.runs ?? latest?.scoreValue)
+    : (latest?.totalRuns ?? latest?.runs ?? latest?.scoreValue ?? latestCommentary?.runs));
+  if (!Number.isFinite(runs)) runs = parsed ? parsed.runs : 0;
+
+  // Display result token: structured label first, parsed commentary next.
+  let result = String(useCommentaryBall
+    ? (latestCommentary?.ballResult || latest?.ballLabel || '')
+    : (latest?.ballType || latest?.displayScore || latest?.ballLabel || latestCommentary?.ballResult || '')).trim();
+  if (!result && parsed) result = parsed.result;
+
+  // Event enum: raw event first, parsed commentary next, derive from result last.
+  let event = rawEvent && rawEvent !== 'NONE' ? rawEvent : '';
+  if (!event && parsed) event = parsed.event;
+  if (!event) {
+    event = /(WICKET|OUT)$/i.test(result) ? 'WICKET'
       : String(result) === '4' ? 'FOUR'
         : String(result) === '6' ? 'SIX'
           : /Wd|WIDE/i.test(result) ? 'WIDE'
             : /Nb|NO.?BALL/i.test(result) ? 'NO_BALL'
-              : 'NONE');
+              : 'NONE';
+  }
+
+  // Final result fallback when still empty: derive from event/runs.
+  if (!result) {
+    result = event === 'WICKET' ? 'W'
+      : event === 'WIDE' ? 'Wd'
+        : event === 'NO_BALL' ? 'Nb'
+          : String(runs || 0);
+  }
 
   return {
     overNumber,
     ballNumber,
     event,
     runs,
+    result,
     batsman: latest?.batsman || latest?.batsmanName || latestCommentary?.batsman || '',
     bowler: latest?.bowler || latest?.bowlerName || latestCommentary?.bowler || '',
     commentary: latest?.commentary || latestCommentary?.commentary || latestCommentary?.text || '',

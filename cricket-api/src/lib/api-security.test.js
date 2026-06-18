@@ -14,6 +14,10 @@ test('resolveEndpointGroup maps admin routes to admin', () => {
   assert.equal(resolveEndpointGroup('GET', '/admin/api-security/clients'), 'admin');
 });
 
+test('resolveEndpointGroup maps analytics ingest to its own public group', () => {
+  assert.equal(resolveEndpointGroup('POST', '/analytics/events'), 'analytics_ingest');
+});
+
 test('resolveEndpointGroup separates streams/commentary/scorecard from match details', () => {
   assert.equal(resolveEndpointGroup('GET', '/match/123/streams'), 'streams');
   assert.equal(resolveEndpointGroup('GET', '/app/match/123/streams'), 'streams');
