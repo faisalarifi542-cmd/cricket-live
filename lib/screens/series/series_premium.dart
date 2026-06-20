@@ -918,7 +918,9 @@ class SeriesCategoryChips extends StatelessWidget {
         // Let the active chip's cyan under-glow spill instead of being clipped
         // by the row's hard edge; vertical padding gives the glow + scale room.
         clipBehavior: Clip.none,
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        // Trailing right padding keeps the last chip from being cut flush
+        // against the viewport edge so the row reads as clearly scrollable.
+        padding: const EdgeInsets.fromLTRB(2, 3, 16, 3),
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(width: 9),
         itemBuilder: (context, i) {

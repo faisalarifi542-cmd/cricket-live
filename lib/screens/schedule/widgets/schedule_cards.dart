@@ -422,12 +422,8 @@ class _CardTeam extends StatelessWidget {
       color: c.cyan,
       size: 50,
     );
-    // Women-compacted secondary name, single line + soft-wrap off so a long
-    // word like "Afghanistan" never breaks into "Afghanist\nan".
-    final displayName = compactTeamName(fullName);
-    final showName = !isPlaceholder &&
-        displayName.isNotEmpty &&
-        displayName.toUpperCase() != upper.toUpperCase();
+    // Short-code only: show the big team code (e.g. `TSK`, `SFU`) and never the
+    // tiny truncated full name — "Texas S..." / "San Fra..." looked unfinished.
     final texts = Column(
       crossAxisAlignment:
           alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -445,20 +441,6 @@ class _CardTeam extends StatelessWidget {
             fontSize: 18,
           ),
         ),
-        if (showName)
-          Text(
-            displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            softWrap: false,
-            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
-            style: TextStyle(
-              color: c.muted,
-              fontWeight: FontWeight.w600,
-              fontSize: 11.5,
-              height: 1.15,
-            ),
-          ),
       ],
     );
 

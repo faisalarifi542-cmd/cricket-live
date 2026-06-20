@@ -426,7 +426,7 @@ class _MatchesScreenState extends State<MatchesScreen>
                 children: [
                   _MatchesHeader(onBell: widget.onOpenReminders),
                   const SizedBox(height: 10),
-                  _SectionTitleRow(onSeeAll: widget.onOpenSeries),
+                  const _SectionTitleRow(),
                   const SizedBox(height: 12),
                   _StatusTabs(selected: topTab, onChanged: _setTopTab),
                   const SizedBox(height: 11),

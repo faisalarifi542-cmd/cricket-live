@@ -85,13 +85,13 @@ class _BellButton extends StatelessWidget {
 }
 
 class _SectionTitleRow extends StatelessWidget {
-  const _SectionTitleRow({required this.onSeeAll});
-
-  final VoidCallback onSeeAll;
+  const _SectionTitleRow();
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    // No "See All" here: this is the dedicated Matches screen, so a link back
+    // out of the full list makes no sense (it only belongs on Home sections).
     return Row(
       children: [
         Image.asset(
@@ -109,26 +109,6 @@ class _SectionTitleRow extends StatelessWidget {
             color: c.text,
             fontWeight: FontWeight.w900,
             fontSize: context.sp(22),
-          ),
-        ),
-        const Spacer(),
-        GestureDetector(
-          onTap: onSeeAll,
-          behavior: HitTestBehavior.opaque,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'See All',
-                style: TextStyle(
-                  color: c.muted,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(width: 3),
-              Icon(Icons.chevron_right_rounded, color: c.cyan, size: 20),
-            ],
           ),
         ),
       ],
