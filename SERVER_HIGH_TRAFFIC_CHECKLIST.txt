@@ -1,0 +1,204 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — SERVER HIGH-TRAFFIC CHECKLIST (VPS MANUAL)
+File: SERVER_HIGH_TRAFFIC_CHECKLIST.txt
+Generated: 2026-06-11
+Scope: PRODUCTION SERVER ONLY. Every item = manual action on the VPS.
+       These files (prod .env, PM2 ecosystem, nginx.conf, SSL) are NOT in the
+       local repo by design — their absence locally is EXPECTED, not a bug.
+Domains: api.webcrichd.co (backend) + admin.webcrichd.co (admin panel).
+================================================================================
+
+HOW TO USE: SSH to the VPS. Work top to bottom. Each box has check -> action.
+Do destructive/restart steps in a low-traffic window. Keep a rollback note.
+
+================================================================================
+1. PM2  [VPS manual action]
+================================================================================
+  CHECK current processes:
+    pm2 list
+    pm2 show cricket-api
+    pm2 logs cricket-api --lines 100
+
+  ENABLE startup on reboot:
+    pm2 startup            # prints a command — run the printed command
+    pm2 save               # snapshot current process list
+
+  CLUSTER MODE (only if app verified stateless + Redis UP — see note):
+    # create /path/to/cricket-api/ecosystem.config.js (do NOT put secrets here;
+    # secrets stay in the server .env loaded by dotenv):
+    module.exports = { apps: [{
+      name: 'cricket-api',
+      script: 'src/server.js',
+      instances: 'max',         // start with 2, then raise to 'max'
+      exec_mode: 'cluster',
+      max_memory_restart: '500M',
+      env: { NODE_ENV: 'production' },
+    }]};
+    pm2 delete cricket-api && pm2 start ecosystem.config.js && pm2 save
+    WARNING: in-memory cache is PER-WORKER. Cluster mode multiplies provider hits
+    UNLESS Redis is up and shared. Confirm §3 (Redis) GREEN before scaling instances.
+
+  LOG ROTATION:
+    pm2 install pm2-logrotate
+    pm2 set pm2-logrotate:max_size 10M
+    pm2 set pm2-logrotate:retain 7
+    pm2 set pm2-logrotate:compress true
+
+  SAFE RESTART (zero-downtime in cluster mode):
+    pm2 reload cricket-api      # reload = rolling; restart = hard
+    # rollback: pm2 restart cricket-api  (or redeploy previous release dir)
+
+================================================================================
+2. NGINX  [VPS manual action]
+================================================================================
+  VERIFY reverse proxy maps domain -> node port (e.g. 127.0.0.1:3000):
+    sudo nginx -t                       # config syntax
+    cat /etc/nginx/sites-enabled/*      # inspect server blocks
+
+  RECOMMENDED server block essentials (api.webcrichd.co):
+    location / {
+      proxy_pass http://127.0.0.1:3000;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      # WebSocket upgrade for /ws:
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      # timeouts (live polling tolerant):
+      proxy_connect_timeout 10s;
+      proxy_send_timeout 60s;
+      proxy_read_timeout 60s;
+    }
+
+  GZIP (compresses JSON at the edge — preferred over app-level compress):
+    gzip on;
+    gzip_types application/json application/javascript text/css text/plain;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    # BROTLI (if ngx_brotli module installed — better ratio):
+    # brotli on; brotli_types application/json; brotli_comp_level 5;
+  NOTE: if you enable Nginx gzip, do NOT also enable @fastify/compress in the app
+  (double compression = wasted CPU). Pick one. Edge gzip recommended.
+
+  RELOAD:
+    sudo nginx -t && sudo systemctl reload nginx
+
+================================================================================
+3. REDIS  [VPS manual action]
+================================================================================
+  CONFIRM running + reachable:
+    redis-cli ping                       # -> PONG
+    systemctl status redis
+
+  CONFIRM backend connects (from app host):
+    # backend .env should have REDIS_HOST/REDIS_PORT/REDIS_PASSWORD set.
+    redis-cli -h <host> -p 6379 -a <pass> ping
+
+  MEMORY POLICY (pure cache -> evict least-recently-used):
+    redis-cli CONFIG GET maxmemory
+    redis-cli CONFIG GET maxmemory-policy
+    # set (persist in redis.conf too):
+    redis-cli CONFIG SET maxmemory 256mb
+    redis-cli CONFIG SET maxmemory-policy allkeys-lru
+
+  HIT RATE (after some traffic):
+    redis-cli INFO stats | grep keyspace
+    # hit_rate = keyspace_hits / (keyspace_hits + keyspace_misses); want > 0.8
+
+  IMPORTANT: if Redis is DOWN in prod, the app still serves (in-memory fallback)
+  but every worker re-fetches from providers -> high provider load + slower. Redis
+  UP is required for high-traffic performance, especially in PM2 cluster mode.
+
+================================================================================
+4. MYSQL  [VPS manual action]
+================================================================================
+  CONFIRM migrations applied (tables + indexes exist):
+    mysql -u <user> -p <db> -e "SHOW TABLES;"
+    mysql -u <user> -p <db> -e "SHOW INDEX FROM matches;"
+    # if missing, run the app's migrator (idempotent):
+    cd cricket-api && node src/db/migrate.js
+
+  INDEXES: migrate.js already creates indexes on hot columns (matches.status,
+    start_time, series_id, team1+team2; commentary.match_id+innings+timestamp;
+    players/teams external_id+name). Add MORE only if slow log proves a scan.
+
+  SLOW QUERIES:
+    SET GLOBAL slow_query_log = 'ON';
+    SET GLOBAL long_query_time = 1;          # log queries > 1s
+    # then inspect the slow log file; add targeted index via NEW migration.
+
+  CONNECTION LIMITS (must exceed PM2 instances x pool size):
+    SHOW VARIABLES LIKE 'max_connections';
+    # e.g. 4 PM2 workers x pool 10 = 40 conns; keep max_connections comfortably above.
+
+================================================================================
+5. API SECURITY  [VPS manual action — CRITICAL, from review C1/C2/H4/M4/M5]
+================================================================================
+  [ ] JWT_SECRET: strong random value, NOT 'dev-secret-change-in-production'.
+        Generate: openssl rand -hex 48
+        Set in server .env. Rotating it logs out existing admin sessions (expected).
+  [ ] API security mode = 'enforce' (code default is 'monitor' = OPEN to any client):
+        confirm app_settings.apiSecurityMode = 'enforce' in DB (or API_SECURITY_MODE
+        env). In monitor mode the public API accepts unkeyed traffic.
+  [ ] CORS: CORS_ORIGIN must NOT be '*'. api_allowed_origins table populated with
+        ONLY real app/admin origins. credentials:true with '*' is unsafe.
+  [ ] APP_PUBLIC_API_KEY rotated off the committed 'csk_live_cricpro_app_8f3a2b1c9d'
+        (and the matching --dart-define in the release app build, see §7).
+  [ ] Admin seed password CHANGED from template 'change-this-admin-password'.
+  [ ] Swagger: now OFF in production by default (code change this pass — gated on
+        NODE_ENV=production). Confirm /docs returns 404 in prod. To intentionally
+        expose, set SWAGGER_ENABLED=true (avoid on public prod).
+  [ ] Metrics port (:9090) firewalled to internal only.
+
+================================================================================
+6. LOAD TESTING  [run from a SEPARATE machine, ramp slowly]
+================================================================================
+  WARNING: load testing your own prod can cause an outage. Prefer a staging clone.
+  Start SMALL (10-50 virtual users), ramp gradually, watch pm2 monit + redis-cli
+  INFO + MySQL connections. Abort if p95 latency or error rate climbs.
+
+  autocannon (quick):
+    npx autocannon -c 20 -d 30 -H "X-API-Key: <key>" \
+      https://api.webcrichd.co/matches
+    # -c 20 connections, -d 30s. Then try -c 50, -c 100 if healthy.
+
+  k6 (staged ramp):
+    // save as load.js
+    import http from 'k6/http';
+    import { sleep } from 'k6';
+    export const options = { stages: [
+      { duration: '1m', target: 20 },
+      { duration: '2m', target: 50 },
+      { duration: '1m', target: 0 },
+    ]};
+    export default function () {
+      http.get('https://api.webcrichd.co/matches',
+        { headers: { 'X-API-Key': '<key>' } });
+      sleep(1);
+    }
+    // run:  k6 run load.js
+  WATCH during test: pm2 monit ; redis-cli INFO stats ; MySQL SHOW PROCESSLIST.
+  Cache means repeated same-endpoint hits should mostly hit Redis (low provider load).
+
+================================================================================
+7. RELEASE APP BUILD VERIFICATION  [build-time, from review H3/V15/V16]
+================================================================================
+  [ ] Release Flutter build injects real --dart-define:
+        CRICKET_API_KEY=<rotated key>
+        CRICKET_PACKAGE_NAME=<real bundle id, NOT com.example.cricpro_flutter>
+        CRICKET_APP_VERSION=<version>
+  [ ] OneSignal: real ONESIGNAL_APP_ID in the build + REST key on server; deep
+        links open correct screens.
+  [ ] admin-panel built with NEXT_PUBLIC_API_BASE_URL set to the real API origin.
+
+================================================================================
+8. POST-DEPLOY HEALTH
+================================================================================
+  curl -s https://api.webcrichd.co/health        # expect green
+  pm2 logs cricket-api --lines 200 | grep -iE "error|provider|5[0-9][0-9]"
+  # confirm no repeated provider-parse failures, no 5xx spikes.
+================================================================================
+END
+================================================================================

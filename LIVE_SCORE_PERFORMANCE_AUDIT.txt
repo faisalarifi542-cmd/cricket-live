@@ -1,0 +1,1241 @@
+================================================================================
+LIVE SCORE PERFORMANCE AUDIT
+Generated: 2026-06-12
+================================================================================
+
+METHOD: Read-only audit of cricket-api backend + Flutter polling. No changes made.
+
+================================================================================
+BACKEND TTL FINDINGS (cricket-api)
+================================================================================
+
+Cache architecture: Hybrid Redis + in-memory fallback (src/lib/redis.js:10-76).
+Redis OPTIONAL — auto-falls back to memory Map per process if Redis down.
+
+Two TTL systems:
+  System A — direct route cache (redis.js:91-127) for live endpoints
+  System B — admin data-control (lib/data-control.js:6-29) for upcoming/recent/series
+
+1. LIVE MATCH LIST TTL:
+   15s — TTL.LIVE_SCORE, key matches:live (routes/matches.js:229)
+   (admin override liveMatches=10s exists in data-control)
+
+2. UPCOMING MATCHES TTL:
+   300s — key matches:upcoming. Uses admin system + stale-while-revalidate.
+
+3. FINISHED/RECENT MATCHES TTL:
+   120s — TTL.RECENT, key matches:recent. Admin system + SWR.
+
+4. MATCH DETAILS TTL:
+   15s — TTL.LIVE_SCORE, key match:{id}:live (routes/matches.js:288)
+   NOTE: same 15s for live AND finished (minor waste, see item 11)
+
+5. SCORECARD TTL:
+   5s — TTL.SCORECARD (routes/matches.js:426). Validates innings before cache.
+
+6. COMMENTARY TTL:
+   5s — TTL.COMMENTARY (routes/matches.js:483)
+   full-commentary: 15s live / 21600s (6h) finished
+
+7. LIVE-LINE / BALL-BY-BALL TTL:
+   5s — TTL.LIVE_LINE (routes/matches.js:1553)
+   live-center: 4s live / 600s finished (routes/matches.js:999, status-conditional)
+   balls-map: 30s live / 6h finished
+   over-by-over: 15s live / 6h finished
+
+8. IN-FLIGHT REQUEST DEDUPE:
+   PARTIAL.
+   - YES at admin data-control level (data-control.js:31,247-258) — inflight Map,
+     concurrent same-key callers share one fetch. Used by upcoming/recent/series.
+   - NO at direct live-route level (matches.js live/live-line/scorecard/commentary
+     use cacheGetOrFetch redis.js:185-192 — no provider-level dedupe). Concurrent
+     cache-miss callers each hit provider.
+
+9. STALE-WHILE-REVALIDATE:
+   PARTIAL.
+   - YES for admin system (data-control.js:246-252): serves stale while refreshing
+     in bg. Stale window = max(ttl*4, 60)s. Routes: upcoming, recent, squads, series, news.
+   - NO for live endpoints (live-line, live-score, scorecard, commentary) — direct
+     TTL, no SWR.
+
+10. PROVIDER TIMEOUT / RETRY:
+    Timeouts EXIST (providers/cricbuzz/client.js:39-64):
+      - mcenterClient (livescore): 10000ms
+      - apiClient (general): 15000ms
+      - htmlClient: 15000ms
+    Retry: NO HTTP-level retry (throws immediately).
+    Failover: YES — provider-manager.js:32-72 tries next provider on failure.
+    Health tracking: YES — base-provider.js:12-39, 5 consecutive fails → 60s cooldown.
+    Latency logging: YES — providerRequestDuration histogram + providerErrorsTotal.
+
+11. COMPLETED/UPCOMING WASTING LIVE TTL:
+    Match LIST: NO waste — different keys per status (live/recent/upcoming).
+    Match DETAIL (/match/:id): MINOR waste — single key match:{id}:live + 15s TTL
+    regardless of status. Finished match cached only 15s. But /live-center
+    compensates with status-conditional 4s/600s. Detailed innings data (full-comm,
+    over-by-over, balls-map, highlights) correctly use 6h TTL when finished.
+
+================================================================================
+FLUTTER POLLING FINDINGS (lib/)
+================================================================================
+
+12. HOME LIVE TAB POLL INTERVAL:
+    12s (home_screen.dart:359). Upcoming tab 90s. Finished: no poll.
+
+13. MATCH DETAILS LIVE POLL INTERVAL:
+    5s (match_details_screen.dart:255). LIVE matches only. Auto-stops when match
+    transitions to finished/upcoming (checks _isLiveMatchData each cycle).
+
+    Other pollers:
+    - Matches screen live tab: 10s (matches_screen.dart:228), upcoming 90s
+    - Live player live-line: 10s (live_player_screen.dart:214), live only
+
+14. POLLING PAUSE IN BACKGROUND:
+    YES — all screens cancel timer on AppLifecycleState != resumed.
+    home:228, matches:192, match_details:93, live player lifecycle.
+    Resume restarts via _configurePolling().
+
+15. POLLING STOP/BACK-OFF WHEN OFFLINE:
+    NO. All _silentPoll use try/finally with NO catch. Network error propagates
+    silently, _polling resets false, timer fires again next interval. Keeps
+    hammering network every interval regardless of error — no backoff, no pause.
+
+REPOSITORY (cricket_repository.dart):
+    - In-flight dedupe EXISTS (_inflight map, line 14, 321-323)
+    - forceRefresh removes stale + rethrows on error (line 328, 336)
+    - Non-forced read serves stale on error (resilient)
+    - Pull refresh bypasses cache (forceRefresh:true) — Home + Match Details ✓
+    - No tab reset / scroll jump on silent update (prev session fixes) ✓
+
+================================================================================
+ASSESSMENT — what is ALREADY good (do NOT change)
+================================================================================
+✓ Backend live TTLs already aggressive + safe (5-15s, status-aware where it matters)
+✓ Provider timeouts exist (10/15s)
+✓ Provider failover + health cooldown exist
+✓ SWR + dedupe exist for admin/list routes
+✓ Flutter background pause works
+✓ Flutter pull refresh bypasses cache
+✓ Flutter repo in-flight dedupe exists
+✓ No tab/scroll reset on poll
+
+================================================================================
+SAFE LOW-RISK IMPROVEMENTS (Phase 2 candidates)
+================================================================================
+1. Home live tab 12s → 8s. Backend live TTL 15s + repo dedupe means most 8s
+   polls hit cache, not provider. SAFE. (Matches screen 10s already close.)
+2. Offline back-off: pause polling after network error, resume on success/retry.
+   THIS IS THE MAIN GAP (item 15). Prevents hammering network when offline.
+3. Match Details already 5s live-only — no change.
+
+NOT SAFE / SKIP:
+- Backend live-route SWR: medium risk, needs backend deploy + test. SKIP.
+- Backend live-route dedupe: partial exists; adding to direct routes = backend
+   change + test. SKIP this batch.
+- Backend TTL reduction below 5s: NOT approved.
+- WebSocket/SSE: NOT this batch.
+- Admin TTL controls: data-control already supports overrides via MySQL table;
+   no new code needed. SKIP.
+
+================================================================================
+
+================================================================================
+NEXT BACKEND IMPROVEMENTS FOR CRICBUZZ-LIKE SPEED
+(Audit/recommendation only — NO backend changes made. Needs explicit approval +
+deploy + test before any of this lands.)
+================================================================================
+
+Context: Flutter polling already tuned (Home live 8s, Match Details 5s, offline
+back-off). Remaining latency gap to Cricbuzz is backend-side: TTL + how the
+provider is hit under concurrency. Order below is safest-first.
+
+1. LIVE MATCH LIST TTL 15s → 8s or 5s?
+   Current: matches:live = 15s (TTL.LIVE_SCORE), routes/matches.js:229.
+   Recommendation: 15s → 8s FIRST (match Flutter Home 8s poll). Do NOT jump to
+   5s yet. At 8s most polls still hit cache; provider load rises modestly.
+   - 8s = safe if in-flight dedupe added first (see #2), else every 8s a cache
+     miss can fan out to N concurrent provider hits under load.
+   - 5s only after dedupe + SWR proven in prod AND provider rate limit confirmed.
+   Risk without dedupe: TTL drop multiplies provider calls linearly with traffic.
+
+2. DIRECT LIVE ROUTES NEED IN-FLIGHT DEDUPE?
+   YES — highest-value, lowest-risk backend win. Currently only admin
+   data-control routes dedupe (data-control.js:31,247-258). Direct live routes
+   (matches.js live / live-line / scorecard / commentary via cacheGetOrFetch,
+   redis.js:185-192) do NOT — concurrent cache-miss callers each hit Cricbuzz.
+   Fix: wrap cacheGetOrFetch in a per-key in-flight promise map (same pattern as
+   data-control). Then 1000 concurrent users on a cache miss = 1 provider call,
+   not 1000. THIS is what makes a TTL drop safe.
+   Do this BEFORE any TTL reduction.
+
+3. DIRECT LIVE ROUTES NEED STALE-WHILE-REVALIDATE?
+   YES, but AFTER dedupe. SWR = serve cached instantly, refresh in background →
+   user never waits on provider latency = the Cricbuzz "instant" feel. Admin
+   routes already have it (data-control.js:246-252, stale window max(ttl*4,60)).
+   Bring same to live-line / live-score / scorecard / commentary.
+   Risk: medium — must cap stale window tight on live data (e.g. ttl*2, not *4)
+   so scores never show too-old. Needs test. Deploy after dedupe is stable.
+
+4. REDIS VERIFIED BEFORE PM2 CLUSTER?
+   MANDATORY. redis.js falls back to per-PROCESS memory cache if Redis down.
+   PM2 cluster = N processes. Without shared Redis, each worker has its OWN
+   cache → N× cache misses → N× provider load → dedupe/SWR useless across
+   workers. Order is strict:
+     a. Confirm Redis running + reachable (redis-cli PING → PONG).
+     b. Confirm app connects to Redis (logs: not "MemoryRedis fallback").
+     c. THEN enable PM2 cluster.
+   Never cluster on memory-cache fallback.
+
+5. RISK OF CRICBUZZ / PROVIDER OVERLOAD
+   Real. Provider has timeout (10s livescore / 15s api) + failover + 5-fail→60s
+   cooldown (base-provider.js), but NO rate limiter on outbound calls.
+   - TTL drop without dedupe = biggest overload risk.
+   - Cooldown protects from hammering a DOWN provider, not from high-volume
+     calls to a healthy one.
+   - Before 5s TTL: confirm Cricbuzz rate limit / acceptable call volume.
+   - Add outbound provider call metric (already logged: providerRequestDuration)
+     and watch calls/min after each TTL step.
+
+6. RECOMMENDED SAFEST PRODUCTION ORDER
+   Step 0: Verify Redis running + app using it (NOT memory fallback).
+   Step 1: Add in-flight dedupe to direct live routes. Deploy. Watch provider
+           calls/min — should DROP under load.
+   Step 2: Live match list TTL 15s → 8s. Deploy. Watch provider calls/min +
+           latency. Confirm no overload.
+   Step 3: Add SWR to live routes (tight stale window). Deploy. Verify scores
+           not stale, latency drops.
+   Step 4: Only now consider 8s → 5s, IF provider rate limit confirms headroom.
+   Step 5: Only after Steps 0-3 stable: enable PM2 cluster (Redis already
+           confirmed in Step 0).
+   NEVER: drop TTL before dedupe; cluster before Redis; 5s without provider OK.
+   Still deferred: WebSocket/SSE (separate later phase).
+
+================================================================================
+END
+================================================================================
+
+================================================================================
+BACKEND DIRECT LIVE IN-FLIGHT DEDUPE IMPLEMENTATION
+Added: 2026-06-12  (Step 1 of the safest production order above)
+================================================================================
+
+1. FILES CHANGED
+   - cricket-api/src/lib/redis.js — added inflight Map + runDeduped() helper;
+     cacheGetOrFetch() now routes its cache-miss fetch through runDeduped().
+   - cricket-api/src/lib/redis.test.js — NEW unit test (node --test).
+
+2. HELPER ADDED / MODIFIED
+   - NEW: export function runDeduped(key, producer)
+       * Per-key in-flight promise Map.
+       * First caller runs producer; concurrent callers for same key await the
+         SAME promise.
+       * try/finally deletes the key on resolve OR throw (guarded so it never
+         clobbers a newer entry for the same key) → no leak, failed run lets
+         next caller retry.
+       * Exported so it can be unit-tested without a live Redis.
+   - MODIFIED: cacheGetOrFetch(key, ttl, fetchFn)
+       * Cache hit path unchanged ({ data, fromCache:true }).
+       * Cache miss now wraps the fetch+cacheSet in runDeduped().
+       * Response shape IDENTICAL: { data, fromCache:false }.
+
+3. ROUTES THAT NOW BENEFIT
+   Dedupe lives inside the SHARED cacheGetOrFetch, so EVERY caller benefits
+   (23 call sites in matches.js + news.js + players.js + others), including all
+   direct live routes:
+     - /matches/live          (matches:live)
+     - /match/:id             (match:{id}:live)
+     - /match/:id/scorecard   (match:{id}:scorecard)
+     - /match/:id/commentary  (match:{id}:commentary)
+     - /match/:id/live-line   (match:{id}:live-line)
+     - /match/:id/live-center (match:{id}:live-center)
+     - /match/:id/overs, full-commentary, balls-map, over-by-over, highlights
+   100 concurrent users on an expired key → 1 provider fetch, not 100.
+
+4. TTL CHANGED?  NO. No TTL constant touched. Live list still 15s.
+
+5. SWR CHANGED?  NO. Stale-while-revalidate intentionally deferred to a later
+   batch (Step 3 in the order above). This batch is dedupe ONLY.
+
+6. TESTS / CHECKS RUN
+   - node --test src/lib/redis.test.js → 4/4 pass:
+       * 100 concurrent same-key calls → producer runs exactly once.
+       * distinct keys run independently.
+       * failed fetch removes key + propagates error + next call re-runs.
+       * sequential call after settle re-runs producer (key cleared).
+   - npm test (full backend suite) → 34/34 pass.
+   - node --check redis.js / matches.js / server.js → OK.
+   - flutter analyze lib/ → 0 issues. flutter test → 34/34. APK release → builds.
+
+7. RISK LEVEL: LOW.
+   - Shared in-process promise only; no Redis/protocol change.
+   - Memory-fallback path untouched (dedupe sits above the cache layer).
+   - Response shapes byte-identical; no caller changes needed.
+   - Single-process structure (no cross-worker sharing) — correct + safe; under
+     PM2 cluster each worker dedupes its own load, still a net reduction.
+
+8. NEXT STEP AFTER VPS REDIS VERIFICATION
+   - Confirm Redis: redis-cli PING → PONG; logs show "Redis main connected",
+     NOT "using in-memory cache fallback".
+   - Deploy this dedupe. Watch provider calls/min — expect DROP under load.
+   - THEN (separate approvals, in order): live list TTL 15s→8s → live-route SWR
+     → consider 8s→5s → enable PM2 cluster (Redis already confirmed).
+
+================================================================================
+END DEDUPE SECTION
+================================================================================
+
+================================================================================
+LIVE MATCH LIST TTL 15s → 8s
+Added: 2026-06-12  (Step 2 of the safest production order; dedupe = Step 1 done)
+================================================================================
+
+1. FILES CHANGED
+   - cricket-api/src/lib/redis.js — added TTL.LIVE_LIST = 8 (new constant).
+   - cricket-api/src/routes/matches.js — /matches/live route now uses
+     TTL.LIVE_LIST (preHandler cacheMiddleware + cacheGetOrFetch).
+   - cricket-api/src/workers/handlers/match-list.handler.js — live branch caches
+     matches:live with TTL.LIVE_LIST (same key, kept consistent with the route).
+
+2. PREVIOUS LIVE MATCH LIST TTL: 15s (was TTL.LIVE_SCORE).
+
+3. NEW LIVE MATCH LIST TTL: 8s (TTL.LIVE_LIST), aligned with Flutter Home 8s poll.
+
+   WHY A NEW CONSTANT (not editing LIVE_SCORE):
+   TTL.LIVE_SCORE = 15 is SHARED by match-detail (match:{id}:live) at
+   matches.js:288/294/991 and live-score.handler.js. Editing the global constant
+   would have dropped match-detail TTL too. Added a route-specific LIVE_LIST so
+   ONLY the matches:live list cache changed.
+
+4. SCORECARD / COMMENTARY / LIVE-LINE / LIVE-CENTER TTLs UNCHANGED:
+   - TTL.SCORECARD    = 5  (unchanged)
+   - TTL.COMMENTARY   = 5  (unchanged)
+   - TTL.LIVE_LINE    = 5  (unchanged)
+   - TTL.LIVE_CENTER_LIVE = 4 / LIVE_CENTER_DONE = 600 (unchanged)
+   - TTL.LIVE_SCORE   = 15 (UNCHANGED — still used by match-detail + live-score
+     worker; only the list endpoint moved off it)
+
+5. SWR NOT ADDED. Stale-while-revalidate still deferred to a later batch (Step 3).
+   This patch = TTL value only. No WebSocket/SSE. No Flutter polling change. No
+   PM2 cluster. No admin/assets/analytics change.
+
+6. TEST RESULTS
+   - node --check redis.js / matches.js / match-list.handler.js → OK.
+   - npm test (full backend suite) → 34/34 pass.
+   - flutter analyze lib/ → 0 issues. flutter test → 34/34. APK release → builds.
+
+   SAFETY NOTE: 8s TTL is safe here because in-flight dedupe (Step 1) already
+   collapses concurrent cache-miss callers to ONE provider fetch. Without dedupe
+   the shorter TTL would multiply provider load; with it, load rises only
+   modestly (more frequent single refreshes).
+
+7. VPS DEPLOY COMMANDS
+   cd /path/to/cricket-api
+   git pull                       # or however code is shipped
+   pm2 restart cricket-api        # restart API (single instance, NOT clustered)
+   pm2 restart cricket-workers    # if workers run separately (match-list.handler)
+   # Verify:
+   curl -i https://api.webcrichd.co/matches/live      # 200, fresh data
+   # Watch provider calls/min after deploy — expect a modest rise vs 15s, NOT a
+   # spike (dedupe absorbs concurrency). If a spike appears, revert TTL to 15.
+
+   ROLLBACK: set TTL.LIVE_LIST back to 15 in redis.js, redeploy. Trivial revert.
+
+================================================================================
+END TTL SECTION
+================================================================================
+
+================================================================================
+LIVE-LINE SWR FIRST ROUTE IMPLEMENTATION
+Added: 2026-06-12  (Step 3 of the safest order; Steps 1 dedupe + 2 TTL 8s done)
+================================================================================
+
+1. FILES CHANGED
+   - cricket-api/src/lib/redis.js — added SWR_WINDOW constants +
+     cacheGetOrFetchSWR() helper (additive; cacheGetOrFetch unchanged).
+   - cricket-api/src/routes/matches.js — /match/:id/live-line now uses
+     cacheGetOrFetchSWR; added SWR imports.
+   - cricket-api/src/lib/redis.test.js — added 6 SWR unit tests.
+
+2. HELPER ADDED
+   cacheGetOrFetchSWR(key, ttl, staleWindow, fetchFn, opts?)
+   - Stores value as envelope { __swr__:true, v:<data>, f:<freshUntilMs> } with
+     PHYSICAL Redis TTL = ttl + staleWindow → data older than the stale window
+     auto-evicts and can never be served.
+   - age < ttl                → fresh hit, return cached, no fetch.
+   - ttl <= age < ttl+stale   → return stale immediately + ONE background refresh
+                                 via runDeduped(`swr:<key>`); background errors
+                                 logged, never thrown.
+   - age >= ttl+stale / none  → block + fetch (same as cacheGetOrFetch), deduped,
+                                 errors propagate as before.
+   - opts seams (now/get/set/refresh) exist only for unit testing; production
+     calls pass none and use module defaults + Date.now().
+   - cacheGetOrFetch() left BYTE-FOR-BYTE unchanged.
+
+3. ROUTE WIRED
+   ONLY /match/:id/live-line. fetchFn cleans + validates payload
+   (cleanLiveLinePayload + isInvalidLiveLinePayload) and returns null on junk, so
+   SWR never caches invalid live-line data.
+   NOT wired: matches:live, scorecard, commentary, match detail. (Deferred.)
+
+4. TTL UNCHANGED. TTL.LIVE_LINE still 5s. No TTL constant modified. (Physical
+   Redis TTL for this key is now 5+3=8s by design, but the freshness TTL is 5s.)
+
+5. STALE WINDOW USED. SWR_WINDOW.LIVE_LINE = 3s. Max served age = 5+3 = 8s.
+   Window <= ttl (tight) so live scores never served very old.
+
+6. RESPONSE SHAPE UNCHANGED. Route still returns
+   { success, matchId, data, updatedAt, fromCache, message }. SWR's optional
+   `stale` flag is not surfaced. No Flutter/client change.
+
+7. TESTS RUN
+   - node --test redis.test.js → 10/10 (4 dedupe + 6 SWR):
+       fresh→no fetch; stale→serve+1 bg refresh; expired→block+fetch; 100
+       concurrent stale→1 refresh; bg error→no throw; {data} always present.
+   - npm test (full suite) → 40/40 pass. Existing dedupe tests still green.
+   - node --check redis.js / matches.js → OK.
+   - flutter analyze lib/ → 0 issues. flutter test → 34/34. APK release → 51.7MB.
+
+8. ROLLBACK COMMAND
+   Revert the live-line route to plain cache (one route). In matches.js restore
+   the cacheGet/providerManager/cacheSet block, OR simplest:
+     git checkout HEAD~1 -- src/routes/matches.js   # if this was its own commit
+   then redeploy:  pm2 restart cricket-api
+   Helper + tests can stay (unused = harmless). No data migration.
+
+9. NEXT ROUTES TO CONSIDER (only after production verification of live-line)
+   Verify first with LIVE_SCORE_PRODUCTION_VERIFY_CHECKLIST.txt on a REAL live
+   match (not the manual test match): provider calls/min flat, staleness vs
+   cricbuzz within ~8s, no spike. THEN extend one at a time:
+     1. scorecard (ttl 5 + window 3)
+     2. commentary (ttl 5 + window 3)
+     3. matches:live (ttl 8 + window 4)
+     4. match detail (ttl 15 + window 5) — last
+   STILL DEFERRED: TTL 8s→5s, PM2 cluster, WebSocket/SSE.
+
+================================================================================
+END SWR SECTION
+================================================================================
+
+================================================================================
+LIVE-LINE DATA CORRECTNESS FIX BEFORE SWR EXPANSION  (2026-06-12)
+================================================================================
+
+Tested real provider match live-line: /match/121774/live-line. Response 200 OK
+but normalized data wrong: status "unknown" on a live match; latestBall.result
+"0" while commentary said "1 run, to cover"; latestBall.key ended with NONE;
+latestBallResult "0". Fixed normalization ONLY. No SWR expansion.
+
+1. ROOT CAUSE
+   - extractLatestBall() in src/providers/cricbuzz/client.js only understood the
+     balls-map. On live matches the balls-map is frequently empty, so it fell to
+     the commentary path. The commentary path NEVER parsed the run value out of
+     natural-language text -- the only text rule was /no run/ -> 0. So "1 run,
+     to cover" produced runs=0 and an empty result token.
+   - buildLiveLineData() then derived latestBall.result from the event enum;
+     with event NONE it used String(runs||0) = "0".
+   - latestBallKey was built from the raw event enum, so it ended in "NONE"
+     whenever the event could not be classified.
+   - status used scoreDetails.status || header.status || 'unknown'. Cricbuzz
+     often omits a clean status enum for in-progress matches, so it stayed
+     "unknown" even though header.state was "In Progress".
+
+2. FILES CHANGED  (live-line ONLY)
+   - src/providers/cricbuzz/client.js
+       * NEW export parseBallResultFromCommentary(text) -> {runs,result,event}
+       * NEW export normalizeLiveLineStatus(rawStatus, {state,isLive})
+       * extractLatestBall(): now exported; runs/result/event use structured
+         data first, parsed commentary as fallback; returns a `result` token.
+       * buildLiveLineData(): now exported; single resultToken drives both
+         latestBall.result and latestBallKey; status passed through
+         normalizeLiveLineStatus.
+   - src/providers/cricbuzz/live-line.test.js  (NEW unit tests)
+   No route file changed for the parser. cleanLiveLinePayload already forwards
+   latestBall.result -> latestBallResult, so it now carries the correct token.
+
+3. EXACT PARSER / NORMALIZER FIX
+   parseBallResultFromCommentary precedence (first match wins):
+     wicket (out|wicket|caught|bowled|lbw|run-out|stumped|c&b, NOT "not out") -> W / WICKET
+     wide                                                                     -> Wd / WIDE  (runs 1)
+     no-ball                                                                  -> Nb / NO_BALL (runs 1)
+     four|boundary                                                           -> 4 / FOUR
+     six|maximum                                                             -> 6 / SIX
+     no run|dot ball|dot                                                     -> 0 / NONE
+     /\b(\d+)\s+runs?\b/  ("1 run", "2 runs", ...)                            -> N (4->FOUR, 6->SIX, else NONE)
+   normalizeLiveLineStatus: rawStatus or provider state matching
+   ^(live|in[- ]?progress)$ -> "live"; unknown/empty + context.isLive -> "live";
+   otherwise a real provider status is preserved untouched.
+   Existing Wd/NB/W/4/6 structured parsing is unchanged (parser is fallback-only).
+
+4. TESTS ADDED  (src/providers/cricbuzz/live-line.test.js, 10 tests)
+   1 "1 run" -> 1
+   2 "no run" -> 0
+   3 "FOUR" / "4 runs" -> 4
+   4 "SIX" -> 6
+   5 wide -> Wd
+   6 wicket -> W (and "not out" not treated as wicket)
+   7 latestBallKey does not end with NONE when result parseable (ends "-1")
+   8 status unknown -> live with match context (+ real status preserved)
+   9 buildLiveLineData integration: "1 run" fixture -> result "1", status "live"
+
+5. CONFIRMATION: ONLY LIVE-LINE CHANGED
+   Touched client.js live-line normalizer functions + new test only. No change
+   to scorecard, commentary, matches/live, match detail, Flutter UI, WebSocket/
+   SSE, or PM2.
+
+6. CONFIRMATION: SWR NOT EXTENDED
+   No SWR added to scorecard/commentary/matches:live. The live-line route SWR
+   call is unchanged. cacheGetOrFetchSWR not modified.
+
+7. TEST RESULTS
+   node --test src/providers/cricbuzz/live-line.test.js -> 10/10 pass.
+   node --test (full suite) -> 51/51 pass, 0 fail. No regressions.
+   TTL config verified unchanged: TTL.LIVE_LINE=5, SWR_WINDOW.LIVE_LINE=3,
+   physicalTtl = 5+3 = 8 (redis-cli TTL match:121774:live-line should be <= 8).
+   Live VPS verification (run on the box, values not changed):
+     curl -s -o /dev/null -w "1 total=%{time_total}s\n" "${H[@]}" https://api.webcrichd.co/match/121774/live-line
+     curl -s -o /dev/null -w "2 total=%{time_total}s\n" "${H[@]}" https://api.webcrichd.co/match/121774/live-line
+     redis-cli TTL match:121774:live-line
+   Expect: call 1 fromCache:false, call 2 fromCache:true (SWR), TTL 1..8,
+   data.latestBall.result == "1" for the "1 run" ball, status == "live".
+
+8. SAFE TO EXTEND SWR TO SCORECARD?
+   Normalization is now correct and SWR was left untouched, so the correctness
+   blocker is cleared. Still gate on the live VPS check in step 7 + the existing
+   LIVE_SCORE_PRODUCTION_VERIFY_CHECKLIST.txt run on a REAL live match (provider
+   calls/min flat, staleness within ~8s). After that passes: YES, scorecard SWR
+   (ttl 5 + window 3) can be approved as the next single route. Do NOT batch it
+   with commentary/matches:live.
+
+================================================================================
+SCORECARD SWR SECOND ROUTE IMPLEMENTATION  (2026-06-12)
+================================================================================
+
+Live-line parser/status verified on VPS (status live, latestBall.result "1",
+key 159941-2-25.5-139-4-1, no NONE, Redis TTL 8). Live-line NOT touched again.
+Extended SWR to the scorecard route ONLY, mirroring the live-line pattern.
+
+1. FILES CHANGED
+   - src/lib/redis.js
+       SWR_WINDOW.SCORECARD = 3 added (LIVE_LINE entry unchanged).
+   - src/routes/matches.js
+       GET /match/:id/scorecard rewired to cacheGetOrFetchSWR. Removed the
+       preHandler cacheMiddleware on THIS route only (it short-circuits with a
+       different shape {cache:true} and does a plain cacheGet that cannot read
+       the SWR envelope). cacheMiddleware still used by all other routes.
+   - src/lib/redis.test.js
+       Added test: fetchFn returning null (invalid scorecard) is NOT cached.
+
+2. SCORECARD ROUTE WIRED
+   const { data, fromCache } = await cacheGetOrFetchSWR(
+     KEYS.matchScorecard(id), TTL.SCORECARD, SWR_WINDOW.SCORECARD,
+     async () => { /* getScorecard; return sc if innings>=1 else null */ });
+   Hard-miss errors propagate to the catch -> existing empty fallback (never
+   404). Background refresh runs via runDeduped inside the SWR helper; bg errors
+   are logged, never thrown to users.
+
+3. TTL UNCHANGED
+   TTL.SCORECARD = 5 (untouched). No TTLs changed anywhere.
+
+4. STALE WINDOW USED
+   SWR_WINDOW.SCORECARD = 3.
+
+5. MAX SERVED AGE
+   5 + 3 = 8s. Physical Redis TTL = 8 (redis-cli TTL match:<id>:scorecard <= 8).
+
+6. VALIDATION BEHAVIOR
+   Preserved. The prior [FIXED] guard (only cache when innings.length > 0) now
+   lives inside fetchFn: empty/broken scorecard -> return null -> SWR skips the
+   cache write, so invalid data is never served from cache. Unit test added.
+
+7. RESPONSE SHAPE UNCHANGED
+   Success: { success:true, data, fromCache }. Not-available fallback:
+   { success:true, data:{ innings:[], scorecard_available:false }, fromCache:false,
+   message:'Scorecard not available for this match' }. X-Cache header still set
+   (HIT/MISS from fromCache).
+
+8. TESTS RUN
+   node --check src/lib/redis.js        -> OK
+   node --check src/routes/matches.js   -> OK
+   npm test (node --test src/**/*.test.js) -> 52/52 pass, 0 fail
+     (51 prior + 1 new scorecard-null-not-cached test).
+   flutter analyze lib/   -> No issues found.
+   flutter test           -> 38 passed.
+   flutter build apk --release --target-platform android-arm64 -> built
+     app-release.apk (51.9MB). No Flutter code changed (response shape stable).
+   NOTE: root-level test-parser.js / test-scorecard.js are standalone debug
+   scripts (missing ../scorecard-155398.html fixture), outside the npm test
+   glob, pre-existing failure, untouched by this change.
+
+9. ROLLBACK STEPS (one route)
+   Revert the scorecard handler in src/routes/matches.js to the cacheGet/cacheSet
+   + preHandler cacheMiddleware version, and (optionally) drop SWR_WINDOW.SCORECARD
+   from src/lib/redis.js. Live-line is independent and unaffected. No data
+   migration; SWR envelopes auto-evict within 8s.
+     git checkout -- src/routes/matches.js src/lib/redis.js   # full revert of this step
+   then pm2 reload cricket-api.
+
+10. NEXT ROUTE RECOMMENDATION
+    After production verification of scorecard SWR (provider calls/min flat,
+    staleness within ~8s, X-Cache HIT on 2nd call) on a REAL live match: extend
+    to commentary next (ttl 5 + window 3), single route, same pattern. Then
+    matches:live (ttl 8 + window 4), then match detail last. STILL DEFERRED:
+    TTL 8s->5s, PM2 cluster, WebSocket/SSE, analytics, remote assets.
+
+================================================================================
+SCORECARD SWR PRODUCTION VERIFICATION FIX  (2026-06-12)
+================================================================================
+
+VPS verification for /match/159941/scorecard was NOT green:
+  x-cache: MISS ; jq '.fromCache' -> null ; redis TTL -> 5 ; latency ~same.
+
+1. ROOT CAUSE  (two distinct issues)
+   PRIMARY = DEPLOYMENT. The scorecard SWR code was never committed/pushed, so
+   the VPS (which deploys via git pull) was still running the OLD pre-SWR
+   scorecard handler. Proof:
+     - `fromCache: null` is impossible from the new handler -- it always returns
+       a boolean ({ success, data, fromCache }), and the empty fallback returns
+       fromCache:false. `null` only appears when the field is ABSENT, i.e. the
+       old handler / cacheMiddleware short-circuit shape.
+     - TTL 5 = old cacheSet(key, data, TTL.SCORECARD). The SWR path writes a
+       physical TTL of ttl+window = 8.
+     - `git status` showed src/routes/matches.js + src/lib/redis.js as modified
+       (unstaged) and src/lib/redis.test.js untracked -> never deployed.
+   SECONDARY = SHARED-KEY CLOBBER (latent; would keep verification flaky even
+   after deploy). The key match:{id}:scorecard is written/read by FOUR sites,
+   only one of which used the SWR envelope:
+     - /scorecard route            -> SWR envelope (new)
+     - /live-center route          -> cacheGetOrFetch  = PLAIN write/read
+     - /commentary-feed inner read -> cacheGet         = PLAIN read
+     - scorecard worker            -> cacheSet         = PLAIN write
+   The SWR reader treats a plain value as a HARD MISS, and a plain reader treats
+   the envelope as scorecard data (scorecard.innings undefined). So the route
+   and live-center clobber each other -> permanent MISS + a Live-tab data
+   regression. Both had to be unified on the envelope.
+
+2. DEPLOYMENT ISSUE OR CODE ISSUE?
+   Observed failure (null/TTL5) = DEPLOYMENT (uncommitted code). The shared-key
+   clobber = CODE issue, fixed now so the route stays HIT under real traffic.
+
+3. FILES CHANGED
+   - src/lib/redis.js
+       + export unwrapSWR(raw)            -> inner value for envelopes, plain pass-through
+       + export cacheSetSWR(key,v,ttl,win)-> writes envelope w/ physical TTL ttl+win
+   - src/routes/matches.js
+       * /live-center scorecard fetch: cacheGetOrFetch -> cacheGetOrFetchSWR
+         (same TTL.SCORECARD + SWR_WINDOW.SCORECARD; returns sc-or-null).
+       * /commentary-feed inner read: cacheGet(...) -> unwrapSWR(cacheGet(...)).
+       * import unwrapSWR.
+   - src/workers/handlers/scorecard.handler.js
+       * cacheSet(...TTL.SCORECARD) -> cacheSetSWR(...TTL.SCORECARD, SWR_WINDOW.SCORECARD).
+       * dropped now-unused cacheSet import.
+   - src/lib/redis.test.js
+       + physical TTL = ttl+staleWindow test, unwrapSWR roundtrip test,
+         cacheSetSWR export test (3 new).
+   The /scorecard route handler itself was already correct from the prior step
+   (no preHandler cacheMiddleware; returns { success, data, fromCache }; sets
+   X-Cache from fromCache). No TTLs changed. live-line untouched.
+
+4. EXACT FIX
+   Single-writer-format invariant on match:{id}:scorecard: EVERY writer stores
+   an SWR envelope (route, live-center, worker via cacheSetSWR) and EVERY reader
+   unwraps it (route/live-center via cacheGetOrFetchSWR, commentary-feed via
+   unwrapSWR). Result: 1st call MISS -> writes envelope TTL8 -> 2nd call reads a
+   fresh envelope -> HIT/fromCache:true, and no plain write can downgrade it.
+
+5. VERIFICATION COMMANDS  (run on VPS AFTER deploy)
+   redis-cli DEL match:159941:scorecard
+   curl -s -D /tmp/h1 "${H[@]}" https://api.webcrichd.co/match/159941/scorecard -o /tmp/b1.json
+   grep -i x-cache /tmp/h1 ; jq '.fromCache,(.data.innings|length)' /tmp/b1.json ; redis-cli TTL match:159941:scorecard
+   curl -s -D /tmp/h2 "${H[@]}" https://api.webcrichd.co/match/159941/scorecard -o /tmp/b2.json
+   grep -i x-cache /tmp/h2 ; jq '.fromCache,(.data.innings|length)' /tmp/b2.json ; redis-cli TTL match:159941:scorecard
+
+6. FINAL VPS RESULT
+   (to be captured on the box after deploy) EXPECT:
+     call1: X-Cache MISS, fromCache false, innings > 0, TTL = 8 (then counts down)
+     call2: X-Cache HIT,  fromCache true,  innings > 0, TTL <= 8
+     fromCache never null.
+   Local gate this round:
+     node --check redis.js / matches.js / scorecard.handler.js -> OK
+     npm test -> 55/55 pass (52 + 3 new)
+     flutter analyze lib/ -> clean ; flutter test -> 38 passed
+     No Flutter code changed (no rebuild needed; prior apk 51.9MB).
+
+7. COMMENTARY SWR?
+   NOT YET. Commentary SWR stays deferred until scorecard verification is GREEN
+   on the VPS (X-Cache HIT on 2nd call, fromCache true, TTL<=8) under a real live
+   match. Once green, commentary is the next single route (ttl 5 + window 3).
+
+================================================================================
+COMMENTARY SWR THIRD ROUTE IMPLEMENTATION  (2026-06-13)
+================================================================================
+
+Scorecard SWR verified GREEN on VPS (DEL match:159941:scorecard; call1 X-Cache
+MISS / fromCache false / innings 2 / TTL 8; call2 X-Cache HIT / fromCache true /
+innings 2 / TTL 7). Live-line + scorecard NOT touched again. Extended SWR to the
+commentary route ONLY, mirroring the live-line/scorecard pattern.
+
+1. FILES CHANGED
+   - src/lib/redis.js
+       SWR_WINDOW.COMMENTARY = 3 added (LIVE_LINE + SCORECARD entries unchanged).
+   - src/routes/matches.js
+       * GET /match/:id/commentary rewired to cacheGetOrFetchSWR. Removed the
+         preHandler cacheMiddleware on THIS route only (it does a plain cacheGet
+         that reads the SWR envelope as raw data and short-circuits with a
+         different shape {cache:true}). cacheMiddleware still used by all other
+         routes.
+       * /live-center inner commentary fetch: cacheGetOrFetch -> cacheGetOrFetchSWR
+         (same TTL.COMMENTARY + SWR_WINDOW.COMMENTARY; returns array-or-null) so
+         it shares the SAME envelope as the route and cannot clobber it.
+   - src/workers/handlers/commentary.handler.js
+       * read: cacheGet(...)            -> unwrapSWR(cacheGet(...))
+       * write: cacheSet(...TTL.COMMENTARY) -> cacheSetSWR(...TTL.COMMENTARY,
+                                               SWR_WINDOW.COMMENTARY)
+       * imports updated (cacheSet dropped; cacheSetSWR, unwrapSWR, SWR_WINDOW
+         added). Delta-broadcast logic unchanged.
+   - src/lib/redis.test.js
+       + 3 commentary SWR tests (invalid/null not cached; valid array cached as
+         envelope + HIT on 2nd call; worker envelope read back unwrapped).
+
+2. COMMENTARY ROUTE WIRED
+   const { data: commentary, fromCache } = await cacheGetOrFetchSWR(
+     KEYS.matchCommentary(id), TTL.COMMENTARY, SWR_WINDOW.COMMENTARY,
+     async () => {
+       const list = (await providerManager.execute('getCommentary', id)).data || null;
+       return Array.isArray(list) && list.length > 0 ? list : null;
+     });
+   reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
+   Hard-miss errors propagate to existing empty fallback (never 404). Background
+   refresh runs via runDeduped inside the SWR helper; bg errors logged, never
+   thrown.
+
+3. TTL UNCHANGED
+   TTL.COMMENTARY = 5 (untouched). No TTLs changed anywhere. Live-line, scorecard,
+   matches:live, match detail TTLs all unchanged.
+
+4. STALE WINDOW USED
+   SWR_WINDOW.COMMENTARY = 3.
+
+5. MAX SERVED AGE
+   5 + 3 = 8s. Physical Redis TTL = 8 (redis-cli TTL match:<id>:commentary <= 8).
+
+6. CACHE KEY READERS/WRITERS CHECKED  (match:{id}:commentary)
+   Searched KEYS.matchCommentary + match:*:commentary. All sites unified:
+     - /commentary route          -> cacheGetOrFetchSWR  (envelope R/W)   [SWR]
+     - /live-center inner fetch    -> cacheGetOrFetchSWR  (envelope R/W)   [SWR, fixed]
+     - commentary worker read      -> unwrapSWR(cacheGet) (envelope-safe)  [fixed]
+     - commentary worker write     -> cacheSetSWR         (envelope)       [fixed]
+     - admin /:externalId/refresh  -> redis.del           (format-agnostic) [no change]
+     - cache-cleaner.handler       -> scan + ttl + expire (format-agnostic) [no change]
+   No plain cacheSet remains on the key. Single-writer-format invariant holds:
+   every writer stores an envelope, every reader unwraps -> no shared-key clobber
+   (the bug scorecard hit). NOTE: data-control.js lists a 'commentary' dataType
+   (ttl 30, stale:false) but it is NOT wired to this route's cache key path
+   (route uses cacheGetOrFetchSWR directly), so it does not write match:{id}:commentary.
+
+7. VALIDATION BEHAVIOR
+   Preserved + tightened. fetchFn returns the commentary array only when it is a
+   non-empty Array; empty/non-array -> null -> SWR skips the cache write, so
+   invalid/broken commentary is never cached or served stale. Unit test added.
+   Worker already guarded (Array.isArray) before writing.
+
+8. RESPONSE SHAPE UNCHANGED
+   Success: { success:true, data:<paginated>, pagination:{...}, fromCache }.
+   Not-available fallback: { success:true, data:[], pagination:{page,limit,
+   total:0,pages:0}, fromCache, message:'Commentary not available for this match' }.
+   fromCache is ALWAYS a boolean (never null). X-Cache header set MISS/HIT from
+   fromCache. data/pagination contract for Flutter is unchanged (fromCache is
+   additive, like scorecard).
+
+9. TESTS RUN
+   node --check src/lib/redis.js                       -> OK
+   node --check src/routes/matches.js                  -> OK
+   node --check src/workers/handlers/commentary.handler.js -> OK
+   npm test (node --test src/**/*.test.js)             -> 58/58 pass, 0 fail
+     (55 prior + 3 new commentary SWR tests).
+   flutter analyze lib/   -> No issues found.
+   flutter test           -> 38 passed.
+   flutter build apk --release --target-platform android-arm64 -> built
+     app-release.apk (32.8MB). No Flutter code changed (response shape stable;
+     fromCache additive).
+
+10. ROLLBACK STEPS (one route)
+    Revert the commentary handler in src/routes/matches.js to the
+    cacheGetOrFetch + preHandler cacheMiddleware version, revert the /live-center
+    commentary fetch to cacheGetOrFetch, revert commentary.handler.js to
+    cacheGet/cacheSet, and (optionally) drop SWR_WINDOW.COMMENTARY from
+    src/lib/redis.js. Live-line + scorecard are independent and unaffected. No
+    data migration; SWR envelopes auto-evict within 8s.
+      git checkout -- src/routes/matches.js src/lib/redis.js \
+                      src/workers/handlers/commentary.handler.js
+    then pm2 reload cricket-api (and cricket-workers if separate).
+
+11. NEXT ROUTE RECOMMENDATION
+    After production verification of commentary SWR (provider calls/min flat,
+    staleness within ~8s, X-Cache HIT on 2nd call, fromCache true, TTL<=8) on a
+    REAL live match: extend to matches:live next (ttl 8 + window 4), single
+    route, same pattern. Then match detail last (ttl 15 + window 5). STILL
+    DEFERRED: TTL 8s->5s, PM2 cluster, WebSocket/SSE, analytics, remote assets.
+
+================================================================================
+END COMMENTARY SWR SECTION
+================================================================================
+
+================================================================================
+MATCHES LIVE SWR FOURTH ROUTE IMPLEMENTATION  (2026-06-13)
+================================================================================
+
+Commentary SWR verified GREEN on VPS (DEL match:159941:commentary; call1 X-Cache
+MISS / fromCache false / data 20 / TTL 8; call2 X-Cache HIT / fromCache true /
+data 20 / TTL 8). Verified SWR routes so far: live-line, scorecard, commentary —
+none touched again. Extended SWR to the /matches/live LIST route ONLY.
+
+1. FILES CHANGED
+   - src/lib/redis.js
+       SWR_WINDOW.LIVE_LIST = 4 added (LIVE_LINE/SCORECARD/COMMENTARY unchanged).
+   - src/routes/matches.js
+       GET /matches/live rewired to cacheGetOrFetchSWR. Removed the preHandler
+       cacheMiddleware on THIS route only (plain cacheGet reads the SWR envelope
+       as raw data + short-circuits with {cache:true} shape). X-Cache set
+       manually in the handler. Manual merge + stream enrichment unchanged.
+       upcoming/recent/finished routes still use cacheMiddleware + plain cache.
+   - src/workers/handlers/match-list.handler.js
+       live branch write: cacheSet(...TTL.LIVE_LIST) -> cacheSetSWR(...TTL.LIVE_LIST,
+       SWR_WINDOW.LIVE_LIST). upcoming/recent branches keep plain cacheSet (not
+       SWR routes). Per-match polling lifecycle + activeMatches write unchanged.
+       imports: cacheSetSWR + SWR_WINDOW added (cacheSet kept for upcoming/recent).
+   - src/lib/redis.test.js
+       + 5 matches:live SWR tests (broken non-array not cached; empty array IS
+       cached as valid; valid list HIT on 2nd call; physical TTL 12; worker
+       envelope unwrapped).
+
+2. /matches/live ROUTE WIRED
+   const { data, fromCache } = await cacheGetOrFetchSWR(
+     KEYS.matchesList('live'), TTL.LIVE_LIST, SWR_WINDOW.LIVE_LIST,
+     async () => {
+       const list = (await providerManager.execute('getLiveMatches')).data;
+       return Array.isArray(list) ? list : null;
+     });
+   reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
+   const merged = await mergeManualMatches(data || [], { status: 'live' });
+   ... indexMatchListItems(merged) ... enrichMatchListWithStreams(merged) ...
+   Hard-miss errors propagate as before (route had no try/catch; same behavior).
+   Background refresh runs via runDeduped inside the SWR helper; bg errors logged,
+   never thrown.
+
+3. TTL UNCHANGED
+   TTL.LIVE_LIST = 8 (untouched). No TTLs changed anywhere. live-line/scorecard/
+   commentary/match-detail TTLs all unchanged.
+
+4. STALE WINDOW USED
+   SWR_WINDOW.LIVE_LIST = 4. (Wider than the 3s on score routes because the live
+   LIST changes less often than an in-play score; still tight.)
+
+5. MAX SERVED AGE
+   8 + 4 = 12s. Physical Redis TTL = 12 (redis-cli TTL matches:live <= 12).
+
+6. MANUAL MATCH MERGE BEHAVIOR PRESERVED
+   mergeManualMatches(data || [], { status: 'live' }) still runs PER REQUEST on
+   top of the cached provider list — NOT inside the cached value. Manual matches
+   are never stale-cached and admin manual-match changes appear on the next
+   request regardless of SWR state. indexMatchListItems(merged) unchanged.
+
+7. STREAM GATING FIELDS PRESERVED
+   enrichMatchListWithStreams(merged, { allowReplay:false }) still runs PER
+   REQUEST after the merge (not cached), so all gating fields are computed live:
+   hasLiveStream, watchLiveEnabled, hasStream, watchLiveAvailable, streamCount,
+   streamBadgeText. Only the raw provider list is SWR-cached; stream state is
+   always fresh. (enrich error still falls back to merged, unchanged.)
+
+8. CACHE KEY READERS/WRITERS CHECKED  (matches:live / KEYS.matchesList('live'))
+   Searched matchesList / matches:live / TTL.LIVE_LIST. All sites:
+     - /matches/live route        -> cacheGetOrFetchSWR  (envelope R/W)   [SWR]
+     - match-list worker (live)    -> cacheSetSWR         (envelope)       [fixed]
+     - admin streams invalidate    -> redis.del + clearDataCache (format-agnostic) [no change]
+     - cache.js doc comment        -> example only, not code               [no change]
+     - data-control 'liveMatches'  -> separate appdata path, NOT this key  [no change]
+   No plain cacheSet remains on matches:live. Single-writer-format invariant
+   holds. upcoming/recent/finished list keys are deliberately untouched (still
+   plain cache) — no clobber, they are not SWR routes.
+
+9. RESPONSE SHAPE UNCHANGED
+   Route still returns { success:true, data:<merged+enriched array> }. fromCache
+   is consumed internally only to set X-Cache (the route did NOT previously
+   expose top-level fromCache, so none was added — shape byte-identical for
+   Flutter). X-Cache header now MISS first / HIT second.
+
+10. TESTS RUN
+    node --check src/lib/redis.js                          -> OK
+    node --check src/routes/matches.js                     -> OK
+    node --check src/workers/handlers/match-list.handler.js -> OK
+    npm test (node --test src/**/*.test.js)                -> 63/63 pass, 0 fail
+      (58 prior + 5 new matches:live SWR tests).
+    flutter analyze lib/   -> No issues found.
+    flutter test           -> 38 passed.
+    flutter build apk --release --target-platform android-arm64 -> built
+      app-release.apk (32.8MB). No Flutter code changed (response shape stable).
+
+11. ROLLBACK STEPS (one route)
+    Revert /matches/live in src/routes/matches.js to the cacheGetOrFetch +
+    preHandler cacheMiddleware version, revert the live branch in
+    match-list.handler.js to plain cacheSet, and (optionally) drop
+    SWR_WINDOW.LIVE_LIST from src/lib/redis.js. live-line/scorecard/commentary
+    are independent and unaffected. No data migration; SWR envelopes auto-evict
+    within 12s.
+      git checkout -- src/routes/matches.js src/lib/redis.js \
+                      src/workers/handlers/match-list.handler.js
+    then pm2 reload cricket-api (and cricket-workers if separate — the worker
+    write format changed, so restart workers too).
+
+12. NEXT ROUTE RECOMMENDATION
+    After production verification of matches:live SWR (provider calls/min flat,
+    staleness within ~12s, X-Cache HIT on 2nd call, TTL<=12, manual matches +
+    stream badges still correct) on a REAL live match: extend to match detail
+    LAST (/match/:id, ttl 15 + window 5), single route, same pattern — note its
+    key match:{id}:live is shared by several readers, so do the same shared-key
+    sweep first. STILL DEFERRED: TTL 8s->5s, PM2 cluster, WebSocket/SSE,
+    analytics, remote assets.
+
+================================================================================
+END MATCHES LIVE SWR SECTION
+================================================================================
+
+================================================================================
+MATCHES LIVE SWR RESPONSE SHAPE FIX  (2026-06-13)
+================================================================================
+
+VPS showed /matches/live working EXCEPT top-level fromCache was null (call1
+X-Cache MISS/fromCache null/data 2/TTL 12; call2 X-Cache HIT/fromCache null/data
+2/TTL 11). SWR + physical TTL + X-Cache all correct; only the JSON field was
+missing. Fixed the response shape ONLY. No SWR/TTL/logic change.
+
+1. ROOT CAUSE  (two compounding issues, both on the /matches/live route only)
+   a. BODY OMITTED THE FIELD. The handler computed `fromCache` from
+      cacheGetOrFetchSWR and used it for the X-Cache header, but the returned
+      object was { success, data } — fromCache was never included. So the client
+      saw the field as absent → null.
+   b. FASTIFY RESPONSE SCHEMA STRIPPED IT. Even once added to the body, the
+      route's response.200 schema (properties: success/data/cache) does NOT list
+      fromCache, and Fastify's fast-json-stringify serializer DROPS any property
+      not in the schema. So the field had to be declared in the schema too.
+   Both had to be fixed together; fixing only one would still yield null.
+   (X-Cache was correct all along because it is a header, not serialized through
+   the response schema. The helper always returns a boolean fromCache — false on
+   hard miss, true on fresh/stale hit — so the value itself was never the issue.)
+
+2. FILES CHANGED
+   - src/routes/matches.js  (/matches/live ONLY)
+       * response.200 schema: added `fromCache: { type: 'boolean' }`.
+       * return body: added `fromCache` →
+         { success:true, data:<merged+enriched>, fromCache }.
+   - src/lib/redis.test.js
+       + test: matches:live fromCache is a strict boolean (false on miss, true on
+         hit), never null — regression guard for this exact bug.
+   No other route, no helper, no worker, no TTL, no SWR window touched.
+
+3. CONFIRMATION TTL STILL 12 PHYSICAL
+   Unchanged. TTL.LIVE_LIST = 8, SWR_WINDOW.LIVE_LIST = 4, physical Redis TTL =
+   8 + 4 = 12. This fix touched only the response schema + body; the
+   cacheGetOrFetchSWR call args are byte-identical.
+
+4. CONFIRMATION DATA SHAPE UNCHANGED
+   `data` is still the same array (mergeManualMatches → indexMatchListItems →
+   enrichMatchListWithStreams). Manual match merge preserved. Stream gating
+   fields preserved (hasLiveStream, watchLiveEnabled, hasStream,
+   watchLiveAvailable, streamCount, streamBadgeText) — all still computed
+   per-request in enrichMatchListWithStreams, not cached. Only an additive
+   top-level `fromCache` boolean was added alongside `data`.
+
+5. CONFIRMATION fromCache BOOLEAN FIXED
+   Now: call1 (hard miss) → fromCache:false ; call2 (fresh hit) → fromCache:true.
+   Never null. X-Cache header stays MISS when false / HIT when true (same source
+   value). Unit test asserts typeof === 'boolean' on both paths.
+
+6. TESTS RUN
+   node --check src/routes/matches.js                      -> OK
+   node --check src/lib/redis.js                           -> OK
+   node --check src/workers/handlers/match-list.handler.js -> OK
+   npm test (node --test src/**/*.test.js)                 -> 64/64 pass, 0 fail
+     (63 prior + 1 new fromCache-boolean regression test).
+   flutter analyze lib/   -> No issues found.
+   flutter test           -> 38 passed.
+   flutter build apk --release --target-platform android-arm64 -> built
+     app-release.apk (32.8MB). No Flutter code changed.
+
+7. VPS VERIFICATION COMMANDS  (run AFTER deploy)
+   redis-cli DEL matches:live
+   curl -s -D /tmp/h1 "${H[@]}" https://api.webcrichd.co/matches/live -o /tmp/b1.json
+   grep -i x-cache /tmp/h1 ; jq '.fromCache,(.data|length)' /tmp/b1.json ; redis-cli TTL matches:live
+   curl -s -D /tmp/h2 "${H[@]}" https://api.webcrichd.co/matches/live -o /tmp/b2.json
+   grep -i x-cache /tmp/h2 ; jq '.fromCache,(.data|length)' /tmp/b2.json ; redis-cli TTL matches:live
+   EXPECT: call1 X-Cache MISS / fromCache false / data>0 / TTL 12;
+           call2 X-Cache HIT  / fromCache true  / data>0 / TTL <=12. Never null.
+
+8. CAN MATCH-DETAIL SWR BE APPROVED?
+   Only AFTER this fix is verified GREEN on the VPS (call2 fromCache:true, never
+   null). Once green, the four list/score SWR routes (live-line, scorecard,
+   commentary, matches:live) are all confirmed and match detail (/match/:id,
+   ttl 15 + window 5) is the LAST route. PRE-WORK before wiring it: its key
+   match:{id}:live is read by several sites (e.g. /innings reads matchLive,
+   live-center, workers) — run the same shared-key sweep (every writer →
+   envelope, every reader → unwrap) FIRST to avoid the clobber pattern. STILL
+   DEFERRED: TTL 8s->5s, PM2 cluster, WebSocket/SSE, analytics, remote assets.
+
+================================================================================
+END MATCHES LIVE SWR RESPONSE SHAPE FIX
+================================================================================
+
+================================================================================
+MATCH DETAIL SWR FINAL ROUTE IMPLEMENTATION  (2026-06-13)
+================================================================================
+
+matches:live SWR verified GREEN on VPS (DEL matches:live; call1 X-Cache MISS /
+fromCache false / data 2 / TTL 12; call2 X-Cache HIT / fromCache true / data 2 /
+TTL 12). Verified SWR routes: live-line, scorecard, commentary, matches:live --
+NONE touched again. Extended SWR to the match detail route ONLY (/match/:id),
+the LAST route. Key match:{id}:live is shared by several sites, so the shared-key
+sweep was done FIRST and every writer now writes the envelope / every reader
+unwraps.
+
+1. FILES CHANGED
+   - src/lib/redis.js
+       SWR_WINDOW.MATCH_DETAIL = 5 added (LIVE_LINE/SCORECARD/COMMENTARY/
+       LIVE_LIST entries unchanged).
+   - src/routes/matches.js
+       * GET /match/:id rewired to cacheGetOrFetchSWR. Removed the preHandler
+         cacheMiddleware on THIS route only (plain cacheGet reads the SWR
+         envelope as raw data + short-circuits with {success,data,cache} shape).
+         X-Cache set manually in the handler from fromCache.
+       * NEW helper isInvalidMatchDetailPayload(data) -- conservative validity
+         guard; fetchFn returns null on clearly-empty detail so SWR never caches
+         broken data.
+       * GET /match/:id/innings reader: cacheGet(...) -> unwrapSWR(cacheGet(...))
+         so it reads the real detail object (was treating envelope as data ->
+         match.innings undefined).
+       * GET /match/:id/live-center inner detail fetch: cacheGetOrFetch ->
+         cacheGetOrFetchSWR (same TTL.LIVE_SCORE + SWR_WINDOW.MATCH_DETAIL,
+         returns detail-or-null) so it shares the SAME envelope as the route and
+         cannot clobber it.
+   - src/workers/handlers/live-score.handler.js
+       * read: cacheGet(KEYS.matchLive)            -> unwrapSWR(cacheGet(...))
+       * write: cacheSet(...TTL.LIVE_SCORE)         -> cacheSetSWR(...TTL.LIVE_SCORE,
+                                                       SWR_WINDOW.MATCH_DETAIL)
+       * imports: cacheSetSWR, unwrapSWR, SWR_WINDOW added (cacheSet kept for the
+         separate match:{id}:info key write; cacheGet kept). pub/sub diff logic
+         unchanged.
+   - src/lib/redis.test.js
+       + 4 match-detail SWR tests (invalid/null not cached; valid detail cached
+         as envelope + HIT on 2nd call; physical TTL 20; worker envelope read
+         back unwrapped).
+
+2. MATCH DETAIL ROUTE WIRED
+   const { data, fromCache } = await cacheGetOrFetchSWR(
+     KEYS.matchLive(id), TTL.LIVE_SCORE, SWR_WINDOW.MATCH_DETAIL,
+     async () => {
+       const result = await providerManager.execute('getMatchInfo', id);
+       return isInvalidMatchDetailPayload(result?.data) ? null : result.data;
+     });
+   if (data) {
+     reply.header('X-Cache', fromCache ? 'HIT' : 'MISS');
+     const summary = await streamSummaryForMatch(id);
+     return { success: true, data: { ...data, ...summary } };
+   }
+   On a hard-miss provider error the existing try/catch falls through to the
+   SAME 5 fallbacks as before (matchHeader -> cached summary -> active schedule
+   -> manual match -> minimal valid response), so behavior on failure is
+   unchanged (never 404). Background refresh runs via runDeduped inside the SWR
+   helper; bg errors logged, never thrown.
+
+3. TTL UNCHANGED
+   TTL.LIVE_SCORE = 15 (untouched). No TTLs changed anywhere. live-line/
+   scorecard/commentary/matches:live TTLs all unchanged.
+
+4. STALE WINDOW USED
+   SWR_WINDOW.MATCH_DETAIL = 5. (Wider than the 3s on score routes -- match
+   detail tolerates a slightly larger window; still <= ttl, tight.)
+
+5. MAX SERVED AGE
+   15 + 5 = 20s. Physical Redis TTL = 20 (redis-cli TTL match:<id>:live <= 20).
+
+6. CACHE KEY READERS/WRITERS CHECKED  (match:{id}:live / KEYS.matchLive)
+   Searched matchLive / match:*:live / TTL.LIVE_SCORE. All sites unified:
+     - /match/:id route             -> cacheGetOrFetchSWR  (envelope R/W)   [SWR]
+     - /match/:id/live-center fetch -> cacheGetOrFetchSWR  (envelope R/W)   [SWR, fixed]
+     - /match/:id/innings reader    -> unwrapSWR(cacheGet) (envelope-safe)  [fixed]
+     - live-score worker read       -> unwrapSWR(cacheGet) (envelope-safe)  [fixed]
+     - live-score worker write      -> cacheSetSWR         (envelope)       [fixed]
+     - admin streams invalidate     -> redis.del           (format-agnostic)[no change]
+     - cache-cleaner.handler        -> scan + ttl + expire (format-agnostic)[no change]
+   No plain cacheSet remains on match:{id}:live. Single-writer-format invariant
+   holds: every writer stores an envelope, every reader unwraps -> no shared-key
+   clobber (the bug scorecard originally hit). NOTE: the worker second write
+   cacheSet(KEYS.matchInfo, ...) is a DIFFERENT key (match:{id}:info, not SWR)
+   and is deliberately left plain.
+
+7. VALIDATION BEHAVIOR
+   New isInvalidMatchDetailPayload(data): invalid when !data / not an object /
+   has none of (match_id|matchId, status, team1/team2 name|short_name). fetchFn
+   (route + live-center) returns null on invalid -> SWR skips the cache write, so
+   broken/empty match detail is never cached or served stale. Conservative on
+   purpose -- only clearly-empty payloads are rejected, so finished/preview
+   matches still cache. Unit test added.
+
+8. RESPONSE SHAPE UNCHANGED
+   Success path still returns { success:true, data:{ ...detail, ...streamSummary } }.
+   The route did NOT previously expose a top-level fromCache, so none was added
+   (shape byte-identical for Flutter); fromCache is consumed internally only to
+   set the X-Cache header. All normalized match-detail fields, stream gating
+   fields (hasLiveStream, watchLiveEnabled, streamCount, isPremiumStreamAvailable,
+   streamBadgeText, defaultStreamId, streams) from streamSummaryForMatch, and
+   team/logo/player/provider fields are preserved -- only the RAW provider detail
+   is SWR-cached; the stream summary is merged per-request, never cached. Manual
+   match behavior preserved: the manual/test-match path is Fallback 5 (unchanged)
+   and runs per-request, not through the SWR cache.
+
+9. TESTS RUN
+   node --check src/lib/redis.js                           -> OK
+   node --check src/routes/matches.js                      -> OK
+   node --check src/workers/handlers/live-score.handler.js -> OK
+   npm test (node --test src/**/*.test.js)                 -> 68/68 pass, 0 fail
+     (64 prior + 4 new match-detail SWR tests).
+   flutter analyze lib/   -> No issues found.
+   flutter test           -> 38 passed.
+   flutter build apk --release --target-platform android-arm64 -> built
+     app-release.apk (33.0MB). No Flutter code changed (response shape stable).
+
+10. ROLLBACK STEPS (one route)
+    Revert /match/:id in src/routes/matches.js to the cacheGetOrFetch +
+    preHandler cacheMiddleware version, revert the /live-center detail fetch to
+    cacheGetOrFetch, revert /innings reader to plain cacheGet, revert
+    live-score.handler.js to cacheGet/cacheSet, and (optionally) drop
+    SWR_WINDOW.MATCH_DETAIL from src/lib/redis.js + remove
+    isInvalidMatchDetailPayload. live-line/scorecard/commentary/matches:live are
+    independent and unaffected. No data migration; SWR envelopes auto-evict
+    within 20s.
+      git checkout -- src/routes/matches.js src/lib/redis.js \
+                      src/workers/handlers/live-score.handler.js
+    then pm2 reload cricket-api (and cricket-workers if separate -- the worker
+    write format changed, so restart workers too).
+
+11. FINAL SWR ROUTE SUMMARY  (ALL routes now SWR-backed)
+     ROUTE                       TTL  WINDOW  MAX AGE  KEY
+     /match/:id/live-line          5      3      8s    match:{id}:live-line
+     /match/:id/scorecard          5      3      8s    match:{id}:scorecard
+     /match/:id/commentary         5      3      8s    match:{id}:commentary
+     /matches/live                 8      4     12s    matches:live
+     /match/:id  (match detail)   15      5     20s    match:{id}:live   <-- final
+   All five share the same SWR helper (cacheGetOrFetchSWR + runDeduped dedupe +
+   physical-TTL auto-evict + single-writer-envelope invariant). SWR rollout
+   COMPLETE.
+
+   VPS DEPLOY COMMANDS
+     cd /path/to/cricket-api
+     git pull
+     pm2 reload cricket-api
+     pm2 reload cricket-workers      # worker write format changed -- restart too
+
+   PRODUCTION VERIFICATION COMMANDS  (run AFTER deploy, on the box)
+     redis-cli DEL match:159941:live
+     curl -s -D /tmp/h1 "${H[@]}" https://api.webcrichd.co/match/159941 -o /tmp/b1.json
+     grep -i x-cache /tmp/h1 ; jq '.success,(.data.match_id)' /tmp/b1.json ; redis-cli TTL match:159941:live
+     curl -s -D /tmp/h2 "${H[@]}" https://api.webcrichd.co/match/159941 -o /tmp/b2.json
+     grep -i x-cache /tmp/h2 ; jq '.success,(.data.match_id)' /tmp/b2.json ; redis-cli TTL match:159941:live
+     EXPECT: call1 X-Cache MISS / TTL 20 ; call2 X-Cache HIT / TTL <=20 ; data
+     identical (match_id, teams, status, streams) on both.
+
+   STILL DEFERRED (unchanged): TTL 8s->5s, PM2 cluster, WebSocket/SSE, analytics,
+   remote assets.
+
+================================================================================
+END MATCH DETAIL SWR SECTION
+================================================================================
+
+================================================================================
+MATCH DETAIL SWR RESPONSE SHAPE FIX  (2026-06-13)
+================================================================================
+
+VPS showed /match/159941 working EXCEPT top-level fromCache was null (call1
+X-Cache MISS / fromCache null / match_id 159941 / TTL 20; call2 X-Cache HIT /
+fromCache null / match_id 159941 / TTL 19). SWR + physical TTL + X-Cache all
+correct; only the JSON field was missing. Fixed the response shape ONLY. No
+SWR/TTL/logic change.
+
+1. ROOT CAUSE
+   BODY OMITTED THE FIELD. The /match/:id handler computed `fromCache` from
+   cacheGetOrFetchSWR and used it for the X-Cache header, but every return path
+   returned { success, data } WITHOUT fromCache, so the client saw the field as
+   absent -> null. (Unlike the matches:live bug, there was NO response-schema
+   strip here: the /match/:id route schema declares only description/tags/params,
+   no `response` block, so fast-json-stringify does not filter the body. The
+   single fix was adding the field to the body.) X-Cache was correct all along
+   because it is a header, not serialized through any schema; the helper always
+   returns a boolean fromCache (false on hard miss, true on fresh/stale hit), so
+   the value itself was never the issue -- it just was not forwarded.
+
+2. FILES CHANGED
+   - src/routes/matches.js  (/match/:id ONLY)
+       * SWR success path: return { success:true, data:{...detail,...summary},
+         fromCache }  (the boolean from cacheGetOrFetchSWR).
+       * All 5 non-cache fallbacks (matchHeader, cached summary, active schedule,
+         manual match, minimal last-resort) now return fromCache: false, so the
+         field is ALWAYS a boolean, never absent/null on any path.
+   - src/lib/redis.test.js
+       + test: match-detail fromCache is a strict boolean (false on miss, true on
+         hit), never null -- regression guard for this exact bug.
+   No other route, no helper, no worker, no TTL, no SWR window, no schema touched.
+   No preHandler cacheMiddleware involved (already removed in the prior step;
+   X-Cache is set manually). data shape itself unchanged.
+
+3. TTL STILL PHYSICAL 20
+   Unchanged. TTL.LIVE_SCORE = 15, SWR_WINDOW.MATCH_DETAIL = 5, physical Redis
+   TTL = 15 + 5 = 20. This fix touched only the return body; the
+   cacheGetOrFetchSWR call args are byte-identical.
+
+4. DATA SHAPE UNCHANGED
+   `data` is still { ...providerDetail, ...streamSummaryForMatch(id) }. All
+   normalized match-detail fields, stream gating fields (hasLiveStream,
+   watchLiveEnabled, streamCount, isPremiumStreamAvailable, streamBadgeText,
+   defaultStreamId, streams), and team/logo/player/provider fields preserved.
+   Manual match behavior preserved (Fallback 5, per-request, unchanged). Only an
+   additive top-level `fromCache` boolean was added alongside `data` -- exactly
+   like the matches:live shape fix.
+
+5. fromCache BOOLEAN FIXED
+   Now: call1 (hard miss) -> fromCache:false ; call2 (fresh hit) -> fromCache:true.
+   Never null on any path (fallbacks return false). X-Cache header stays MISS when
+   false / HIT when true (same source value). Unit test asserts typeof ===
+   'boolean' on both paths.
+
+6. TESTS RUN
+   node --check src/routes/matches.js   -> OK
+   node --check src/lib/redis.js        -> OK
+   npm test (node --test src/**/*.test.js) -> 69/69 pass, 0 fail
+     (68 prior + 1 new fromCache-boolean regression test).
+   flutter analyze lib/   -> No issues found.
+   flutter test           -> 38 passed.
+   flutter build apk --release --target-platform android-arm64 -> built
+     app-release.apk (33.0MB). No Flutter code changed (fromCache additive).
+
+7. VPS VERIFICATION COMMANDS  (run AFTER deploy)
+   redis-cli DEL match:159941:live
+   curl -s -D /tmp/h1 "${H[@]}" https://api.webcrichd.co/match/159941 -o /tmp/b1.json
+   grep -i x-cache /tmp/h1 ; jq '.fromCache,(.data.match_id)' /tmp/b1.json ; redis-cli TTL match:159941:live
+   curl -s -D /tmp/h2 "${H[@]}" https://api.webcrichd.co/match/159941 -o /tmp/b2.json
+   grep -i x-cache /tmp/h2 ; jq '.fromCache,(.data.match_id)' /tmp/b2.json ; redis-cli TTL match:159941:live
+   EXPECT: call1 X-Cache MISS / fromCache false / match_id 159941 / TTL 20;
+           call2 X-Cache HIT  / fromCache true  / match_id 159941 / TTL <=20.
+           fromCache never null.
+
+8. ALL SWR PHASES COMPLETE?
+   PENDING this fix's VPS verification (call2 fromCache:true, never null). Once
+   GREEN, all five SWR routes are confirmed and the SWR rollout is COMPLETE:
+     /match/:id/live-line   (ttl 5  + win 3  = 8s)
+     /match/:id/scorecard   (ttl 5  + win 3  = 8s)
+     /match/:id/commentary  (ttl 5  + win 3  = 8s)
+     /matches/live          (ttl 8  + win 4  = 12s)
+     /match/:id             (ttl 15 + win 5  = 20s)  <-- final
+   STILL DEFERRED (unchanged): TTL 8s->5s, PM2 cluster, WebSocket/SSE, analytics,
+   remote assets.
+
+================================================================================
+END MATCH DETAIL SWR RESPONSE SHAPE FIX
+================================================================================

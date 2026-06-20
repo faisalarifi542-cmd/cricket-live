@@ -1,0 +1,163 @@
+================================================================================
+REMOTE ASSETS ADMIN PLAN
+Generated: 2026-06-12
+================================================================================
+
+GOAL
+----
+Move large decorative assets to Admin/CDN. Reduce APK size. Allow hot-swap
+without app update. Keep offline/fallback assets bundled.
+
+CURRENT STATE
+-------------
+APK: 52M. Assets folder contains:
+  - assets/images/home/          ~15+ large PNGs (stadium, hero, carousel bgs)
+  - assets/images/live_stream/   backgrounds, overlays, icons
+  - assets/images/match_*/       match card backgrounds
+  - assets/images/series_*/      series hero backgrounds
+  - assets/images/player_*/      player/team placeholder images
+  - assets/fonts/                (keep bundled)
+  - assets/images/app_icon/      (keep bundled)
+  - assets/images/splash/        (keep bundled)
+
+ASSETS TO KEEP BUNDLED (never remote)
+--------------------------------------
+  - App icon / launcher icon
+  - Splash screen assets
+  - Offline/error illustration (wifi_off already uses Flutter icon)
+  - Team/player placeholder avatars (small, used when network fails)
+  - Core UI icons used everywhere (SVGs in live_stream/icons/ are small, keep)
+  - Font files
+  - Any asset < 10KB used in critical offline UI
+
+ASSETS SAFE TO MOVE TO CDN
+----------------------------
+Key                              Current path
+-------------------------------  --------------------------------------------------
+home_hero_bg_dark                assets/images/home/home_fullscreen_stadium_bg.png
+home_hero_bg_light               (no light variant exists yet)
+home_featured_card_bg            assets/images/home/home_glass_card_overlay.png
+live_player_bg_dark              assets/images/live_stream/backgrounds/live_screen_dark_background.png
+live_player_bg_light             (none, now hidden in light mode — can add remote)
+live_feature_strip_glass_dark    assets/images/live_stream/overlays/feature_strip_glass.png
+live_secure_card_glass_dark      assets/images/live_stream/overlays/secure_info_card_glass.png
+live_cyan_radial_glow            assets/images/live_stream/overlays/cyan_radial_glow.png
+match_card_live_bg               assets/images/match_card/match_card_live_bg.png (if exists)
+match_card_upcoming_bg           assets/images/match_card/match_card_upcoming_bg.png
+series_hero_bg                   assets/images/series/series_hero_bg.png (if exists)
+stadium_bg_generic               any stadium decorative background
+
+PHASE A — Backend (cricket-api)
+---------------------------------
+1. Create DB table: app_assets
+   Columns:
+     id          SERIAL PRIMARY KEY
+     asset_key   VARCHAR(100) UNIQUE NOT NULL
+     url         TEXT NOT NULL
+     theme       VARCHAR(10) DEFAULT 'both'  -- 'light'|'dark'|'both'
+     version     VARCHAR(40)                 -- hash or semver
+     active      BOOLEAN DEFAULT true
+     created_at  TIMESTAMP DEFAULT now()
+     updated_at  TIMESTAMP DEFAULT now()
+
+2. Migration file: cricket-api/migrations/xxx_create_app_assets.sql
+
+3. Endpoints:
+   GET  /app/assets          — public, no auth, returns active assets array
+   POST /admin/assets        — admin auth, create/update asset
+   PUT  /admin/assets/:key   — admin auth, update by key
+   DEL  /admin/assets/:key   — admin auth, deactivate (soft delete)
+
+4. Response shape:
+   {
+     "assets": [
+       {
+         "key": "home_hero_bg_dark",
+         "url": "https://cdn.example.com/assets/home_hero_dark_v2.png",
+         "theme": "dark",
+         "version": "abc123",
+         "updatedAt": "2026-06-12T10:00:00Z"
+       }
+     ]
+   }
+
+5. Include assets in /app/config response optionally for single-request init.
+
+PHASE B — Admin Panel (admin-panel)
+-------------------------------------
+1. New page: /assets (App Assets)
+2. Components:
+   - Asset grid/table with:
+     * asset_key (read-only)
+     * theme variant (light/dark/both chip)
+     * current preview thumbnail (img from url)
+     * recommended dimensions label
+     * active toggle
+     * last updated timestamp
+     * upload/replace button → opens file picker → uploads to CDN/storage → saves URL
+   - Upload flow:
+     * Accept: PNG, JPG, WebP
+     * Max size: 2MB per asset
+     * Show preview before save
+     * Auto-generate version hash from file content
+3. Predefined asset keys with recommended dimensions:
+   Key                           Dimensions
+   home_hero_bg_dark             1080x600 (full bleed, dark)
+   home_hero_bg_light            1080x600 (full bleed, light)
+   live_player_bg_dark           1080x1920 (full screen)
+   live_player_bg_light          1080x1920 (full screen)
+   live_feature_strip_glass_dark 1080x200 (card overlay)
+   live_secure_card_glass_dark   1080x120 (card overlay)
+   live_cyan_radial_glow         800x800 (glow orb)
+   match_card_live_bg            800x300 (card bg)
+   match_card_upcoming_bg        800x300 (card bg)
+   series_hero_bg                1080x400 (hero)
+
+PHASE C — Flutter (lib/)
+--------------------------
+1. New file: lib/services/remote_assets_service.dart
+   - Fetches GET /app/assets on startup
+   - Stores Map<String, RemoteAsset> in memory
+   - Persists to local SharedPreferences/Hive as JSON (offline cache)
+   - Exposes: RemoteAssetsService.of(context).url(key, theme)
+
+2. New widget: RemoteOrLocalImage
+   - Takes: assetKey, localFallback, fit, ...
+   - Checks RemoteAssetsService for URL
+   - If found: CachedNetworkImage (already used in app or add package)
+   - If not found or fails: Image.asset(localFallback)
+   - Respects light/dark theme variant
+
+3. Replace current hardcoded Image.asset calls for movable assets:
+   Before:
+     Image.asset('assets/images/live_stream/backgrounds/live_screen_dark_background.png')
+   After:
+     RemoteOrLocalImage(
+       assetKey: 'live_player_bg_dark',
+       localFallback: 'assets/images/live_stream/backgrounds/live_screen_dark_background.png',
+     )
+
+4. Asset versioning/cache busting:
+   - CachedNetworkImage cacheKey = '${key}_${version}'
+   - On version change → stale cache auto-evicted
+
+PHASE D — Archival (after QA passes)
+--------------------------------------
+1. Run visual QA on all screens with remote assets loaded
+2. Confirm fallback works when remote fails
+3. Archive bundled asset originals to: archived/remote-replaced-assets/
+4. Remove from pubspec.yaml flutter.assets only after QA sign-off
+5. Expected APK reduction: ~8-15MB (large PNGs removed from bundle)
+
+RISK
+----
+LOW  — Flutter: additive change, bundled fallbacks stay until removed
+MED  — Backend: new table + endpoints, needs migration + deploy
+LOW  — Admin: new UI page only, no existing pages affected
+
+DO NOT IMPLEMENT until:
+  1. This plan is reviewed and approved
+  2. Phase 1 + 2 Flutter fixes are verified on device
+  3. Backend migration slot is available
+
+================================================================================

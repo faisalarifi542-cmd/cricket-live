@@ -1,0 +1,280 @@
+================================================================================
+LIVE_SCORE_SWR_FIX_REPORT
+Stale live score after SWR — investigation (Phase 1, read-only)
+Date: 2026-06-13
+Branch: phase4-remote-assets-archiving
+================================================================================
+
+SCOPE OF INVESTIGATION
+----------------------
+Read backend cache/SWR + routes + provider classification, and the REAL Flutter
+polling/repository/screen code (note: cricket-api/lib is the BACKEND tree; the
+Flutter app lives in /lib at repo root — an earlier search tool looked at the
+wrong tree, so every Flutter finding below was re-verified directly).
+
+Backend files read:
+  cricket-api/src/lib/redis.js            (SWR helper, TTL, SWR_WINDOW, dedupe)
+  cricket-api/src/lib/data-control.js     (controlledFetch / providerFetch)
+  cricket-api/src/middleware/cache.js     (cacheMiddleware preHandler + onSend)
+  cricket-api/src/routes/matches.js       (/matches/live, /match/:id, scorecard,
+                                           commentary, overs, live-center)
+  cricket-api/src/routes/app.js           (/app/home, /app/match/:id, /app/config)
+  cricket-api/src/providers/cricbuzz/normalizer.js  (status classification)
+  cricket-api/src/lib/match-index.js
+  cricket-api/src/workers/handlers/*.handler.js
+  cricket-api/src/server.js, src/middleware/security.js, src/config/index.js
+
+Flutter files read:
+  lib/core/api/api_client.dart
+  lib/services/cricket_api_service.dart
+  lib/repositories/cricket_repository.dart
+  lib/screens/home/home_screen.dart
+  lib/screens/matches/matches_screen.dart
+  lib/screens/match_details/match_details_screen.dart
+  lib/models/cricket_match.dart
+
+
+================================================================================
+1. CURRENT SWR / CACHE IMPLEMENTATION SUMMARY
+================================================================================
+SWR helper: cricket-api/src/lib/redis.js  →  cacheGetOrFetchSWR(key, ttl,
+staleWindow, fetchFn).
+  - Value stored as envelope { __swr__:true, v:<data>, f:<freshUntilMs> } with a
+    PHYSICAL Redis TTL of (ttl + staleWindow). So Redis itself evicts anything
+    older than ttl+window — nothing older can ever be served.
+  - age < ttl                 → fresh hit, return cached, no fetch.
+  - ttl <= age < ttl+window   → return STALE immediately + schedule ONE
+                                 background refresh (deduped via runDeduped),
+                                 never awaited.
+  - age >= ttl+window / miss  → block + fetch fresh.
+  - Background refresh DOES write back to Redis:
+        runDeduped(`swr:${key}`, async () => {
+          const fresh = await fetchFn();
+          if (fresh) await setFn(key, {__swr__,v:fresh,f:now+ttl*1000}, physicalTtl);
+        });
+    The `if (fresh)` guard means a null/failed provider result NEVER overwrites
+    good cache (no error-as-empty). Background errors are caught + logged, not
+    thrown.  → This part is CORRECT.
+
+In-flight dedupe: runDeduped(key, producer) (redis.js). Holds a single promise
+per key only for the duration of the active fetch, deletes in finally on resolve
+AND throw. Does NOT cache a stale promise across time. → CORRECT.
+
+A SEPARATE, OLDER cache path also exists: data-control.js controlledFetch().
+This is what /app/home and /app/match/:id use (NOT the SWR helper). It computes:
+        staleUntil = now + Math.max(ttl * 4, 60) * 1000      (data-control.js:201)
+i.e. it will serve stale data for up to max(ttl*4, 60) seconds.
+
+
+================================================================================
+2. CURRENT TTLs (seconds)
+================================================================================
+SWR routes (redis.js TTL + SWR_WINDOW), served by /match/:id*, /matches/live:
+  LIVE_LIST       8  + window 4   = max served age 12s     (/matches/live)
+  LIVE_SCORE      15 + window 5   = max served age 20s     (/match/:id)
+  SCORECARD       5  + window 3   = max served age 8s       (/match/:id/scorecard)
+  COMMENTARY      5  + window 3   = max served age 8s       (/match/:id/commentary)
+  LIVE_CENTER_LIVE 4 (live)       / LIVE_CENTER_DONE 600    (/match/:id/live-center)
+  LIVE_LINE       5  + window 3   = 8s                       (/match/:id/live-line)
+  MATCH_OVERS     5  (plain cacheMiddleware, NOT SWR)        (/match/:id/overs)
+  UPCOMING        300   RECENT 120
+
+data-control routes (controlledFetch, stale ceiling = max(ttl*4,60)s):
+  /app/home       ttl 30  → STALE UP TO 120s
+  /app/match/:id  ttl 10  → STALE UP TO 60s
+  /app/config     long / immutable (fine)
+
+Provider poll intervals (config/index.js): live 3s, commentary 5s, scorecard 10s,
+upcoming 300s. Workers refresh Redis independently of requests.
+
+
+================================================================================
+3. WHICH ENDPOINTS RETURN STALE DATA TOO LONG
+================================================================================
+- SWR live endpoints (/matches/live, /match/:id, scorecard, commentary,
+  live-center, live-line): NOT the long-stale culprit. Physical Redis eviction
+  caps them at 8–20s. These are fine.
+- /app/home (controlledFetch): up to 120s stale. The Home screen's FEATURED feed
+  (_feedFuture / hero) reads this. Home LIVE match cards read /matches/live (12s,
+  fine), but the featured/hero block can lag up to ~120s.  → TOO LONG for live.
+- /app/match/:id (controlledFetch): up to 60s stale. NOTE the Flutter app does
+  NOT use this for match detail (it uses the SWR /match/:id). Low impact today,
+  but the ceiling is still too high for a live match.
+
+
+================================================================================
+4. DOES BACKGROUND REFRESH ACTUALLY UPDATE REDIS?
+================================================================================
+YES for the SWR helper (redis.js): the deduped background task calls fetchFn then
+setFn(...) with the new envelope and a fresh freshUntil. Verified in code. The
+`if (fresh)` guard prevents clobbering good data with empty/error.
+Workers (live-score / scorecard / commentary / match-list handlers) also write
+SWR envelopes via cacheSetSWR / cacheSet, refreshing Redis on their own timers
+independent of user requests.
+→ No backend "background refresh silently does nothing" bug on SWR routes.
+
+
+================================================================================
+5. DOES FLUTTER AUTOMATIC POLLING BYPASS CACHE OR KEEP STALE CACHE?
+================================================================================
+Repository (lib/repositories/cricket_repository.dart) holds an in-memory TTL
+cache via _cached(key, ttl, fetch, {forceRefresh}). Key logic (lines 313-346):
+    if (!forceRefresh && cached != null && cached.expiresAt.isAfter(now))
+        return cached.value;          // serve memory cache
+    if (forceRefresh) _cache.remove(key);   // drop, always go to network
+    ... fetch() ... _cache[key] = entry ...
+
+Automatic polling passes forceRefresh: TRUE everywhere:
+  - home_screen _silentPoll() → _loadTabMatches(forceRefresh: true)  (line 385)
+  - match_details _silentPollLiveMatch() → matchDetail(forceRefresh:true) +
+    _loadTab(tab, forceRefresh:true)  (lines 282-285)
+  - matches_screen _silentPollVisibleTab() → matchesForTab(forceRefresh:true)
+→ Automatic polling does NOT serve stale memory cache. It hits the network every
+  tick, same path as pull-to-refresh.  (This CONTRADICTS the original hypothesis
+  that polling reuses stale memory cache.)
+
+
+================================================================================
+6. DOES PULL-TO-REFRESH USE A DIFFERENT REQUEST PATH THAN AUTO POLLING?
+================================================================================
+NO. Both call the same repository methods with forceRefresh: true → same
+_cached() force path → same network call. There is no second code path that
+would explain "pull works, auto doesn't" at the request level.
+The difference is WHEN each runs (see #7) — pull-to-refresh ALSO calls
+_configurePolling() again, which RESTARTS a timer that auto-poll had cancelled.
+
+
+================================================================================
+7. DOES POLLING STOP WHEN SCREEN IS IDLE?  (THE REAL BUG)
+================================================================================
+Polling does NOT stop on idle/scroll. It stops in two situations:
+
+  (a) App lifecycle: match_details didChangeAppLifecycleState cancels the timer
+      on paused/inactive/detached and re-arms on resumed via _configurePolling.
+      This is correct behaviour.
+
+  (b) *** Match status is read as NOT live → timer is cancelled and never
+      re-armed automatically. *** This is the core defect.
+
+      match_details _configurePolling(matchData):
+          final shouldPoll = _isLiveMatchData(matchData);
+          if (!shouldPoll) { _pollTimer?.cancel(); _pollTimer = null; return; }
+
+      _isLiveMatchData() (match_details_screen.dart:345) and
+      CricketMatch.isLive (cricket_match.dart:112) only count:
+          status == 'live' / 'in_progress' / 'inprogress' / 'progress'
+
+      But the BACKEND emits status == 'innings_break' between innings
+      (normalizer.js:839  "innings"/"break" → 'innings_break'; matches.js live
+      filter explicitly treats 'innings_break' as live at line 24). It also emits
+      rain-delay/tea/drinks/stumps as 'live' only when miniscore exists, else
+      they can surface as non-live transient states.
+
+      Consequence: the moment a match enters an innings break (or any non-'live'
+      live-ish state), Flutter sets shouldPoll=false, cancels the poll timer, and
+      NOTHING re-arms it. When play resumes the backend flips back to 'live', but
+      the app is no longer polling, so it never discovers the change. The score
+      then "sticks" until the user pulls to refresh — which calls
+      _refreshCurrentTab() → _configurePolling() and restarts the timer.
+
+      THIS EXACTLY MATCHES the report: "score does not update unless user pulls
+      to refresh; sometimes user does not touch the screen and score stays stale."
+
+Also: a live match that briefly returns an empty/again-upcoming payload on one
+poll would flip shouldPoll off the same way.
+
+
+================================================================================
+8. ROOT CAUSE OF STALE-SCORE BUG (ranked)
+================================================================================
+RC-1 (PRIMARY, Flutter): innings_break / non-'live' live states are not treated
+  as live. Match-Details polling timer is cancelled and never re-armed, so the
+  Live tab + score freeze until manual pull-to-refresh.
+  Files: lib/screens/match_details/match_details_screen.dart:247,269,345 ;
+         lib/models/cricket_match.dart:112.
+
+RC-2 (Flutter): once any poll tick throws (transient network) OR status reads
+  non-live, the timer is set to null with no self-healing watchdog. Only app
+  foreground or pull-to-refresh restarts it. A single hiccup can permanently
+  stop live updates for that screen session.
+  Files: match_details_screen.dart:310-317 (catch cancels timer),
+         home_screen.dart:398-401 (same pattern).
+
+RC-3 (Backend, Home featured only): /app/home via controlledFetch serves up to
+  120s stale (data-control.js:201, ttl 30 → max(ttl*4,60)=120). Home LIVE cards
+  are fine (/matches/live, 12s) but the featured/hero block lags.
+  /app/match/:id similarly 60s (not currently used by app).
+
+RC-4 (Backend, hardening): live SWR endpoints set NO `Cache-Control: no-store`
+  response header (matches.js sets only X-Cache). No long max-age is set either,
+  so this is not currently serving minutes-old data, BUT any future CDN/proxy or
+  the OkHttp/Dio layer could cache live responses. Should be explicit no-store.
+
+RC-5 (Minor, Flutter): Match-Details auto-poll only refreshes the visible tab
+  when tab index <= 3. Commentary (tab 4) and Overs (tab 5) do not auto-refresh
+  their own payload during polling (match_details_screen.dart:289 `if (currentTab
+  <= 3)`), so those two tabs can show stale data while live.
+
+RC-6 (Minor, Flutter): _isLiveMatchData also gates the INITIAL poll arm in
+  _loadSummary → _configurePolling. If the very first detail payload arrives
+  during an innings break, polling never starts at all for that visit.
+
+
+================================================================================
+9. FILES INVOLVED
+================================================================================
+Backend:
+  cricket-api/src/lib/data-control.js        (line 201 stale ceiling — RC-3)
+  cricket-api/src/lib/redis.js               (TTL/SWR — already correct)
+  cricket-api/src/routes/matches.js          (add no-store headers — RC-4)
+  cricket-api/src/routes/app.js              (/app/home stale — RC-3, no-store)
+  cricket-api/src/providers/cricbuzz/normalizer.js (status source — reference)
+
+Flutter:
+  lib/screens/match_details/match_details_screen.dart (RC-1, RC-2, RC-5, RC-6)
+  lib/screens/home/home_screen.dart                    (RC-2 watchdog)
+  lib/screens/matches/matches_screen.dart              (RC-2 watchdog)
+  lib/models/cricket_match.dart                        (RC-1 isLive)
+
+
+================================================================================
+10. FIX PLAN
+================================================================================
+PHASE 2 — Backend (deploy to VPS, restart PM2):
+  B1. data-control.js: lower live stale ceiling. For live payloads use a small
+      fixed stale window (e.g. 5s) instead of max(ttl*4,60). Keep long stale for
+      upcoming/completed. Drives /app/home featured freshness (RC-3).
+  B2. matches.js + app.js: set `Cache-Control: no-store` (or `no-cache,
+      max-age=0`) on all LIVE endpoints; keep existing long cache only on static
+      (/app-config, assets). (RC-4)
+  B3. Add structured debug logging on live routes: endpoint, matchId, cache key,
+      X-Cache status, cache age, provider fetch duration, classified status.
+  B4. Add safe response meta (fetchedAt, cacheAgeMs, cacheStatus, isLive) at the
+      envelope/meta level only — do NOT change existing data field shapes, so
+      Flutter models keep parsing.
+  Checks: node --check on changed files; npm test / node --test; npm run lint.
+
+PHASE 3 — Flutter (ship in app build):
+  F1. Treat 'innings_break' (and other live-ish states) as live. Add a single
+      shared classifier used by both CricketMatch.isLive and _isLiveMatchData:
+      live = status in {live,in_progress,inprogress,progress,innings_break} OR
+      (not finished AND has live miniscore). (Fixes RC-1, RC-6.)
+  F2. Self-healing poll watchdog: keep a lightweight timer that, while the screen
+      is foregrounded and the match is (or may be) live, re-arms polling even
+      after a transient failure or a temporary non-live read — instead of
+      cancelling permanently. Back off (not stop) on repeated network errors;
+      stop fully only when status is a TERMINAL state (completed/abandoned/
+      no_result). (Fixes RC-2.)
+  F3. Auto-refresh commentary (tab 4) and overs (tab 5) during live polling too,
+      at a safe interval. (Fixes RC-5.)
+  F4. Preserve tab + scroll (already done) — verify untouched.
+  Checks: flutter analyze lib/ ; flutter test.
+
+PHASE 4 — Long-name ellipsis (separate from stale bug).
+PHASE 5 — Release build check.
+
+Nothing in the SWR helper itself (redis.js) needs changing — it is correct.
+The "after SWR it broke" symptom is mostly RC-1/RC-2 on the Flutter side plus
+the older data-control stale ceiling on /app/home; the SWR rewrite is not the
+direct cause but coincided with the polling/status changes.
+================================================================================

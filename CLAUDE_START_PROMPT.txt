@@ -1,0 +1,11 @@
+First read `AGENTS.md`, `AI_PROJECT_INDEX.md`, and `AI_TASK_LOG.md` from the repo root.
+
+Use them as the project memory. Do not scan the whole repo first. Search only the smallest set of files needed for this task.
+
+After completing the task:
+1. Update `AI_TASK_LOG.md` with files changed, commands run, test results, and pending issues.
+2. Update `AI_PROJECT_INDEX.md` only if you discovered a new important file, route, table, design rule, deployment step, or bug history.
+3. Tell me clearly that the project memory files were updated.
+
+Now do this task:
+[PASTE TASK HERE]

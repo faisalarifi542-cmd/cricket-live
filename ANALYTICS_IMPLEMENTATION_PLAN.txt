@@ -1,0 +1,154 @@
+================================================================================
+ANALYTICS IMPLEMENTATION PLAN
+Generated: 2026-06-12
+================================================================================
+
+GOAL
+----
+Track real app usage. No Firebase dependency. Anonymous device/session IDs only.
+Privacy-safe. Batch events. Admin dashboard with date filters + charts.
+
+EVENTS TO TRACK
+---------------
+Event name           Payload fields
+-------------------  ----------------------------------------------------------
+app_open             device_id, app_version, platform, os_version, country(opt)
+session_start        session_id, device_id, app_version
+screen_view          screen_name, session_id, device_id
+match_open           match_id, match_status, session_id
+live_stream_open     match_id, stream_id, session_id
+quality_selected     quality_code, quality_label, match_id, session_id
+pull_refresh         screen_name, session_id
+retry_after_error    screen_name, error_type, session_id
+notification_open    notification_type, session_id
+rewarded_unlock      match_id, stream_id, session_id
+ad_impression        ad_type, placement, session_id (if ad SDK available)
+
+PRIVACY
+-------
+- device_id: random UUID generated on first launch, stored locally. NOT linked to IMEI/email/phone.
+- session_id: random UUID per app session (reset on app_open).
+- No names, emails, phone numbers, location (only country from IP if needed).
+- No cross-app tracking.
+- Events stored with timestamp only.
+
+PHASE A — Backend (cricket-api)
+---------------------------------
+1. DB tables:
+
+   analytics_events
+     id            BIGSERIAL PRIMARY KEY
+     event_name    VARCHAR(60) NOT NULL
+     device_id     VARCHAR(64)
+     session_id    VARCHAR(64)
+     payload       JSONB DEFAULT '{}'
+     created_at    TIMESTAMP DEFAULT now()
+     INDEX on (event_name, created_at)
+     INDEX on (device_id, created_at)
+
+   analytics_devices  (deduplicated devices = approximate installs)
+     device_id     VARCHAR(64) PRIMARY KEY
+     first_seen    TIMESTAMP DEFAULT now()
+     last_seen     TIMESTAMP
+     app_version   VARCHAR(20)
+     platform      VARCHAR(10)
+     os_version    VARCHAR(30)
+     country       VARCHAR(5)
+
+2. Endpoints:
+
+   POST /analytics/events
+     - Public (no user auth needed)
+     - Rate limited: 100 req/min per IP
+     - Body: { events: [ { event_name, device_id, session_id, payload, ts } ] }
+     - Batch: accept up to 50 events per request
+     - Returns: 204 No Content
+
+   GET /admin/analytics/summary?from=&to=
+     - Admin auth
+     - Returns: DAU, MAU, installs, top screens, top matches, stream opens
+
+   GET /admin/analytics/timeseries?metric=&from=&to=&granularity=day
+     - Admin auth
+     - Returns: [ { date, value } ] for charting
+
+   GET /admin/analytics/breakdown?dimension=&from=&to=
+     - Admin auth
+     - dimension: app_version | platform | country | quality
+
+3. Aggregation queries (SQL examples):
+   DAU: SELECT COUNT(DISTINCT device_id) FROM analytics_events
+        WHERE created_at >= NOW() - INTERVAL '1 day'
+   MAU: same with 30 days
+   Top screens: GROUP BY payload->>'screen_name' ORDER BY count DESC LIMIT 10
+   Stream opens: WHERE event_name = 'live_stream_open'
+
+PHASE B — Flutter (lib/)
+--------------------------
+1. New file: lib/services/analytics_service.dart
+   - Singleton AnalyticsService
+   - Generates/persists device_id (SharedPreferences)
+   - Generates session_id on app start
+   - Queue: List<AnalyticsEvent> _queue
+   - track(eventName, {Map payload}): adds to queue
+   - _flush(): sends batched events to POST /analytics/events
+   - Flush triggers: every 10 events OR every 30s OR on app background
+   - If offline: events stay in queue (max 200 events), sent on reconnect
+   - Never blocks UI (fire-and-forget)
+   - Never throws to caller
+
+2. Integration points (add track() calls):
+   - AppLifecycleState.resumed → track('app_open')
+   - Session init in main.dart or root widget → track('session_start')
+   - Each screen's initState → track('screen_view', {screen_name: '...'})
+   - MatchDetailsScreen open → track('match_open')
+   - LivePlayerScreen open → track('live_stream_open')
+   - _showQualitySelector → track('quality_selected')
+   - _refresh() → track('pull_refresh')
+   - CricOfflineCard Retry tap → track('retry_after_error')
+   - Notification handler → track('notification_open')
+
+3. No analytics in: error handlers, catch blocks (would cause loops)
+
+PHASE C — Admin Panel (admin-panel)
+-------------------------------------
+1. New page: /analytics
+
+2. Summary cards row:
+   - Today active users
+   - 7-day active users
+   - 30-day active users
+   - Total installs (unique devices, all time)
+   - Live stream starts (today)
+   - API errors (today)
+
+3. Charts (use recharts, already likely in Next.js admin):
+   - Daily active users (line chart, 30 days)
+   - Sessions per day (bar chart, 30 days)
+   - Live stream opens per day (area chart, 30 days)
+   - Screen views breakdown (pie/donut)
+
+4. Tables:
+   - Top viewed matches (match_id, count, last seen)
+   - Top screens (screen_name, views)
+   - Quality distribution (SD/HD/FHD/raw variant, %)
+   - App version breakdown (version, device count, %)
+   - Platform breakdown (iOS/Android, %)
+
+5. Date filter: Today | 7 days | 30 days | Custom range
+
+6. Auto-refresh: every 60 seconds on dashboard
+
+RISK
+----
+LOW  — Flutter: additive, never blocks UI
+MED  — Backend: new tables, migration, new endpoints
+LOW  — Admin: new page only
+PRIV — Must not store PII. Reviewed before deploy.
+
+DO NOT IMPLEMENT until:
+  1. This plan reviewed and approved
+  2. Backend migration slot available
+  3. Privacy review complete (no PII stored)
+
+================================================================================

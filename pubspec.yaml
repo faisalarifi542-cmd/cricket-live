@@ -1,0 +1,55 @@
+name: cricpro_flutter
+version: 2.0.4+15
+publish_to: 'none'
+description: Premium responsive CRICPRO cricket live score and streaming UI for Android and iPhone.
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  flutter_svg: ^2.0.10
+  video_player: ^2.9.2
+  google_mobile_ads: ^8.0.0
+  onesignal_flutter: ^5.5.6
+  package_info_plus: ^10.1.0
+  wakelock_plus: ^1.2.8
+  shared_preferences: ^2.3.2
+  cached_network_image: ^3.4.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/images/schedule/
+    - assets/images/schedule/icons/
+    - assets/images/schedule/tournament_logos/
+    - assets/images/matches/
+    - assets/images/matches/icons/
+    - assets/images/matches/status/
+    - assets/images/matches/tournament_badges/
+    - assets/images/home/
+    - assets/images/match_details/
+    - assets/images/match_details/backgrounds/
+    - assets/images/match_details/overlays/
+    - assets/images/match_details/badges/
+    - assets/images/match_details/icons/
+    - assets/images/match_details/balls/
+    - assets/images/live_stream/backgrounds/
+    - assets/images/live_stream/overlays/
+    - assets/images/live_stream/icons/
+    - assets/images/series/
+    - assets/images/series/backgrounds/
+    - assets/images/series/effects/
+    - assets/images/series/venues/
+    - assets/images/series/placeholders/
+    - assets/images/light_mode/
+    - assets/flags/rounded/
+    - assets/splash/

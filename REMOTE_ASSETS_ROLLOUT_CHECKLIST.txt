@@ -1,0 +1,152 @@
+================================================================================
+REMOTE ASSETS ROLLOUT CHECKLIST
+Generated: 2026-06-12
+================================================================================
+
+Scope: admin-managed remote decorative assets (app_assets table, GET /app/assets,
+Admin /assets page, Flutter RemoteAssetsService + RemoteOrLocalImage).
+Only ONE asset wired so far: live_player_bg_dark. Bundled assets all still shipped.
+
+================================================================================
+1. VPS MIGRATION COMMAND
+================================================================================
+SSH into VPS, then:
+
+  cd /path/to/cricket-api
+  npm run migrate
+
+- migrate.js creates app_assets via CREATE TABLE IF NOT EXISTS — idempotent,
+  safe to re-run, never drops/overwrites existing data.
+- No other tables touched by this change.
+- Verify table exists after:
+    mysql -u <user> -p <db> -e "DESCRIBE app_assets;"
+  Expect columns: id, asset_key, theme, url, version, is_active, updated_by,
+  created_at, updated_at. Unique key (asset_key, theme).
+
+================================================================================
+2. REQUIRED /uploads PERMISSIONS
+================================================================================
+Upload path: cricket-api/assets/images/uploads (UPLOAD_DIR in src/lib/uploads.js).
+- Directory must exist and be writable by the Node process user (PM2 user).
+    mkdir -p cricket-api/assets/images/uploads
+    chown -R <pm2_user>:<pm2_user> cricket-api/assets/images/uploads
+    chmod 755 cricket-api/assets/images/uploads
+- Public read served by GET /uploads/:file (already public, 'health' group,
+  Cache-Control: public, max-age=31536000, immutable).
+- If behind Nginx, ensure proxy passes /uploads through (it already serves the
+  Series/Featured uploads, so this works today).
+- Optional: serve /uploads directly from Nginx for less Node load (not required
+  for MVP).
+
+================================================================================
+3. TEST COMMAND FOR /app/assets
+================================================================================
+Public, NO API key required (classified 'health' / never-block):
+
+  curl -i https://api.webcrichd.co/app/assets
+
+Expect: HTTP 200, JSON { success:true, data:{ assets:[...] }, meta:... },
+header Cache-Control: public, max-age=300.
+
+Confirm it works WITHOUT X-API-Key (that is the point — app loads images with
+no auth, like /uploads):
+
+  curl -s https://api.webcrichd.co/app/assets | head -c 400
+
+Before any asset configured, assets:[] is expected and SAFE (app uses bundled).
+
+================================================================================
+4. ADMIN /assets MANUAL TEST STEPS
+================================================================================
+Login to Admin Panel (needs settings.view to see, settings.write to edit).
+1. Open sidebar → Content → "App Assets". Page loads grid of predefined keys.
+2. Each card shows: label, key, theme badge, recommended dimensions, preview
+   (placeholder if no URL).
+3. Click pencil on "Live Player background (dark)" (live_player_bg_dark).
+4. Either paste a URL OR click "Upload image" (PNG/JPG/WebP under 2MB).
+   - After upload, preview shows, URL field auto-fills.
+5. Click Save. Toast "saved". Card now shows preview + Active toggle ON.
+6. Toggle OFF → app reverts to bundled. Toggle ON → remote again.
+7. Click trash → Revert confirm → row deleted, card back to "No remote asset".
+8. Reload page — state persists (reads from DB).
+
+================================================================================
+5. ANDROID VISUAL TEST STEPS
+================================================================================
+Use release APK (build\app\outputs\flutter-apk\app-release.apk, 51.7MB).
+1. DARK MODE, no remote configured: open a LIVE match → Live Player. Background
+   = bundled stadium PNG. Baseline.
+2. In Admin, set live_player_bg_dark to a visibly different image, Active ON.
+3. Reopen app (cold start so RemoteAssetsService.load() runs). Open Live Player
+   in dark mode → background = new remote image.
+4. AIRPLANE MODE on, cold start, open Live Player dark → bundled fallback shows
+   (no blank, no broken image). Confirms offline safety.
+5. LIGHT MODE: open Live Player → unchanged (dark-only backdrop, no remote).
+6. Toggle asset OFF in Admin, cold start app → bundled fallback again.
+7. Watch for: no UI blink, no layout shift, no crash on bad/slow URL.
+
+NOTE: app loads asset catalog ONCE at startup (non-blocking). Changes need a
+cold start (or 10-min repo cache expiry) to appear — expected for MVP.
+
+================================================================================
+6. ROLLBACK STEPS
+================================================================================
+Fastest (no deploy): in Admin /assets, toggle the asset OFF or Revert it.
+App falls back to bundled image on next cold start. Zero risk.
+
+Server rollback (if endpoint misbehaves):
+- GET /app/assets failing does NOT break app — RemoteAssetsService swallows
+  errors, app uses bundled. So no urgent rollback needed.
+- To fully disable: revert src/routes/app.js (/app/assets handler) +
+  src/admin/index.js (assets route registration) and redeploy.
+- app_assets table can stay — harmless if unused. No need to drop.
+
+Code rollback: git revert the Remote Assets commit. Bundled assets untouched,
+so app keeps working identically to pre-MVP.
+
+================================================================================
+7. WHICH ASSETS SAFE TO WIRE NEXT
+================================================================================
+Wire ONE at a time, verify each on device before next. Recommended order
+(low risk → higher), all decorative/full-bleed backgrounds:
+
+  1. live_player_bg_light  (pair the live player light bg — completes that screen)
+  2. home_hero_bg_dark     (home hero background, dark)
+  3. home_hero_bg_light    (home hero background, light)
+  4. series_hero_background
+  5. home_featured_card_bg
+
+Rule: only decorative backgrounds/overlays. Each must keep its bundled fallback.
+
+================================================================================
+8. WHICH ASSETS MUST STAY BUNDLED FOREVER
+================================================================================
+Never make these remote-only (must always work offline / first paint):
+- App icon / launcher icon.
+- Splash screen image.
+- Brand logo shown on first frame / loading state.
+- Any icon used in offline/error cards (e.g. no-connection illustration).
+- Tab bar / nav icons, status icons (live/upcoming/finished), ball-by-ball
+  glyphs — small, functional, must never flicker or 404.
+- Team logo fallback placeholder (initials renderer).
+
+These are functional UI, not decorative. Remote swap = risk of blank/wrong glyph.
+
+================================================================================
+9. WHEN SAFE TO ARCHIVE BUNDLED ASSETS
+================================================================================
+DO NOT archive any bundled asset yet. Conditions before archiving a SINGLE
+decorative asset's bundle copy:
+- Remote asset wired AND verified on device for that key.
+- Confirmed remote URL served from a STABLE CDN/host (not a temporary upload).
+- Telemetry/Analytics in place to detect fallback usage (NOT built yet).
+- A full release cycle proves remote path stable in production.
+- Even then: keep a low-res bundled fallback for offline-first paint. Removing
+  the fallback entirely defeats the safety design.
+
+Realistic: archiving waits until Analytics MVP + 1-2 stable releases. Until then
+bundling stays — APK size reduction is a LATER phase, not now.
+
+================================================================================
+END
+================================================================================

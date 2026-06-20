@@ -1,0 +1,175 @@
+================================================================================
+REMOTE ASSETS PHASE 2 — SIZE AUDIT
+File: REMOTE_ASSETS_PHASE2_SIZE_AUDIT.txt
+Generated: 2026-06-12
+Scope: Flutter app assets/images (26 MB total, 222 files). Goal: move large
+       decorative backgrounds to admin/server/CDN with safe bundled fallbacks.
+================================================================================
+
+METHOD
+------
+Sizes from: find assets/images -type f -printf "%s\t%p" | sort -rn
+Render mechanism mapped from lib/ (see "render site" column). Almost every
+decorative background renders through the shared widget `StadiumImage`
+(lib/components.dart:30) which already applies theme-aware opacity + light-mode
+clean-art swap. That widget is the wiring chokepoint.
+
+
+1. BIGGEST ASSETS IN assets/images (top, KB)
+--------------------------------------------------------------------------------
+   2275  match_details/backgrounds/stadium_score_header_bg.png
+   1870  stadium_live.png
+   1870  stadium_light.png
+   1720  home/home_top_featured_card.png
+   1341  home/futuristic_stadium_ui_backdrop.png
+   1159  series/backgrounds/series_squad_section_bg.png
+   1084  series/backgrounds/series_stats_table_bg.png
+   1032  series/effects/glass_noise_overlay.png
+    924  series/backgrounds/series_featured_carousel_bg.png
+    914  schedule/stadium_top_bg.png
+    869  series/backgrounds/series_overview_panel_bg.png
+    704  series/backgrounds/series_detail_hero_bg.png
+    623  live_stream/backgrounds/stadium_player_background_clean_16x9.png
+    602  series/backgrounds/series_match_card_bg.png
+    598  series/backgrounds/series_page_top_backdrop.png
+    583  series/backgrounds/series_screen_background.png
+    507  schedule/match_card_bg.png
+    499  series/backgrounds/series_empty_state_bg.png
+    407  series/backgrounds/series_list_card_bg.png
+    382  live_stream/backgrounds/stadium_player_background_clean_native.png
+    345  matches/matches_top_bg.png
+    228  matches/match_card_bg_live.png
+    228  matches/match_card_bg.png
+    221  matches/match_card_bg_upcoming.png
+    220  matches/match_card_bg_finished.png
+    216  match_details/backgrounds/stadium_score_header_b.png
+    209  home/list_match_card_bg_live_clean.png
+    160  live_stream/backgrounds/live_screen_dark_background.png  (ALREADY remote-wired)
+
+Per-directory totals:
+   series         9.3 MB   <-- largest single offender
+   home           3.3 MB
+   match_details  3.1 MB
+   schedule       2.0 MB
+   stadium_live.png + stadium_light.png  3.8 MB (two loose root files)
+   matches        1.6 MB
+   live_stream    1.6 MB
+   light_mode     409 KB  (small clean light overlays — KEEP)
+   players (player_*.png) ~1.3 MB total (sample/fallback portraits)
+
+
+2. CURRENTLY USED (render site)
+--------------------------------------------------------------------------------
+  futuristic_stadium_ui_backdrop.png  home_screen.dart:439 via StadiumImage (backdrop)
+  home_top_featured_card.png          home_featured.dart:562, home_hero.dart:180 (StadiumImage hero)
+  list_match_card_bg_live_clean.png   home_match_cards.dart:300 (StadiumImage card)
+  matches_top_bg.png                  matches_screen.dart:340 (StadiumImage backdrop)
+  match_card_bg_live/upcoming/finished.png  matches_cards.dart:33 (_MatchCardShell→StadiumImage)
+  stadium_top_bg.png                  schedule_screen.dart:277 (StadiumImage backdrop)
+  schedule/match_card_bg.png          schedule_cards.dart:303 (StadiumImage card)
+  series_page_top_backdrop.png        series_detail_screen.dart:230 (StadiumImage)
+  series_detail_hero_bg.png           series_detail_hero.dart:157, series_list_screen.dart:703
+  series_match_card_bg.png            series_detail_overview.dart:770, series_detail_squads.dart:65
+  stadium_score_header_bg.png         match_details_ui.dart:737 (dark: Image.asset, light: StadiumImage)
+  stadium_live.png                    match_details_components.dart:93 (Image.asset, no isDark)
+  live_screen_dark_background.png     live_player_screen.dart:1115 (RemoteOrLocalImage) ✓ DONE
+  series_squad_section_bg / series_stats_table_bg / series_overview_panel_bg /
+    series_featured_carousel_bg / series_screen_background / series_empty_state_bg /
+    series_list_card_bg                referenced via SAsset constants in series widgets
+
+NOTE: light_mode/* (hero_stadium_bg, match_card_stadium_bg, schedule_header_bg,
+series_hero_bg) are the light-mode clean swaps auto-selected by
+LightAsset.forStadium() inside StadiumImage. They are SMALL (≤~60 KB each) and
+must stay bundled — they are the light fallback.
+
+
+3. SAFE REMOTE CANDIDATES (Phase 2 — wire first, biggest win, lowest risk)
+--------------------------------------------------------------------------------
+These are large, purely decorative, behind content, already have a bundled
+fallback, and route through StadiumImage / RemoteOrLocalImage:
+
+  KEY (admin)              DARK fallback bundled              LIGHT fallback bundled
+  ---------------------    -------------------------------    --------------------------
+  home_hero_bg_dark        home/home_top_featured_card.png    light_mode/hero_stadium_bg.png
+  home_hero_bg_light       (uses light_mode/hero_stadium)     light_mode/hero_stadium_bg.png
+  home_backdrop            home/futuristic_stadium_ui_backdrop.png  (light auto)
+  match_card_live_bg       matches/match_card_bg_live.png     light_mode/match_card_stadium_bg.png
+  match_card_upcoming_bg   matches/match_card_bg_upcoming.png light_mode/match_card_stadium_bg.png
+  match_card_finished_bg   matches/match_card_bg_finished.png light_mode/match_card_stadium_bg.png
+  matches_backdrop         matches/matches_top_bg.png         (light auto)
+  schedule_header_bg       schedule/stadium_top_bg.png        light_mode/schedule_header_bg.png
+  schedule_card_bg         schedule/match_card_bg.png         light_mode/match_card_stadium_bg.png
+  series_hero_background    series/backgrounds/series_detail_hero_bg.png  light_mode/series_hero_bg.png
+  series_backdrop          series/backgrounds/series_page_top_backdrop.png  (light auto)
+  series_card_bg           series/backgrounds/series_match_card_bg.png   (light auto)
+  live_player_bg_dark      live_stream/.../live_screen_dark_background.png  — ALREADY WIRED ✓
+
+Biggest standalone candidate:
+  match_details_header_bg  match_details/backgrounds/stadium_score_header_bg.png (2.27 MB!)
+    — wire carefully: dark path uses raw Image.asset (not StadiumImage).
+
+
+4. MUST STAY BUNDLED FOREVER (never remote)
+--------------------------------------------------------------------------------
+  - App launcher icon + adaptive icon (android/ios native).
+  - Splash screen image.
+  - Fonts (fonts/, pubspec fonts:).
+  - light_mode/* clean overlays (small; they ARE the light fallback art).
+  - Placeholder avatars / generic team + player fallback portraits
+    (team_*.png, player_*.png, series/venues/venue_generic.png).
+  - Essential UI icons, status badges, glass/overlay effects that are tiny.
+  - Any asset < ~50 KB (network round-trip not worth it; risk > reward).
+
+
+5. ARCHIVE ONLY AFTER REMOTE FALLBACK VERIFIED (Phase 4 — gated)
+--------------------------------------------------------------------------------
+After each screen is VISUALLY tested in BOTH light + dark with (a) remote active
+and (b) remote absent/offline, the LARGE dark-mode originals MAY move to
+archived/remote-assets-replaced/ — BUT only if a smaller compressed fallback
+replaces them in-bundle (never ship zero fallback). Candidates, in size order:
+  stadium_score_header_bg.png (2275 KB)  -> compress to ~150 KB JPG fallback
+  home_top_featured_card.png  (1720 KB)  -> compress to ~120 KB
+  futuristic_stadium_ui_backdrop.png (1341 KB) -> compress to ~110 KB
+  schedule/stadium_top_bg.png (914 KB)   -> compress to ~90 KB
+  series_detail_hero_bg.png (704 KB)     -> compress to ~80 KB
+  series_page_top_backdrop.png (598 KB)  -> compress to ~70 KB
+  series_match_card_bg.png (602 KB)      -> compress to ~70 KB
+  matches_top_bg.png (345 KB)            -> compress to ~50 KB
+  match_card_bg_*.png (220–228 KB each)  -> compress to ~40 KB each
+
+stadium_live.png + stadium_light.png (1.87 MB each): investigate usage in
+match_details_components.dart:93 before touching — rendered without an isDark
+guard, higher regression risk. Defer to a later batch.
+
+
+6. EXPECTED APK SIZE REDUCTION
+--------------------------------------------------------------------------------
+  Current APK (arm64, release): ~51 MB. assets/images raw: 26 MB.
+  (Note: PNGs are already partially compressed inside the APK; raw KB is an
+  upper bound on savings, real APK savings are smaller.)
+
+  Phase 2 wiring alone removes NOTHING from the bundle — it only enables remote
+  override. Size drops in Phase 4 when originals are archived and replaced by
+  compressed fallbacks.
+
+  Realistic staged savings once Phase 4 completes for the candidates above:
+    - Replace ~13 MB of large decorative PNGs with ~1.2 MB compressed JPG/WebP
+      fallbacks  => ~11–12 MB raw asset reduction.
+    - Estimated APK reduction: ~8–10 MB (51 MB -> ~41–43 MB), arm64 release.
+    - AAB delivered size to users is smaller again due to per-device splitting.
+
+  This is an UPPER-BOUND estimate; actual measured numbers go in the Phase 5
+  report after --analyze-size runs.
+
+
+RISK NOTES
+----------
+  - StadiumImage is shared: one wiring change touches many screens. Verify all
+    StadiumImage screens (home/matches/schedule/series) in both themes.
+  - match_details dark header uses raw Image.asset (different path) — wire and
+    test separately.
+  - Light mode uses clean light_mode/* art via LightAsset.forStadium(); remote
+    light keys must not regress that. Keep light fallbacks bundled.
+  - NEVER ship an asset with no bundled fallback. Offline + remote-404 must show
+    the bundled image (RemoteOrLocalImage already guarantees this).
+================================================================================

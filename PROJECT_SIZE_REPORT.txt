@@ -1,0 +1,115 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — PROJECT SIZE REPORT
+File: PROJECT_SIZE_REPORT.txt
+Generated: 2026-06-11
+================================================================================
+
+SUMMARY
+  - .git history: ~132MB (bloated by previously-tracked debug PNGs).
+  - assets/: ~46MB (assets/images ~45MB, assets/flags ~1.1MB).
+  - Biggest single dir: assets/images/home (~22MB, 22 of 25 files unused).
+
+NOTE on .git size: moving/untracking files shrinks the WORKING TREE and future
+commits, but old blobs remain in history until a history rewrite (git gc /
+filter-repo / BFG). That rewrite is a HIGH-risk, force-push operation — left as
+optional VPS/maintainer decision, NOT done here.
+
+================================================================================
+1. BIGGEST TRACKED FILES (top, after Phase-2 archive moves)
+================================================================================
+  2.3M  assets/images/match_details/backgrounds/stadium_score_header_bg.png  [USED]
+  1.9M  assets/images/stadium_live.png                                       [USED]
+  1.9M  assets/images/stadium_light.png                                      [USED]
+  1.7M  assets/images/home/home_top_featured_card.png                        [USED]
+  1.7M  assets/images/home/empty_stadium_at_dusk_with_floodlights.png        [UNUSED]
+  1.6M  assets/images/home/home_live_match_card_bg.png                       [UNUSED]
+  1.6M  assets/images/home/futuristic_stadium_with_glowing_trophy.png        [UNUSED]
+  1.5M  assets/images/home/home_fullscreen_stadium_bg.png                    [UNUSED]
+  1.4M  assets/images/home/cinematic_stadium_at_night.png                    [UNUSED]
+  1.4M  assets/images/home/home_header_stadium_bg.png                        [UNUSED]
+  1.3M  assets/images/home/futuristic_stadium_ui_backdrop.png                [USED]
+  1.2M  assets/images/home/sleek_futuristic_glossy_button_design.png         [UNUSED]
+  1.2M  assets/images/series/backgrounds/series_squad_section_bg.png         [USED*]
+  1.1M  assets/images/home/home_glowing_orb_source.png                       [UNUSED]
+  (*USED = grep-matched in lib/; verify visually before any removal.)
+
+================================================================================
+2. ALREADY ARCHIVED IN PHASE 2 (moved out of root/src — SAFE, dev artifacts)
+================================================================================
+  -> docs/archive/qa-screenshots/   : 52 debug/QA PNGs + scorecard-155398.html (~22MB)
+       (home_final*.png, prod-*.png, rank-*.png, ranking-*.png, local-*.png …)
+  -> docs/archive/                  : cricket-api/src/ChatGPT Image ….png (stray)
+  -> docs/archive/status-docs/      : 24 historical fix/status .md files
+       (SCORECARD_FIX_*, *_FIX_COMPLETE, IMPLEMENTATION_*, INVESTIGATION_*, etc.)
+  RESULT: root + backend src no longer ship dev clutter. Reversible (git mv).
+
+================================================================================
+3. UNUSED FLUTTER ASSETS (grep-verified, no dynamic paths exist)
+================================================================================
+3A. home/ — 22 UNUSED (~18MB) — ARCHIVE CANDIDATE (Phase 3):
+    cinematic_stadium_at_night, empty_stadium_at_dusk_with_floodlights,
+    futuristic_capsule_ui_element, futuristic_glowing_capsule_button,
+    futuristic_neon_ui_panel_design, futuristic_rounded_button_with_glow,
+    futuristic_stadium_with_glowing_trophy, home_active_tab_pill,
+    home_carousel_indicator_active, home_cyan_capsule_source,
+    home_fullscreen_stadium_bg, home_glass_capsule_source, home_glass_card_overlay,
+    home_glowing_orb_source, home_header_stadium_bg, home_inactive_tab_pill,
+    home_live_match_card_bg, home_notification_button_bg, home_wide_glass_panel_bg,
+    neon_blue_glassy_button_design, sleek_futuristic_glossy_button_design,
+    + pubspec_assets_snippet.txt (stray dev note).
+    KEEP (USED): futuristic_stadium_ui_backdrop, home_top_featured_card,
+                 list_match_card_bg_live_clean.
+
+3B. Other dirs — UNUSED (~1MB total) — review before archive:
+    series/   (5): carousel_side_fade_left, carousel_side_fade_right,
+                   neon_card_bottom_edge, series_ball_placeholder,
+                   series_shield_placeholder
+    match_details/ (22): ball_0, bench_reserves, boundaries_filter,
+                   cyan_bottom_edge_glow, expand_up, key_events_filter, key_facts,
+                   match_status, match_type_badge, officials, player_avatar_fallback,
+                   player_avatar_ring, role_ar_badge, role_bat_badge, role_bowl_badge,
+                   role_wk_badge, session_summary, stadium_score_header_b, stats_chart,
+                   status_live_badge, toss, wickets_filter
+    matches/  (10): acc_fallback, champions_trophy_fallback, cricpro_wordmark,
+                   generic_match_fallback, international_fallback, league_fallback,
+                   status_finished, status_live, status_upcoming, t20_world_cup_fallback
+    live_stream/ (7): ic_red_live_dot.svg, match_header_card_background_no_logos,
+                   player_card_neon_edge_overlay, player_control_bar_glass,
+                   quality_card_normal_glass, quality_card_selected_glow,
+                   stadium_player_background_clean_native
+    light_mode/ (4): README.txt, icon_circle_cyan, palette.json, player_card_bg
+    schedule/   : none unused.
+
+    CAUTION on 3B: several names look like FALLBACK/placeholder/status assets
+    (player_avatar_fallback, *_fallback, status_*, role_*_badge, *_placeholder).
+    These MAY be loaded via runtime-built paths the grep can't see, OR reserved
+    for near-future features. Recommendation: archive home/ (3A) now; for 3B,
+    archive only after a second confirmation pass + visual QA. Listed here, NOT
+    auto-removed.
+
+================================================================================
+4. COMPRESSION CANDIDATES (oversized PNG -> WebP, manual, deferred)
+================================================================================
+  stadium_score_header_bg.png (2.3M), stadium_live.png (1.9M),
+  stadium_light.png (1.9M), home_top_featured_card.png (1.7M),
+  futuristic_stadium_ui_backdrop.png (1.3M), series_squad_section_bg.png (1.2M).
+  WebP typically 50-70% smaller. Requires asset-path updates + visual QA.
+  See FLUTTER_RELEASE_SIZE_GUIDE.md.
+
+================================================================================
+5. SAFE-TO-REMOVE/ARCHIVE VERDICT TABLE
+================================================================================
+  Item                                   Action        Risk   Status
+  ------------------------------------   -----------   ----   ----------
+  53 root QA PNG + scorecard.html        archive       LOW    DONE (P2)
+  stray backend ChatGPT png              archive       LOW    DONE (P2)
+  24 historical status .md               archive       LOW    DONE (P2)
+  22 unused home assets (~18MB)          archive       MED    PENDING (P3)
+  ~48 unused other assets (~1MB)         review then   MED    LISTED ONLY
+                                         archive
+  oversized PNG -> WebP                  manual convert MED    DOC ONLY
+  .git history rewrite (drop old blobs)  optional       HIGH   DOC ONLY (VPS)
+
+================================================================================
+END OF REPORT
+================================================================================

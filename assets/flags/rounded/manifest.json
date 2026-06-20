@@ -1,0 +1,458 @@
+[
+  {
+    "name": "Afghanistan",
+    "abbr": "AFG",
+    "asset": "assets/flags/rounded/afghanistan.png",
+    "sourceCode": "af"
+  },
+  {
+    "name": "Australia",
+    "abbr": "AUS",
+    "asset": "assets/flags/rounded/australia.png",
+    "sourceCode": "au"
+  },
+  {
+    "name": "Bangladesh",
+    "abbr": "BAN",
+    "asset": "assets/flags/rounded/bangladesh.png",
+    "sourceCode": "bd"
+  },
+  {
+    "name": "England",
+    "abbr": "ENG",
+    "asset": "assets/flags/rounded/england.png",
+    "sourceCode": "gb-eng"
+  },
+  {
+    "name": "India",
+    "abbr": "IND",
+    "asset": "assets/flags/rounded/india.png",
+    "sourceCode": "in"
+  },
+  {
+    "name": "Ireland",
+    "abbr": "IRE",
+    "asset": "assets/flags/rounded/ireland.png",
+    "sourceCode": "ie"
+  },
+  {
+    "name": "New Zealand",
+    "abbr": "NZ",
+    "asset": "assets/flags/rounded/new_zealand.png",
+    "sourceCode": "nz"
+  },
+  {
+    "name": "Pakistan",
+    "abbr": "PAK",
+    "asset": "assets/flags/rounded/pakistan.png",
+    "sourceCode": "pk"
+  },
+  {
+    "name": "South Africa",
+    "abbr": "SA",
+    "asset": "assets/flags/rounded/south_africa.png",
+    "sourceCode": "za"
+  },
+  {
+    "name": "Sri Lanka",
+    "abbr": "SL",
+    "asset": "assets/flags/rounded/sri_lanka.png",
+    "sourceCode": "lk"
+  },
+  {
+    "name": "West Indies",
+    "abbr": "WI",
+    "asset": "assets/flags/rounded/west_indies.png",
+    "sourceCode": ""
+  },
+  {
+    "name": "Zimbabwe",
+    "abbr": "ZIM",
+    "asset": "assets/flags/rounded/zimbabwe.png",
+    "sourceCode": "zw"
+  },
+  {
+    "name": "Scotland",
+    "abbr": "SCO",
+    "asset": "assets/flags/rounded/scotland.png",
+    "sourceCode": "gb-sct"
+  },
+  {
+    "name": "Netherlands",
+    "abbr": "NED",
+    "asset": "assets/flags/rounded/netherlands.png",
+    "sourceCode": "nl"
+  },
+  {
+    "name": "Nepal",
+    "abbr": "NEP",
+    "asset": "assets/flags/rounded/nepal.png",
+    "sourceCode": "np"
+  },
+  {
+    "name": "United Arab Emirates",
+    "abbr": "UAE",
+    "asset": "assets/flags/rounded/uae.png",
+    "sourceCode": "ae"
+  },
+  {
+    "name": "Oman",
+    "abbr": "OMA",
+    "asset": "assets/flags/rounded/oman.png",
+    "sourceCode": "om"
+  },
+  {
+    "name": "Namibia",
+    "abbr": "NAM",
+    "asset": "assets/flags/rounded/namibia.png",
+    "sourceCode": "na"
+  },
+  {
+    "name": "United States",
+    "abbr": "USA",
+    "asset": "assets/flags/rounded/united_states.png",
+    "sourceCode": "us"
+  },
+  {
+    "name": "Canada",
+    "abbr": "CAN",
+    "asset": "assets/flags/rounded/canada.png",
+    "sourceCode": "ca"
+  },
+  {
+    "name": "Papua New Guinea",
+    "abbr": "PNG",
+    "asset": "assets/flags/rounded/papua_new_guinea.png",
+    "sourceCode": "pg"
+  },
+  {
+    "name": "Hong Kong",
+    "abbr": "HK",
+    "asset": "assets/flags/rounded/hong_kong.png",
+    "sourceCode": "hk"
+  },
+  {
+    "name": "Jersey",
+    "abbr": "JER",
+    "asset": "assets/flags/rounded/jersey.png",
+    "sourceCode": "je"
+  },
+  {
+    "name": "Guernsey",
+    "abbr": "GSY",
+    "asset": "assets/flags/rounded/guernsey.png",
+    "sourceCode": "gg"
+  },
+  {
+    "name": "Bermuda",
+    "abbr": "BER",
+    "asset": "assets/flags/rounded/bermuda.png",
+    "sourceCode": "bm"
+  },
+  {
+    "name": "Malaysia",
+    "abbr": "MAS",
+    "asset": "assets/flags/rounded/malaysia.png",
+    "sourceCode": "my"
+  },
+  {
+    "name": "Singapore",
+    "abbr": "SIN",
+    "asset": "assets/flags/rounded/singapore.png",
+    "sourceCode": "sg"
+  },
+  {
+    "name": "Kuwait",
+    "abbr": "KUW",
+    "asset": "assets/flags/rounded/kuwait.png",
+    "sourceCode": "kw"
+  },
+  {
+    "name": "Qatar",
+    "abbr": "QAT",
+    "asset": "assets/flags/rounded/qatar.png",
+    "sourceCode": "qa"
+  },
+  {
+    "name": "Bahrain",
+    "abbr": "BHR",
+    "asset": "assets/flags/rounded/bahrain.png",
+    "sourceCode": "bh"
+  },
+  {
+    "name": "Saudi Arabia",
+    "abbr": "KSA",
+    "asset": "assets/flags/rounded/saudi_arabia.png",
+    "sourceCode": "sa"
+  },
+  {
+    "name": "Thailand",
+    "abbr": "THA",
+    "asset": "assets/flags/rounded/thailand.png",
+    "sourceCode": "th"
+  },
+  {
+    "name": "Indonesia",
+    "abbr": "INA",
+    "asset": "assets/flags/rounded/indonesia.png",
+    "sourceCode": "id"
+  },
+  {
+    "name": "Japan",
+    "abbr": "JPN",
+    "asset": "assets/flags/rounded/japan.png",
+    "sourceCode": "jp"
+  },
+  {
+    "name": "China",
+    "abbr": "CHN",
+    "asset": "assets/flags/rounded/china.png",
+    "sourceCode": "cn"
+  },
+  {
+    "name": "Philippines",
+    "abbr": "PHI",
+    "asset": "assets/flags/rounded/philippines.png",
+    "sourceCode": "ph"
+  },
+  {
+    "name": "Vanuatu",
+    "abbr": "VAN",
+    "asset": "assets/flags/rounded/vanuatu.png",
+    "sourceCode": "vu"
+  },
+  {
+    "name": "Samoa",
+    "abbr": "SAM",
+    "asset": "assets/flags/rounded/samoa.png",
+    "sourceCode": "ws"
+  },
+  {
+    "name": "Fiji",
+    "abbr": "FIJ",
+    "asset": "assets/flags/rounded/fiji.png",
+    "sourceCode": "fj"
+  },
+  {
+    "name": "Cook Islands",
+    "abbr": "COK",
+    "asset": "assets/flags/rounded/cook_islands.png",
+    "sourceCode": "ck"
+  },
+  {
+    "name": "Kenya",
+    "abbr": "KEN",
+    "asset": "assets/flags/rounded/kenya.png",
+    "sourceCode": "ke"
+  },
+  {
+    "name": "Uganda",
+    "abbr": "UGA",
+    "asset": "assets/flags/rounded/uganda.png",
+    "sourceCode": "ug"
+  },
+  {
+    "name": "Tanzania",
+    "abbr": "TAN",
+    "asset": "assets/flags/rounded/tanzania.png",
+    "sourceCode": "tz"
+  },
+  {
+    "name": "Nigeria",
+    "abbr": "NGA",
+    "asset": "assets/flags/rounded/nigeria.png",
+    "sourceCode": "ng"
+  },
+  {
+    "name": "Ghana",
+    "abbr": "GHA",
+    "asset": "assets/flags/rounded/ghana.png",
+    "sourceCode": "gh"
+  },
+  {
+    "name": "Rwanda",
+    "abbr": "RWA",
+    "asset": "assets/flags/rounded/rwanda.png",
+    "sourceCode": "rw"
+  },
+  {
+    "name": "Botswana",
+    "abbr": "BOT",
+    "asset": "assets/flags/rounded/botswana.png",
+    "sourceCode": "bw"
+  },
+  {
+    "name": "Malawi",
+    "abbr": "MWI",
+    "asset": "assets/flags/rounded/malawi.png",
+    "sourceCode": "mw"
+  },
+  {
+    "name": "Sierra Leone",
+    "abbr": "SLE",
+    "asset": "assets/flags/rounded/sierra_leone.png",
+    "sourceCode": "sl"
+  },
+  {
+    "name": "Denmark",
+    "abbr": "DEN",
+    "asset": "assets/flags/rounded/denmark.png",
+    "sourceCode": "dk"
+  },
+  {
+    "name": "Germany",
+    "abbr": "GER",
+    "asset": "assets/flags/rounded/germany.png",
+    "sourceCode": "de"
+  },
+  {
+    "name": "Italy",
+    "abbr": "ITA",
+    "asset": "assets/flags/rounded/italy.png",
+    "sourceCode": "it"
+  },
+  {
+    "name": "France",
+    "abbr": "FRA",
+    "asset": "assets/flags/rounded/france.png",
+    "sourceCode": "fr"
+  },
+  {
+    "name": "Spain",
+    "abbr": "ESP",
+    "asset": "assets/flags/rounded/spain.png",
+    "sourceCode": "es"
+  },
+  {
+    "name": "Portugal",
+    "abbr": "POR",
+    "asset": "assets/flags/rounded/portugal.png",
+    "sourceCode": "pt"
+  },
+  {
+    "name": "Austria",
+    "abbr": "AUT",
+    "asset": "assets/flags/rounded/austria.png",
+    "sourceCode": "at"
+  },
+  {
+    "name": "Belgium",
+    "abbr": "BEL",
+    "asset": "assets/flags/rounded/belgium.png",
+    "sourceCode": "be"
+  },
+  {
+    "name": "Switzerland",
+    "abbr": "SUI",
+    "asset": "assets/flags/rounded/switzerland.png",
+    "sourceCode": "ch"
+  },
+  {
+    "name": "Norway",
+    "abbr": "NOR",
+    "asset": "assets/flags/rounded/norway.png",
+    "sourceCode": "no"
+  },
+  {
+    "name": "Sweden",
+    "abbr": "SWE",
+    "asset": "assets/flags/rounded/sweden.png",
+    "sourceCode": "se"
+  },
+  {
+    "name": "Finland",
+    "abbr": "FIN",
+    "asset": "assets/flags/rounded/finland.png",
+    "sourceCode": "fi"
+  },
+  {
+    "name": "Czech Republic",
+    "abbr": "CZE",
+    "asset": "assets/flags/rounded/czech_republic.png",
+    "sourceCode": "cz"
+  },
+  {
+    "name": "Romania",
+    "abbr": "ROU",
+    "asset": "assets/flags/rounded/romania.png",
+    "sourceCode": "ro"
+  },
+  {
+    "name": "Hungary",
+    "abbr": "HUN",
+    "asset": "assets/flags/rounded/hungary.png",
+    "sourceCode": "hu"
+  },
+  {
+    "name": "Malta",
+    "abbr": "MLT",
+    "asset": "assets/flags/rounded/malta.png",
+    "sourceCode": "mt"
+  },
+  {
+    "name": "Gibraltar",
+    "abbr": "GIB",
+    "asset": "assets/flags/rounded/gibraltar.png",
+    "sourceCode": "gi"
+  },
+  {
+    "name": "Isle of Man",
+    "abbr": "IOM",
+    "asset": "assets/flags/rounded/isle_of_man.png",
+    "sourceCode": "im"
+  },
+  {
+    "name": "Argentina",
+    "abbr": "ARG",
+    "asset": "assets/flags/rounded/argentina.png",
+    "sourceCode": "ar"
+  },
+  {
+    "name": "Brazil",
+    "abbr": "BRA",
+    "asset": "assets/flags/rounded/brazil.png",
+    "sourceCode": "br"
+  },
+  {
+    "name": "Chile",
+    "abbr": "CHI",
+    "asset": "assets/flags/rounded/chile.png",
+    "sourceCode": "cl"
+  },
+  {
+    "name": "Mexico",
+    "abbr": "MEX",
+    "asset": "assets/flags/rounded/mexico.png",
+    "sourceCode": "mx"
+  },
+  {
+    "name": "Belize",
+    "abbr": "BIZ",
+    "asset": "assets/flags/rounded/belize.png",
+    "sourceCode": "bz"
+  },
+  {
+    "name": "Cayman Islands",
+    "abbr": "CAY",
+    "asset": "assets/flags/rounded/cayman_islands.png",
+    "sourceCode": "ky"
+  },
+  {
+    "name": "Bahamas",
+    "abbr": "BAH",
+    "asset": "assets/flags/rounded/bahamas.png",
+    "sourceCode": "bs"
+  },
+  {
+    "name": "Panama",
+    "abbr": "PAN",
+    "asset": "assets/flags/rounded/panama.png",
+    "sourceCode": "pa"
+  },
+  {
+    "name": "Peru",
+    "abbr": "PER",
+    "asset": "assets/flags/rounded/peru.png",
+    "sourceCode": "pe"
+  }
+]

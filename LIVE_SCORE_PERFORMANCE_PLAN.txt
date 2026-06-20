@@ -1,0 +1,159 @@
+================================================================================
+LIVE SCORE PERFORMANCE PLAN
+Generated: 2026-06-12
+================================================================================
+
+GOAL
+----
+Live scores update as close as possible to Cricbuzz parity.
+No provider overload. No VPS overload. Smart polling + stale-while-revalidate.
+No UI blink, no scroll jump, no tab reset on update.
+
+CURRENT STATE AUDIT NEEDED
+---------------------------
+Check these in cricket-api before any changes:
+
+  src/routes/matches.js          - live match list TTL
+  src/routes/match-details.js    - detail/scorecard/commentary TTL
+  src/routes/live-line.js        - ball-by-ball TTL
+  src/middleware/cache.js        - cache layer implementation
+  src/providers/cricbuzz*.js     - provider fetch logic, timeout, retry
+
+KEY QUESTIONS:
+  1. What is current TTL for live match list? (target: 5–8s)
+  2. What is current TTL for match detail? (target: 5–8s)
+  3. What is current TTL for commentary? (target: 3–5s)
+  4. Is there in-flight request dedupe (one fetch per key even with concurrent callers)?
+  5. Is there stale-while-revalidate (serve cached, refresh in bg)?
+  6. What is provider timeout? (target: 3s hard timeout)
+  7. Are completed/upcoming matches using same short TTL as live? (wasteful)
+
+PHASE A — Backend TTL Targets
+-------------------------------
+Endpoint                     Status       Target TTL   Current (verify)
+---------------------------  -----------  -----------  ----------------
+/matches?status=live         live         5s           ?
+/matches?status=upcoming     upcoming     120s         ?
+/matches?status=finished     finished     300s         ?
+/match/:id/detail            live         5s           ?
+/match/:id/detail            not live     60s          ?
+/match/:id/scorecard         live         5s           ?
+/match/:id/commentary        live         3s           ?
+/match/:id/live-line         live         3s           ?
+/rankings                    any          600s         ?
+/series                      any          300s         ?
+
+Implementation changes (cricket-api):
+1. Status-aware TTL middleware:
+   function liveTtl(req, res, next) {
+     const isLive = req.query.status === 'live' || res.locals.matchIsLive
+     res.locals.cacheTtl = isLive ? 5 : 120
+     next()
+   }
+
+2. Stale-while-revalidate pattern:
+   - Return cached value immediately (fast response)
+   - Trigger background refresh if age > TTL
+   - Next caller gets fresh data
+   - Prevents slow provider latency from blocking users
+
+3. In-flight request dedupe (per cache key):
+   const inflight = new Map()
+   async function fetchWithDedup(key, fetchFn) {
+     if (inflight.has(key)) return inflight.get(key)
+     const p = fetchFn().finally(() => inflight.delete(key))
+     inflight.set(key, p)
+     return p
+   }
+
+4. Provider timeout:
+   - Hard timeout: 3000ms (currently may be higher)
+   - On timeout: return stale cache if available, else error
+   - Log timeout events for monitoring
+
+5. Status-based polling differentiation:
+   - Add X-Match-Status header to /match/:id/detail responses
+   - Flutter reads this to adjust its own poll interval
+
+6. Admin TTL controls (optional, add to /app/config):
+   {
+     "polling": {
+       "live_match_list_ttl": 5,
+       "match_detail_ttl": 5,
+       "commentary_ttl": 3,
+       "upcoming_ttl": 120,
+       "finished_ttl": 300
+     }
+   }
+
+PHASE B — Flutter Polling Improvements
+----------------------------------------
+Current state (already correct in codebase):
+  ✓ Home live tab polls every 12s
+  ✓ Home upcoming tab polls every 90s
+  ✓ Match Details polls (verify interval)
+  ✓ Polling pauses on app background (didChangeAppLifecycleState)
+  ✓ Pull refresh bypasses cache (forceRefresh: true)
+  ✓ No tab/scroll reset on silent poll (previous session fixes)
+  ✓ In-flight request dedupe in repository._cached() (previous session fix)
+
+Improvements needed:
+1. Home polling interval: reduce live tab from 12s → 8s (matches backend TTL)
+   File: lib/screens/home/home_screen.dart _configurePolling()
+   case 0 => const Duration(seconds: 8)
+
+2. Match Details poll interval: verify current value
+   File: lib/screens/match_details/match_details_screen.dart
+   Target: 8s for live matches, pause for finished
+
+3. Stop polling when offline (no network):
+   - In _silentPoll(): if last request threw network error → pause timer
+   - Resume timer when user taps Retry or pull refresh succeeds
+
+4. Show cached data immediately, update silently:
+   - Already done via _tabData pattern
+   - Verify match details does same
+
+5. Live Player score: check if live-line endpoint polled separately
+   - If yes: verify poll interval (target 5–8s)
+   - Do not poll live-line if match is finished
+
+PHASE C — WebSocket/SSE (Future, not now)
+-------------------------------------------
+WebSocket would allow push instead of poll:
+  - Server pushes score update when provider data changes
+  - Client receives, updates UI instantly
+  - Removes need for client polling
+
+Cricbuzz does not provide WebSocket. Backend would need to:
+  1. Poll provider at 3s
+  2. Detect change (hash comparison)
+  3. Push to connected clients via WebSocket/SSE
+
+This is a significant backend change. Plan separately.
+Do NOT implement in current batch.
+
+IMMEDIATE SAFE CHANGES (low risk, implement in next batch)
+-----------------------------------------------------------
+1. Backend: audit + reduce live TTLs to 5s (if currently higher)
+2. Backend: add stale-while-revalidate to match detail endpoint
+3. Backend: add in-flight dedupe if missing
+4. Flutter: reduce Home live tab poll 12s → 8s
+5. Flutter: pause polling after consecutive network errors
+6. Flutter: resume polling on successful retry
+
+RISK
+----
+LOW  — Flutter poll interval change (1 line)
+MED  — Backend TTL changes (test that cache invalidation is correct)
+HIGH — WebSocket (do not implement yet)
+
+VPS SETTINGS TO VERIFY MANUALLY
+---------------------------------
+1. nginx proxy_read_timeout — should be >= 5s for provider fetches
+2. Node.js process memory — watch after TTL reductions (more cache entries)
+3. Provider rate limits — check if Cricbuzz throttles < 3s poll interval
+4. Redis TTL config if Redis used for caching
+5. PM2 restart policy — make sure crashes don't kill cache state
+
+================================================================================

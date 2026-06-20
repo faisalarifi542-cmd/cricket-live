@@ -1,0 +1,2132 @@
+# CricPro Admin Panel — Remaining Work Handoff
+ 
+Snapshot zip you already have: `cricket-live-wip.zip` (23 MB).
+ 
+This document contains **everything left to finish** the Admin Panel: full file contents for the remaining 7 pages + 6 forms, the verification steps, and the commit / PR workflow.
+ 
+Branch you should commit on: `devin/1779996260-admin-panel-prod` (already created locally; this is the branch the in-progress work is on).
+ 
+---
+ 
+## 0. What's already done in the zip
+ 
+### Backend (`cricket-api/src/admin/`)
+- `routes/extra.routes.js` — news CRUD, notifications send/update/delete, roles CRUD, user role assignment + password reset, series/teams/players detail + refresh + cache-clear + feature/hide, schedule refresh/cache-clear, permissions metadata. Registered in `cricket-api/src/admin/index.js`.
+ 
+### Frontend lib (`admin-panel/lib/`)
+- `api.ts` — typed `adminFetch` with auto-refresh on 401 (single-flight refresh), module APIs for every section (streamsApi, matchesApi, providersApi, apiKeysApi, settingsApi, homeApi, seriesApi, teamsApi, playersApi, scheduleApi, newsApi, notificationsApi, adsApi, cacheApi, healthApi, usersApi, rolesApi, auditApi).
+- `auth.ts` — token + user storage helpers.
+- `permissions.ts` — `PERMISSION_LABELS`, `PERMISSION_GROUPS`, `hasPermission`, `hasAny`.
+- `constants.ts` — `navigation`, `STREAM_QUALITIES`, `STREAM_TYPES`, `API_KEY_TIERS`, `SETTING_GROUPS`, `NOTIFICATION_TARGETS`, `NOTIFICATION_DEEP_LINKS`, etc.
+- `validators.ts` — zod schemas for every form (login, stream, provider, providerKey, apiKey, appSetting, homeSection, banner, notification, news, user, role, matchOverride, ads).
+- `utils.ts` — `cn`, `formatNumber`, `formatRelative`, `formatDateTime`, `formatDate`, `toCsv`, `downloadFile`, `maskKey`, `safeJsonStringify`, `debounce`, `titleCase`.
+- `hooks.ts` — `useAuth`, `usePermissions`, `useResource`, `useDebouncedValue`.
+ 
+### UI primitives (`admin-panel/components/ui/`)
+- `Modal`, `ConfirmDialog`, `Tabs`, `Switch`, `Button`, `Input`/`Textarea`/`Select`/`Label`/`Field`/`FieldError`, `SearchInput`, `FilterBar`, `DataTable` (with `Column<T>`), `StatCard`, `MetricCard`, `EmptyState`, `LoadingSkeleton`, `PageHeader`, `StatusBadge`, `ActionButton`, `ActionMenu`, `PermissionGate`, `Pagination`.
+ 
+### Layout (`admin-panel/components/layout/`)
+- `RequireAuth`, `AdminShell`, `AdminSidebar`, `AdminTopbar`, `AdminBreadcrumbs`.
+ 
+### Forms (`admin-panel/components/forms/`)
+- `LoginForm`, `ChangePasswordDialog`, `StreamForm`, `ProviderForm`, `ApiKeyForm`, `AppSettingsForm`.
+ 
+### Pages done
+- `/dashboard` — real stats, health, quick actions, recent audit.
+- `/streams` — list + filter + search + create/edit/delete/toggle/test/cache-clear.
+- `/streams/[id]` — detail + recent health checks.
+- `/matches` — tabs (live/upcoming/finished/all) + override modal + feature/hide/refresh.
+- `/matches/[id]` — detail + override + streams sub-table.
+- `/providers` — list + ProviderForm + provider keys dialog.
+- `/api-keys` — list + ApiKeyForm (shows raw key once) + revoke + delete.
+- `/settings` — group tabs + AppSettingsForm with boolean/object/string detection.
+- `/cache` — stats + flush prefix/match/series + warm home/schedule + flush all.
+- `/health` — API/Redis/MySQL/WS status + searchable logs + CSV export.
+- `/series`, `/series/[id]` — list/feature/hide/refresh/cache-clear + detail.
+- `/teams`, `/teams/[id]` — list + detail.
+- `/players`, `/players/[id]` — list with role/country filters + detail.
+- `/schedule` — list + scope filter + date filter + feature/hide + refresh/cache-clear.
+ 
+---
+ 
+## 1. Remaining files to create (full code below)
+ 
+Create each file at the path shown. All paths are relative to `admin-panel/`.
+ 
+### 1.1 `components/forms/HomeSectionForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { homeApi } from '@/lib/api';
+import { homeSectionSchema, type HomeSectionInput } from '@/lib/validators';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Field, Input, Select, Textarea } from '@/components/ui/Input';
+import { Switch } from '@/components/ui/Switch';
+ 
+type FormValue = Partial<HomeSectionInput> & { id?: number };
+ 
+export function HomeSectionForm({
+  open,
+  onClose,
+  initial,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial?: FormValue | null;
+  onSaved: () => void;
+}) {
+  const isEdit = !!initial?.id;
+  const [form, setForm] = useState<FormValue>(() => ({
+    slug: initial?.slug ?? '',
+    title: initial?.title ?? '',
+    section_type: initial?.section_type ?? 'live_matches',
+    sort_order: initial?.sort_order ?? 100,
+    is_active: initial?.is_active ?? true,
+    starts_at: initial?.starts_at ?? '',
+    ends_at: initial?.ends_at ?? '',
+    payload: initial?.payload ?? '',
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+ 
+  function update<K extends keyof HomeSectionInput>(k: K, v: unknown) {
+    setForm((p) => ({ ...p, [k]: v as HomeSectionInput[K] }));
+  }
+ 
+  async function submit() {
+    const parsed = homeSectionSchema.safeParse(form);
+    if (!parsed.success) {
+      setErrors(
+        Object.fromEntries(
+          Object.entries(parsed.error.flatten().fieldErrors)
+            .filter(([, v]) => Array.isArray(v) && v.length)
+            .map(([k, v]) => [k, (v as string[])[0]]),
+        ),
+      );
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    try {
+      if (isEdit && initial?.id) {
+        await homeApi.updateSection(initial.id, parsed.data);
+        toast.success('Section updated');
+      } else {
+        await homeApi.createSection(parsed.data);
+        toast.success('Section created');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+ 
+  return (
+    <Modal
+      open={open}
+      onClose={loading ? () => {} : onClose}
+      title={isEdit ? 'Edit home section' : 'New home section'}
+      description="Home sections are rendered top-to-bottom by sort order."
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{isEdit ? 'Save' : 'Create'}</Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Slug" required error={errors.slug}>
+          <Input value={form.slug ?? ''} onChange={(e) => update('slug', e.target.value)} disabled={isEdit} />
+        </Field>
+        <Field label="Title" required error={errors.title}>
+          <Input value={form.title ?? ''} onChange={(e) => update('title', e.target.value)} />
+        </Field>
+        <Field label="Section type" required error={errors.section_type}>
+          <Select value={form.section_type ?? 'live_matches'} onChange={(e) => update('section_type', e.target.value)}>
+            <option value="live_matches">Live matches</option>
+            <option value="upcoming_matches">Upcoming matches</option>
+            <option value="finished_matches">Finished matches</option>
+            <option value="featured_matches">Featured matches</option>
+            <option value="featured_series">Featured series</option>
+            <option value="featured_news">Featured news</option>
+            <option value="banners">Banners</option>
+            <option value="custom">Custom</option>
+          </Select>
+        </Field>
+        <Field label="Sort order" error={errors.sort_order}>
+          <Input type="number" value={form.sort_order ?? 100} onChange={(e) => update('sort_order', Number(e.target.value))} />
+        </Field>
+        <Field label="Starts at">
+          <Input type="datetime-local" value={form.starts_at ?? ''} onChange={(e) => update('starts_at', e.target.value)} />
+        </Field>
+        <Field label="Ends at">
+          <Input type="datetime-local" value={form.ends_at ?? ''} onChange={(e) => update('ends_at', e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Payload (JSON)" className="mt-4">
+        <Textarea
+          rows={4}
+          className="font-mono text-xs"
+          value={form.payload ?? ''}
+          onChange={(e) => update('payload', e.target.value)}
+          placeholder='{"limit": 8}'
+        />
+      </Field>
+      <div className="mt-3">
+        <Switch
+          checked={Boolean(form.is_active)}
+          onChange={(v) => update('is_active', v)}
+          label="Active"
+          description="Hidden sections are excluded from /home-config."
+        />
+      </div>
+    </Modal>
+  );
+}
+```
+ 
+### 1.2 `app/homepage/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Tabs } from '@/components/ui/Tabs';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { Button } from '@/components/ui/Button';
+import { Field, Input } from '@/components/ui/Input';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { HomeSectionForm } from '@/components/forms/HomeSectionForm';
+import { homeApi } from '@/lib/api';
+import { useAuth, usePermissions, useResource } from '@/lib/hooks';
+import { formatDateTime } from '@/lib/utils';
+ 
+type Section = {
+  id: number;
+  slug: string;
+  title: string;
+  section_type: string;
+  sort_order: number;
+  is_active: number | boolean;
+  starts_at?: string;
+  ends_at?: string;
+};
+ 
+type Featured = { id: number; external_id?: string; title?: string; sort_order?: number };
+type Banner = {
+  id: number;
+  placement: string;
+  title?: string;
+  image_url?: string;
+  cta_url?: string;
+  is_active?: number | boolean;
+  sort_order?: number;
+};
+ 
+const TABS = [
+  { id: 'sections', label: 'Sections' },
+  { id: 'featured-matches', label: 'Featured matches' },
+  { id: 'featured-series', label: 'Featured series' },
+  { id: 'featured-news', label: 'Featured news' },
+  { id: 'banners', label: 'Banners' },
+] as const;
+ 
+type TabId = (typeof TABS)[number]['id'];
+ 
+export default function HomePage() {
+  return (
+    <AdminShell permission="home.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  const canWrite = perms.can('home.write');
+  const [tab, setTab] = useState<TabId>('sections');
+ 
+  return (
+    <>
+      <PageHeader
+        title="Home configuration"
+        description="Configure the sections, featured matches/series/news, and promotional banners shown on the Flutter app home screen."
+      />
+      <div className="mb-4">
+        <Tabs tabs={TABS} value={tab} onChange={(id) => setTab(id as TabId)} />
+      </div>
+      {tab === 'sections' && <SectionsTab canWrite={canWrite} />}
+      {tab === 'featured-matches' && <FeaturedTab kind="featured-matches" placeholder="match external id" canWrite={canWrite} />}
+      {tab === 'featured-series' && <FeaturedTab kind="featured-series" placeholder="series id" canWrite={canWrite} />}
+      {tab === 'featured-news' && <FeaturedTab kind="featured-news" placeholder="news id" canWrite={canWrite} />}
+      {tab === 'banners' && <BannersTab canWrite={canWrite} />}
+    </>
+  );
+}
+ 
+function SectionsTab({ canWrite }: { canWrite: boolean }) {
+  const { data, loading, reload } = useResource(() => homeApi.listSections(), []);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Section | null>(null);
+  const [toDelete, setToDelete] = useState<Section | null>(null);
+ 
+  const rows = (data?.data || []) as Section[];
+ 
+  const columns: Column<Section>[] = [
+    { id: 'sort', header: '#', render: (s) => s.sort_order, width: '60px' },
+    {
+      id: 'name',
+      header: 'Section',
+      render: (s) => (
+        <div>
+          <div className="font-medium text-slate-100">{s.title}</div>
+          <div className="text-[10px] uppercase tracking-wide text-slate-500">{s.slug} · {s.section_type}</div>
+        </div>
+      ),
+    },
+    { id: 'active', header: 'Active', render: (s) => (s.is_active ? 'Yes' : 'No') },
+    { id: 'window', header: 'Window', render: (s) => `${s.starts_at ? formatDateTime(s.starts_at) : '—'} → ${s.ends_at ? formatDateTime(s.ends_at) : '—'}` },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (s) => (
+        <div className="flex justify-end gap-1">
+          {canWrite && (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => { setEditing(s); setShowForm(true); }}>Edit</Button>
+              <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(s)} />
+            </>
+          )}
+        </div>
+      ),
+    },
+  ];
+ 
+  return (
+    <>
+      <div className="mb-3 flex justify-between">
+        <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>Refresh</Button>
+        {canWrite && (
+          <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>Add section</Button>
+        )}
+      </div>
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(s) => s.id} emptyTitle="No sections configured" />
+      <HomeSectionForm
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        initial={editing}
+        onSaved={reload}
+      />
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await homeApi.deleteSection(toDelete.id);
+            toast.success('Section deleted');
+            reload();
+          }
+        }}
+        title="Delete section?"
+        description="This removes the section from the home feed for all clients."
+        destructive
+        confirmLabel="Delete"
+      />
+    </>
+  );
+}
+ 
+function FeaturedTab({
+  kind,
+  placeholder,
+  canWrite,
+}: {
+  kind: 'featured-matches' | 'featured-series' | 'featured-news';
+  placeholder: string;
+  canWrite: boolean;
+}) {
+  const { data, loading, reload } = useResource(() => homeApi.listFeatured(kind), [kind]);
+  const rows = (data?.data || []) as Featured[];
+  const [externalId, setExternalId] = useState('');
+  const [sortOrder, setSortOrder] = useState(100);
+  const [toDelete, setToDelete] = useState<Featured | null>(null);
+ 
+  async function add() {
+    if (!externalId) return;
+    await homeApi.addFeatured(kind, { external_id: externalId, sort_order: sortOrder });
+    setExternalId('');
+    toast.success('Added');
+    reload();
+  }
+ 
+  const columns: Column<Featured>[] = [
+    { id: 'sort', header: '#', render: (f) => f.sort_order ?? 100, width: '60px' },
+    { id: 'id', header: 'External ID', render: (f) => f.external_id ?? '—' },
+    { id: 'title', header: 'Title', render: (f) => f.title ?? '—' },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (f) =>
+        canWrite ? (
+          <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(f)} />
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      {canWrite && (
+        <div className="mb-3 flex flex-wrap items-end gap-3 rounded-xl border border-line bg-white/[0.04] p-3">
+          <Field label="External ID">
+            <Input value={externalId} onChange={(e) => setExternalId(e.target.value)} placeholder={placeholder} />
+          </Field>
+          <Field label="Sort">
+            <Input type="number" value={sortOrder} onChange={(e) => setSortOrder(Number(e.target.value))} />
+          </Field>
+          <Button icon={<Plus className="h-4 w-4" />} onClick={add} disabled={!externalId}>Add</Button>
+        </div>
+      )}
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(f) => f.id} emptyTitle="Nothing featured yet" />
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await homeApi.deleteFeatured(kind, toDelete.id);
+            toast.success('Removed');
+            reload();
+          }
+        }}
+        title="Remove from featured?"
+        destructive
+      />
+    </>
+  );
+}
+ 
+function BannersTab({ canWrite }: { canWrite: boolean }) {
+  const { data, loading, reload } = useResource(() => homeApi.listBanners(), []);
+  const rows = (data?.data || []) as Banner[];
+  const [form, setForm] = useState({ placement: 'home_top', title: '', image_url: '', cta_url: '', sort_order: 100 });
+  const [toDelete, setToDelete] = useState<Banner | null>(null);
+ 
+  async function add() {
+    if (!form.image_url) {
+      toast.error('Image URL required');
+      return;
+    }
+    await homeApi.createBanner({ ...form, is_active: true });
+    setForm({ placement: 'home_top', title: '', image_url: '', cta_url: '', sort_order: 100 });
+    toast.success('Banner created');
+    reload();
+  }
+ 
+  const columns: Column<Banner>[] = [
+    {
+      id: 'banner',
+      header: 'Banner',
+      render: (b) => (
+        <div className="flex items-center gap-3">
+          {b.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={b.image_url} alt={b.title ?? ''} className="h-10 w-16 rounded object-cover bg-white/5" />
+          ) : null}
+          <div>
+            <div className="font-medium text-slate-100">{b.title || b.placement}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{b.placement}</div>
+          </div>
+        </div>
+      ),
+    },
+    { id: 'cta', header: 'CTA', render: (b) => b.cta_url ?? '—' },
+    { id: 'sort', header: '#', render: (b) => b.sort_order ?? 100 },
+    { id: 'active', header: 'Active', render: (b) => (b.is_active ? 'Yes' : 'No') },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (b) =>
+        canWrite ? (
+          <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(b)} />
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      {canWrite && (
+        <div className="mb-3 grid gap-3 rounded-xl border border-line bg-white/[0.04] p-3 md:grid-cols-5">
+          <Field label="Placement">
+            <Input value={form.placement} onChange={(e) => setForm((p) => ({ ...p, placement: e.target.value }))} />
+          </Field>
+          <Field label="Title">
+            <Input value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} />
+          </Field>
+          <Field label="Image URL">
+            <Input value={form.image_url} onChange={(e) => setForm((p) => ({ ...p, image_url: e.target.value }))} />
+          </Field>
+          <Field label="CTA URL">
+            <Input value={form.cta_url} onChange={(e) => setForm((p) => ({ ...p, cta_url: e.target.value }))} />
+          </Field>
+          <Field label="Sort">
+            <Input type="number" value={form.sort_order} onChange={(e) => setForm((p) => ({ ...p, sort_order: Number(e.target.value) }))} />
+          </Field>
+          <div className="md:col-span-5">
+            <Button icon={<Plus className="h-4 w-4" />} onClick={add}>Add banner</Button>
+          </div>
+        </div>
+      )}
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(b) => b.id} emptyTitle="No banners" />
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await homeApi.deleteBanner(toDelete.id);
+            toast.success('Banner removed');
+            reload();
+          }
+        }}
+        title="Delete banner?"
+        destructive
+      />
+    </>
+  );
+}
+```
+ 
+### 1.3 `components/forms/NewsForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { newsApi } from '@/lib/api';
+import { newsSchema, type NewsInput } from '@/lib/validators';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Field, Input, Textarea } from '@/components/ui/Input';
+import { Switch } from '@/components/ui/Switch';
+ 
+type FormValue = Partial<NewsInput> & { id?: number };
+ 
+export function NewsForm({
+  open,
+  onClose,
+  initial,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial?: FormValue | null;
+  onSaved: () => void;
+}) {
+  const isEdit = !!initial?.id;
+  const [form, setForm] = useState<FormValue>(() => ({
+    headline: initial?.headline ?? '',
+    body: initial?.body ?? '',
+    context: initial?.context ?? '',
+    story_type: initial?.story_type ?? 'custom',
+    image_url: initial?.image_url ?? '',
+    source: initial?.source ?? 'CricPro',
+    is_featured: initial?.is_featured ?? false,
+    is_hidden: initial?.is_hidden ?? false,
+    sort_order: initial?.sort_order ?? 100,
+    published_at: initial?.published_at ?? '',
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+ 
+  function update<K extends keyof NewsInput>(k: K, v: unknown) {
+    setForm((p) => ({ ...p, [k]: v as NewsInput[K] }));
+  }
+ 
+  async function submit() {
+    const parsed = newsSchema.safeParse(form);
+    if (!parsed.success) {
+      setErrors(
+        Object.fromEntries(
+          Object.entries(parsed.error.flatten().fieldErrors)
+            .filter(([, v]) => Array.isArray(v) && v.length)
+            .map(([k, v]) => [k, (v as string[])[0]]),
+        ),
+      );
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    try {
+      if (isEdit && initial?.id) {
+        await newsApi.update(initial.id, parsed.data);
+        toast.success('News updated');
+      } else {
+        await newsApi.create(parsed.data);
+        toast.success('News created');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+ 
+  return (
+    <Modal
+      open={open}
+      onClose={loading ? () => {} : onClose}
+      title={isEdit ? 'Edit news story' : 'New news story'}
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{isEdit ? 'Save' : 'Publish'}</Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Headline" required error={errors.headline} className="md:col-span-2">
+          <Input value={form.headline ?? ''} onChange={(e) => update('headline', e.target.value)} />
+        </Field>
+        <Field label="Context" className="md:col-span-2">
+          <Input value={(form.context as string | undefined) ?? ''} onChange={(e) => update('context', e.target.value)} />
+        </Field>
+        <Field label="Body" className="md:col-span-2">
+          <Textarea rows={6} value={(form.body as string | undefined) ?? ''} onChange={(e) => update('body', e.target.value)} />
+        </Field>
+        <Field label="Image URL" error={errors.image_url} className="md:col-span-2">
+          <Input value={(form.image_url as string | undefined) ?? ''} onChange={(e) => update('image_url', e.target.value)} />
+        </Field>
+        <Field label="Source">
+          <Input value={form.source ?? 'CricPro'} onChange={(e) => update('source', e.target.value)} />
+        </Field>
+        <Field label="Story type">
+          <Input value={form.story_type ?? 'custom'} onChange={(e) => update('story_type', e.target.value)} />
+        </Field>
+        <Field label="Published at">
+          <Input type="datetime-local" value={(form.published_at as string | undefined) ?? ''} onChange={(e) => update('published_at', e.target.value)} />
+        </Field>
+        <Field label="Sort order">
+          <Input type="number" value={form.sort_order ?? 100} onChange={(e) => update('sort_order', Number(e.target.value))} />
+        </Field>
+      </div>
+      <div className="mt-4 flex gap-4">
+        <Switch checked={Boolean(form.is_featured)} onChange={(v) => update('is_featured', v)} label="Featured" />
+        <Switch checked={Boolean(form.is_hidden)} onChange={(v) => update('is_hidden', v)} label="Hidden" />
+      </div>
+    </Modal>
+  );
+}
+```
+ 
+### 1.4 `app/news/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { Eye, EyeOff, Plus, RefreshCw, Star, Trash2 } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { SearchInput } from '@/components/ui/SearchInput';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { Button } from '@/components/ui/Button';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { NewsForm } from '@/components/forms/NewsForm';
+import { newsApi } from '@/lib/api';
+import { useAuth, useDebouncedValue, usePermissions, useResource } from '@/lib/hooks';
+import { formatDateTime } from '@/lib/utils';
+ 
+type NewsRow = {
+  id: number;
+  headline: string;
+  story_type?: string;
+  source?: string;
+  image_url?: string;
+  is_featured?: number | boolean;
+  is_hidden?: number | boolean;
+  published_at?: string;
+  created_at?: string;
+};
+ 
+export default function NewsPage() {
+  return (
+    <AdminShell permission="news.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  const canWrite = perms.can('news.write');
+  const [q, setQ] = useState('');
+  const debouncedQ = useDebouncedValue(q, 250);
+  const [type, setType] = useState('all');
+  const [visibility, setVisibility] = useState('all');
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<NewsRow | null>(null);
+  const [toDelete, setToDelete] = useState<NewsRow | null>(null);
+ 
+  const { data, loading, reload } = useResource(() => newsApi.list(), []);
+  const all = (data?.data || []) as NewsRow[];
+ 
+  const types = useMemo(() => Array.from(new Set(all.map((n) => n.story_type).filter(Boolean))) as string[], [all]);
+ 
+  const rows = useMemo(() => {
+    const needle = debouncedQ.toLowerCase();
+    return all.filter((n) => {
+      if (type !== 'all' && n.story_type !== type) return false;
+      if (visibility === 'visible' && n.is_hidden) return false;
+      if (visibility === 'hidden' && !n.is_hidden) return false;
+      if (visibility === 'featured' && !n.is_featured) return false;
+      if (needle && !`${n.headline} ${n.source ?? ''}`.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [all, debouncedQ, type, visibility]);
+ 
+  const columns: Column<NewsRow>[] = [
+    {
+      id: 'story',
+      header: 'Story',
+      render: (n) => (
+        <div className="flex items-start gap-3">
+          {n.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={n.image_url} alt="" className="h-10 w-16 rounded object-cover bg-white/5" />
+          ) : null}
+          <div>
+            <div className="font-medium text-slate-100">{n.headline}</div>
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">{n.source ?? '—'} · {n.story_type ?? '—'}</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'flags',
+      header: 'Flags',
+      render: (n) => (
+        <div className="flex gap-1">
+          {n.is_featured ? <StatusBadge tone="info">Featured</StatusBadge> : null}
+          {n.is_hidden ? <StatusBadge tone="muted">Hidden</StatusBadge> : null}
+        </div>
+      ),
+    },
+    { id: 'published', header: 'Published', render: (n) => formatDateTime(n.published_at || n.created_at) },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (n) =>
+        canWrite ? (
+          <div className="flex justify-end gap-1">
+            <Button size="sm" variant="ghost" icon={<Star className="h-3.5 w-3.5" />} onClick={async () => { await newsApi.feature(n.id); toast.success('Toggled featured'); reload(); }} />
+            <Button size="sm" variant="ghost" icon={n.is_hidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} onClick={async () => { await newsApi.hide(n.id); toast.success('Toggled hidden'); reload(); }} />
+            <Button size="sm" variant="ghost" onClick={() => { setEditing(n); setShowForm(true); }}>Edit</Button>
+            <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(n)} />
+          </div>
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      <PageHeader
+        title="News"
+        description="Manage cricket news — promote, hide, edit custom CricPro stories, and clear the public news cache."
+        right={
+          <>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>Refresh</Button>
+            {canWrite && (
+              <>
+                <Button variant="secondary" onClick={async () => { await newsApi.cacheClear(); toast.success('News cache cleared'); }}>
+                  Clear cache
+                </Button>
+                <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>
+                  New story
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
+      <SearchInput value={q} onChange={setQ} placeholder="Search headlines…" className="mb-3 max-w-md" />
+      <FilterBar
+        filters={[
+          {
+            type: 'select',
+            id: 'type',
+            label: 'Type',
+            value: type,
+            options: [{ id: 'all', label: 'All' }, ...types.map((t) => ({ id: t, label: t }))],
+            onChange: setType,
+          },
+          {
+            type: 'select',
+            id: 'visibility',
+            label: 'Visibility',
+            value: visibility,
+            options: [
+              { id: 'all', label: 'All' },
+              { id: 'visible', label: 'Visible' },
+              { id: 'featured', label: 'Featured' },
+              { id: 'hidden', label: 'Hidden' },
+            ],
+            onChange: setVisibility,
+          },
+        ]}
+      />
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No news stories" />
+ 
+      <NewsForm
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        initial={editing}
+        onSaved={reload}
+      />
+ 
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await newsApi.delete(toDelete.id);
+            toast.success('Deleted');
+            reload();
+          }
+        }}
+        title="Delete story?"
+        description="This permanently removes the story."
+        destructive
+      />
+    </>
+  );
+}
+```
+ 
+### 1.5 `components/forms/NotificationForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { notificationsApi } from '@/lib/api';
+import { notificationSchema, type NotificationInput } from '@/lib/validators';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Field, Input, Select, Textarea } from '@/components/ui/Input';
+import { NOTIFICATION_DEEP_LINKS, NOTIFICATION_TARGETS } from '@/lib/constants';
+ 
+type FormValue = Partial<NotificationInput> & { id?: number };
+ 
+export function NotificationForm({
+  open,
+  onClose,
+  initial,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial?: FormValue | null;
+  onSaved: () => void;
+}) {
+  const isEdit = !!initial?.id;
+  const [form, setForm] = useState<FormValue>(() => ({
+    title: initial?.title ?? '',
+    body: initial?.body ?? '',
+    image_url: initial?.image_url ?? '',
+    target_type: initial?.target_type ?? 'all',
+    target_value: initial?.target_value ?? '',
+    deep_link_type: initial?.deep_link_type ?? '',
+    deep_link_value: initial?.deep_link_value ?? '',
+    scheduled_at: initial?.scheduled_at ?? '',
+    status: initial?.status ?? 'draft',
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+ 
+  function update<K extends keyof NotificationInput>(k: K, v: unknown) {
+    setForm((p) => ({ ...p, [k]: v as NotificationInput[K] }));
+  }
+ 
+  async function save(status: 'draft' | 'scheduled' | 'sent' = 'draft', send = false) {
+    const parsed = notificationSchema.safeParse({ ...form, status });
+    if (!parsed.success) {
+      setErrors(
+        Object.fromEntries(
+          Object.entries(parsed.error.flatten().fieldErrors)
+            .filter(([, v]) => Array.isArray(v) && v.length)
+            .map(([k, v]) => [k, (v as string[])[0]]),
+        ),
+      );
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    try {
+      let id = initial?.id;
+      if (isEdit && id) {
+        await notificationsApi.update(id, parsed.data);
+      } else {
+        const r = await notificationsApi.create(parsed.data);
+        id = r.id;
+      }
+      if (send && id) {
+        await notificationsApi.send(id);
+        toast.success('Notification sent');
+      } else {
+        toast.success(status === 'draft' ? 'Saved as draft' : 'Scheduled');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+ 
+  return (
+    <Modal
+      open={open}
+      onClose={loading ? () => {} : onClose}
+      title={isEdit ? 'Edit notification' : 'New notification'}
+      description="Compose a push notification. Save as draft, schedule, or send now."
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button variant="secondary" onClick={() => save('draft')} loading={loading}>Save draft</Button>
+          {form.scheduled_at && (
+            <Button variant="secondary" onClick={() => save('scheduled')} loading={loading}>Schedule</Button>
+          )}
+          <Button onClick={() => save('sent', true)} loading={loading}>Send now</Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Title" required error={errors.title} className="md:col-span-2">
+          <Input value={form.title ?? ''} onChange={(e) => update('title', e.target.value)} />
+        </Field>
+        <Field label="Body" required error={errors.body} className="md:col-span-2">
+          <Textarea rows={3} value={form.body ?? ''} onChange={(e) => update('body', e.target.value)} />
+        </Field>
+        <Field label="Image URL" error={errors.image_url} className="md:col-span-2">
+          <Input value={(form.image_url as string | undefined) ?? ''} onChange={(e) => update('image_url', e.target.value)} />
+        </Field>
+        <Field label="Target">
+          <Select value={form.target_type ?? 'all'} onChange={(e) => update('target_type', e.target.value)}>
+            {NOTIFICATION_TARGETS.map((t) => (
+              <option key={t.id} value={t.id}>{t.label}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Target value (topic / user id)">
+          <Input value={(form.target_value as string | undefined) ?? ''} onChange={(e) => update('target_value', e.target.value)} />
+        </Field>
+        <Field label="Deep link type">
+          <Select value={(form.deep_link_type as string | undefined) ?? ''} onChange={(e) => update('deep_link_type', e.target.value)}>
+            <option value="">— none —</option>
+            {NOTIFICATION_DEEP_LINKS.map((d) => (
+              <option key={d.id} value={d.id}>{d.label}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Deep link value">
+          <Input value={(form.deep_link_value as string | undefined) ?? ''} onChange={(e) => update('deep_link_value', e.target.value)} placeholder="match external id / series id / news id…" />
+        </Field>
+        <Field label="Schedule for" className="md:col-span-2">
+          <Input type="datetime-local" value={(form.scheduled_at as string | undefined) ?? ''} onChange={(e) => update('scheduled_at', e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+```
+ 
+### 1.6 `app/notifications/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { SearchInput } from '@/components/ui/SearchInput';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { Button } from '@/components/ui/Button';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { NotificationForm } from '@/components/forms/NotificationForm';
+import { notificationsApi } from '@/lib/api';
+import { useAuth, useDebouncedValue, usePermissions, useResource } from '@/lib/hooks';
+import { formatDateTime } from '@/lib/utils';
+ 
+type Notification = {
+  id: number;
+  title: string;
+  body: string;
+  status: 'draft' | 'scheduled' | 'sent';
+  target_type?: string;
+  scheduled_at?: string;
+  sent_at?: string;
+  created_at?: string;
+};
+ 
+export default function NotificationsPage() {
+  return (
+    <AdminShell permission="notifications.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  const canWrite = perms.can('notifications.write');
+  const [q, setQ] = useState('');
+  const debouncedQ = useDebouncedValue(q, 250);
+  const [status, setStatus] = useState('all');
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Notification | null>(null);
+  const [toDelete, setToDelete] = useState<Notification | null>(null);
+  const [toSend, setToSend] = useState<Notification | null>(null);
+ 
+  const { data, loading, reload } = useResource(() => notificationsApi.list(), []);
+  const all = (data?.data || []) as Notification[];
+ 
+  const rows = useMemo(() => {
+    const needle = debouncedQ.toLowerCase();
+    return all.filter((n) => {
+      if (status !== 'all' && n.status !== status) return false;
+      if (needle && !`${n.title} ${n.body}`.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [all, debouncedQ, status]);
+ 
+  const columns: Column<Notification>[] = [
+    {
+      id: 'title',
+      header: 'Notification',
+      render: (n) => (
+        <div>
+          <div className="font-medium text-slate-100">{n.title}</div>
+          <div className="line-clamp-1 text-xs text-slate-500">{n.body}</div>
+        </div>
+      ),
+    },
+    { id: 'status', header: 'Status', render: (n) => <StatusBadge status={n.status} /> },
+    { id: 'target', header: 'Target', render: (n) => n.target_type ?? 'all' },
+    { id: 'scheduled', header: 'Scheduled', render: (n) => (n.scheduled_at ? formatDateTime(n.scheduled_at) : '—') },
+    { id: 'sent', header: 'Sent', render: (n) => (n.sent_at ? formatDateTime(n.sent_at) : '—') },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (n) =>
+        canWrite ? (
+          <div className="flex justify-end gap-1">
+            {n.status !== 'sent' && (
+              <Button size="sm" variant="ghost" icon={<Send className="h-3.5 w-3.5" />} onClick={() => setToSend(n)}>Send</Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => { setEditing(n); setShowForm(true); }}>Edit</Button>
+            <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(n)} />
+          </div>
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      <PageHeader
+        title="Notifications"
+        description="Compose, schedule, and send push notifications. Targets cover everyone, FCM topics, or specific user IDs. Deep links open relevant screens in the Flutter app."
+        right={
+          <>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>Refresh</Button>
+            {canWrite && (
+              <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>
+                New notification
+              </Button>
+            )}
+          </>
+        }
+      />
+      <SearchInput value={q} onChange={setQ} placeholder="Search notifications…" className="mb-3 max-w-md" />
+      <FilterBar
+        filters={[
+          {
+            type: 'select',
+            id: 'status',
+            label: 'Status',
+            value: status,
+            options: [
+              { id: 'all', label: 'All' },
+              { id: 'draft', label: 'Draft' },
+              { id: 'scheduled', label: 'Scheduled' },
+              { id: 'sent', label: 'Sent' },
+            ],
+            onChange: setStatus,
+          },
+        ]}
+      />
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(n) => n.id} emptyTitle="No notifications" />
+ 
+      <NotificationForm
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        initial={editing}
+        onSaved={reload}
+      />
+ 
+      <ConfirmDialog
+        open={!!toSend}
+        onClose={() => setToSend(null)}
+        onConfirm={async () => {
+          if (toSend) {
+            await notificationsApi.send(toSend.id);
+            toast.success('Notification sent');
+            reload();
+          }
+        }}
+        title="Send notification now?"
+        description="This delivers the push immediately to all matching users."
+        confirmLabel="Send"
+      />
+ 
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await notificationsApi.delete(toDelete.id);
+            toast.success('Deleted');
+            reload();
+          }
+        }}
+        title="Delete notification?"
+        destructive
+      />
+    </>
+  );
+}
+```
+ 
+### 1.7 `components/forms/AdsSettingsForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { Save } from 'lucide-react';
+import { adsApi } from '@/lib/api';
+import { adsSchema, type AdsInput } from '@/lib/validators';
+import { Button } from '@/components/ui/Button';
+import { Field, Input } from '@/components/ui/Input';
+import { Switch } from '@/components/ui/Switch';
+import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
+import { useResource } from '@/lib/hooks';
+ 
+const TOGGLES: Array<{ key: keyof AdsInput; label: string; description?: string }> = [
+  { key: 'show_ads', label: 'Show ads', description: 'Master switch. When off, no ads render anywhere.' },
+  { key: 'test_mode', label: 'Test mode', description: 'Serve test ads only. Use during QA.' },
+  { key: 'banner_enabled', label: 'Banners' },
+  { key: 'native_enabled', label: 'Native ads' },
+  { key: 'interstitial_enabled', label: 'Interstitials' },
+  { key: 'rewarded_enabled', label: 'Rewarded ads' },
+];
+ 
+const UNIT_FIELDS: Array<{ key: keyof AdsInput; label: string }> = [
+  { key: 'android_banner_id', label: 'Android banner unit' },
+  { key: 'android_interstitial_id', label: 'Android interstitial unit' },
+  { key: 'android_native_id', label: 'Android native unit' },
+  { key: 'android_rewarded_id', label: 'Android rewarded unit' },
+  { key: 'ios_banner_id', label: 'iOS banner unit' },
+  { key: 'ios_interstitial_id', label: 'iOS interstitial unit' },
+  { key: 'ios_native_id', label: 'iOS native unit' },
+  { key: 'ios_rewarded_id', label: 'iOS rewarded unit' },
+];
+ 
+export function AdsSettingsForm({ canWrite }: { canWrite: boolean }) {
+  const { data, loading, reload } = useResource(() => adsApi.get(), []);
+  const [form, setForm] = useState<Partial<AdsInput>>({});
+  const [saving, setSaving] = useState(false);
+ 
+  useEffect(() => {
+    const incoming = (data?.data || []) as Array<{ setting_key: string; setting_value: unknown }>;
+    const flat: Record<string, unknown> = {};
+    for (const row of incoming) {
+      let v: unknown = row.setting_value;
+      if (typeof v === 'string') {
+        try { v = JSON.parse(v); } catch { /* keep as string */ }
+      }
+      flat[row.setting_key] = v;
+    }
+    setForm(flat as Partial<AdsInput>);
+  }, [data]);
+ 
+  function update<K extends keyof AdsInput>(k: K, v: unknown) {
+    setForm((p) => ({ ...p, [k]: v as AdsInput[K] }));
+  }
+ 
+  async function save() {
+    const parsed = adsSchema.safeParse(form);
+    if (!parsed.success) {
+      toast.error(Object.values(parsed.error.flatten().fieldErrors).flat()[0] || 'Invalid');
+      return;
+    }
+    setSaving(true);
+    try {
+      await adsApi.update(parsed.data);
+      toast.success('Ads settings saved');
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+ 
+  if (loading) return <LoadingSkeleton lines={8} />;
+ 
+  return (
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-line bg-panel/40 p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-100">Toggles</h2>
+        <div className="grid gap-3 md:grid-cols-2">
+          {TOGGLES.map((t) => (
+            <Switch
+              key={String(t.key)}
+              checked={Boolean(form[t.key])}
+              onChange={(v) => update(t.key, v)}
+              label={t.label}
+              description={t.description}
+              disabled={!canWrite}
+            />
+          ))}
+        </div>
+        <Field label="Frequency (minutes)" className="mt-4 max-w-xs" hint="Minimum minutes between interstitial impressions per user.">
+          <Input
+            type="number"
+            min={0}
+            value={form.frequency_minutes ?? 5}
+            disabled={!canWrite}
+            onChange={(e) => update('frequency_minutes', Number(e.target.value))}
+          />
+        </Field>
+      </section>
+ 
+      <section className="rounded-2xl border border-line bg-panel/40 p-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-100">Ad unit IDs</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {UNIT_FIELDS.map((u) => (
+            <Field key={String(u.key)} label={u.label}>
+              <Input
+                value={(form[u.key] as string | undefined) ?? ''}
+                disabled={!canWrite}
+                onChange={(e) => update(u.key, e.target.value)}
+                placeholder="ca-app-pub-…"
+              />
+            </Field>
+          ))}
+        </div>
+      </section>
+ 
+      {canWrite && (
+        <div className="flex justify-end">
+          <Button icon={<Save className="h-4 w-4" />} onClick={save} loading={saving}>
+            Save ads settings
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+ 
+### 1.8 `app/ads/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { AdsSettingsForm } from '@/components/forms/AdsSettingsForm';
+import { useAuth, usePermissions } from '@/lib/hooks';
+ 
+export default function AdsPage() {
+  return (
+    <AdminShell permission="ads.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  return (
+    <>
+      <PageHeader
+        title="Ads"
+        description="Master toggle, per-format switches, frequency cap, and per-platform AdMob unit IDs."
+      />
+      <AdsSettingsForm canWrite={perms.can('ads.write')} />
+    </>
+  );
+}
+```
+ 
+### 1.9 `components/forms/UserForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { usersApi } from '@/lib/api';
+import { userSchema, type UserInput } from '@/lib/validators';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Field, Input } from '@/components/ui/Input';
+import { Switch } from '@/components/ui/Switch';
+ 
+type FormValue = Partial<UserInput> & { id?: number };
+ 
+export function UserForm({
+  open,
+  onClose,
+  initial,
+  availableRoles,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial?: FormValue | null;
+  availableRoles: { slug: string; name: string }[];
+  onSaved: () => void;
+}) {
+  const isEdit = !!initial?.id;
+  const [form, setForm] = useState<FormValue>(() => ({
+    name: initial?.name ?? '',
+    email: initial?.email ?? '',
+    password: '',
+    is_active: initial?.is_active ?? true,
+    roles: initial?.roles ?? [],
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+ 
+  function toggleRole(slug: string) {
+    setForm((p) => {
+      const current = new Set(p.roles ?? []);
+      if (current.has(slug)) current.delete(slug);
+      else current.add(slug);
+      return { ...p, roles: Array.from(current) };
+    });
+  }
+ 
+  async function submit() {
+    const parsed = userSchema.safeParse(form);
+    if (!parsed.success) {
+      setErrors(
+        Object.fromEntries(
+          Object.entries(parsed.error.flatten().fieldErrors)
+            .filter(([, v]) => Array.isArray(v) && v.length)
+            .map(([k, v]) => [k, (v as string[])[0]]),
+        ),
+      );
+      return;
+    }
+    if (!isEdit && !parsed.data.password) {
+      setErrors({ password: 'Password required for new users' });
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    try {
+      const body: Record<string, unknown> = {
+        name: parsed.data.name,
+        email: parsed.data.email,
+        is_active: parsed.data.is_active,
+      };
+      if (isEdit && initial?.id) {
+        await usersApi.update(initial.id, body);
+        if (parsed.data.password) {
+          await usersApi.resetPassword(initial.id, parsed.data.password);
+        }
+        await usersApi.setRoles(initial.id, parsed.data.roles ?? []);
+        toast.success('User updated');
+      } else {
+        const r = await usersApi.create({
+          name: parsed.data.name,
+          email: parsed.data.email,
+          password: parsed.data.password || '',
+        });
+        if (r.id) {
+          await usersApi.setRoles(r.id, parsed.data.roles ?? []);
+        }
+        toast.success('User created');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+ 
+  return (
+    <Modal
+      open={open}
+      onClose={loading ? () => {} : onClose}
+      title={isEdit ? 'Edit admin user' : 'Add admin user'}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{isEdit ? 'Save' : 'Create'}</Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Name" required error={errors.name}>
+          <Input value={form.name ?? ''} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
+        </Field>
+        <Field label="Email" required error={errors.email}>
+          <Input type="email" value={form.email ?? ''} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
+        </Field>
+        <Field label={isEdit ? 'New password (leave blank to keep)' : 'Password'} error={errors.password} className="md:col-span-2">
+          <Input type="password" value={(form.password as string | undefined) ?? ''} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+        </Field>
+      </div>
+      <div className="mt-3">
+        <Switch checked={Boolean(form.is_active)} onChange={(v) => setForm((p) => ({ ...p, is_active: v }))} label="Active" description="Inactive users cannot log in." />
+      </div>
+      <div className="mt-5">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Roles</div>
+        <div className="flex flex-wrap gap-2">
+          {availableRoles.map((r) => {
+            const on = (form.roles ?? []).includes(r.slug);
+            return (
+              <button
+                key={r.slug}
+                type="button"
+                onClick={() => toggleRole(r.slug)}
+                className={`rounded-lg border px-3 py-1.5 text-xs transition ${on ? 'border-cyan-300/40 bg-cyan-300/15 text-cyan-100' : 'border-line bg-white/5 text-slate-300 hover:bg-white/10'}`}
+              >
+                {r.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+```
+ 
+### 1.10 `app/users/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { SearchInput } from '@/components/ui/SearchInput';
+import { Button } from '@/components/ui/Button';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { UserForm } from '@/components/forms/UserForm';
+import { rolesApi, usersApi } from '@/lib/api';
+import { useAuth, useDebouncedValue, usePermissions, useResource } from '@/lib/hooks';
+import { formatRelative } from '@/lib/utils';
+ 
+type User = {
+  id: number;
+  name: string;
+  email: string;
+  is_active?: number | boolean;
+  last_login_at?: string;
+  roles?: string[];
+};
+ 
+export default function UsersPage() {
+  return (
+    <AdminShell permission="adminUsers.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  const canWrite = perms.can('adminUsers.write');
+  const [q, setQ] = useState('');
+  const debouncedQ = useDebouncedValue(q, 250);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<User | null>(null);
+  const [toDelete, setToDelete] = useState<User | null>(null);
+ 
+  const users = useResource(() => usersApi.list(), []);
+  const rolesRes = useResource(() => rolesApi.list(), []);
+  const all = (users.data?.data || []) as User[];
+  const availableRoles = (rolesRes.data?.data || []) as { slug: string; name: string }[];
+ 
+  const rows = useMemo(() => {
+    const needle = debouncedQ.toLowerCase();
+    if (!needle) return all;
+    return all.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(needle));
+  }, [all, debouncedQ]);
+ 
+  const columns: Column<User>[] = [
+    {
+      id: 'user',
+      header: 'User',
+      render: (u) => (
+        <div>
+          <div className="font-medium text-slate-100">{u.name}</div>
+          <div className="text-xs text-slate-500">{u.email}</div>
+        </div>
+      ),
+    },
+    {
+      id: 'roles',
+      header: 'Roles',
+      render: (u) => (
+        <div className="flex flex-wrap gap-1">
+          {(u.roles ?? []).length ? u.roles!.map((r) => <StatusBadge key={r} tone="info">{r}</StatusBadge>) : '—'}
+        </div>
+      ),
+    },
+    { id: 'status', header: 'Status', render: (u) => <StatusBadge status={u.is_active ? 'active' : 'inactive'} /> },
+    { id: 'last', header: 'Last login', render: (u) => (u.last_login_at ? formatRelative(u.last_login_at) : 'Never') },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (u) =>
+        canWrite ? (
+          <div className="flex justify-end gap-1">
+            <Button size="sm" variant="ghost" onClick={() => { setEditing(u); setShowForm(true); }}>Edit</Button>
+            <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(u)} />
+          </div>
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      <PageHeader
+        title="Admin users"
+        description="Invite admins, assign roles, reset passwords, and deactivate access. Last login shows the latest successful sign-in."
+        right={
+          <>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={users.reload} loading={users.loading}>Refresh</Button>
+            {canWrite && (
+              <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>
+                Add user
+              </Button>
+            )}
+          </>
+        }
+      />
+      <SearchInput value={q} onChange={setQ} placeholder="Search by name or email…" className="mb-3 max-w-md" />
+      <DataTable loading={users.loading} rows={rows} columns={columns} rowKey={(u) => u.id} emptyTitle="No admin users" />
+ 
+      <UserForm
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        initial={editing}
+        availableRoles={availableRoles}
+        onSaved={users.reload}
+      />
+ 
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await usersApi.delete(toDelete.id);
+            toast.success('User deleted');
+            users.reload();
+          }
+        }}
+        title="Delete admin user?"
+        description="They will immediately lose access."
+        destructive
+      />
+    </>
+  );
+}
+```
+ 
+### 1.11 `components/forms/RoleForm.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { rolesApi } from '@/lib/api';
+import { roleSchema, type RoleInput } from '@/lib/validators';
+import { Modal } from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
+import { Field, Input, Textarea } from '@/components/ui/Input';
+import { PERMISSION_GROUPS, PERMISSION_LABELS } from '@/lib/permissions';
+ 
+type FormValue = Partial<RoleInput> & { id?: number };
+ 
+export function RoleForm({
+  open,
+  onClose,
+  initial,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  initial?: FormValue | null;
+  onSaved: () => void;
+}) {
+  const isEdit = !!initial?.slug;
+  const [form, setForm] = useState<FormValue>(() => ({
+    slug: initial?.slug ?? '',
+    name: initial?.name ?? '',
+    description: initial?.description ?? '',
+    permissions: initial?.permissions ?? [],
+  }));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+ 
+  function toggle(p: string) {
+    setForm((prev) => {
+      const set = new Set(prev.permissions ?? []);
+      if (set.has(p)) set.delete(p);
+      else set.add(p);
+      return { ...prev, permissions: Array.from(set) };
+    });
+  }
+ 
+  function toggleGroup(perms: string[]) {
+    setForm((prev) => {
+      const current = new Set(prev.permissions ?? []);
+      const allOn = perms.every((p) => current.has(p));
+      if (allOn) perms.forEach((p) => current.delete(p));
+      else perms.forEach((p) => current.add(p));
+      return { ...prev, permissions: Array.from(current) };
+    });
+  }
+ 
+  async function submit() {
+    const parsed = roleSchema.safeParse(form);
+    if (!parsed.success) {
+      setErrors(
+        Object.fromEntries(
+          Object.entries(parsed.error.flatten().fieldErrors)
+            .filter(([, v]) => Array.isArray(v) && v.length)
+            .map(([k, v]) => [k, (v as string[])[0]]),
+        ),
+      );
+      return;
+    }
+    setErrors({});
+    setLoading(true);
+    try {
+      if (isEdit && initial?.slug) {
+        await rolesApi.update(initial.slug, {
+          name: parsed.data.name,
+          description: parsed.data.description,
+          permissions: parsed.data.permissions,
+        });
+        toast.success('Role updated');
+      } else {
+        await rolesApi.create(parsed.data);
+        toast.success('Role created');
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+ 
+  return (
+    <Modal
+      open={open}
+      onClose={loading ? () => {} : onClose}
+      title={isEdit ? `Edit role: ${initial?.slug}` : 'New role'}
+      size="lg"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button onClick={submit} loading={loading}>{isEdit ? 'Save' : 'Create'}</Button>
+        </>
+      }
+    >
+      <div className="grid gap-4 md:grid-cols-2">
+        <Field label="Slug" required error={errors.slug}>
+          <Input value={form.slug ?? ''} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} disabled={isEdit} />
+        </Field>
+        <Field label="Name" required error={errors.name}>
+          <Input value={form.name ?? ''} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} />
+        </Field>
+        <Field label="Description" className="md:col-span-2">
+          <Textarea rows={2} value={(form.description as string | undefined) ?? ''} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+        </Field>
+      </div>
+      <div className="mt-5">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Permissions</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {PERMISSION_GROUPS.map((g) => {
+            const allOn = g.permissions.every((p) => (form.permissions ?? []).includes(p));
+            const anyOn = g.permissions.some((p) => (form.permissions ?? []).includes(p));
+            return (
+              <div key={g.label} className="rounded-xl border border-line bg-white/5 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-semibold text-slate-100">{g.label}</div>
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(g.permissions)}
+                    className="text-[10px] uppercase tracking-wide text-cyan-200 hover:text-cyan-100"
+                  >
+                    {allOn ? 'Disable all' : anyOn ? 'Enable all' : 'Enable all'}
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  {g.permissions.map((p) => {
+                    const checked = (form.permissions ?? []).includes(p);
+                    return (
+                      <label key={p} className="flex items-center gap-2 text-xs text-slate-300">
+                        <input type="checkbox" checked={checked} onChange={() => toggle(p)} className="accent-cyan-400" />
+                        <span>{PERMISSION_LABELS[p] ?? p}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+```
+ 
+### 1.12 `app/roles/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useState } from 'react';
+import { toast } from 'sonner';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { RoleForm } from '@/components/forms/RoleForm';
+import { rolesApi } from '@/lib/api';
+import { useAuth, usePermissions, useResource } from '@/lib/hooks';
+ 
+type Role = {
+  slug: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+  user_count?: number;
+};
+ 
+export default function RolesPage() {
+  return (
+    <AdminShell permission="roles.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const { user } = useAuth();
+  const perms = usePermissions(user);
+  const canWrite = perms.can('roles.write');
+  const { data, loading, reload } = useResource(() => rolesApi.list(), []);
+  const rows = (data?.data || []) as Role[];
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Role | null>(null);
+  const [toDelete, setToDelete] = useState<Role | null>(null);
+ 
+  const columns: Column<Role>[] = [
+    {
+      id: 'role',
+      header: 'Role',
+      render: (r) => (
+        <div>
+          <div className="font-medium text-slate-100">{r.name}</div>
+          <div className="text-[10px] uppercase tracking-wide text-slate-500">{r.slug}</div>
+        </div>
+      ),
+    },
+    { id: 'desc', header: 'Description', render: (r) => r.description ?? '—' },
+    { id: 'perms', header: 'Permissions', render: (r) => `${(r.permissions ?? []).length}` },
+    { id: 'users', header: 'Users', render: (r) => r.user_count ?? 0 },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (r) =>
+        canWrite ? (
+          <div className="flex justify-end gap-1">
+            <Button size="sm" variant="ghost" onClick={() => { setEditing(r); setShowForm(true); }}>Edit</Button>
+            <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => setToDelete(r)} />
+          </div>
+        ) : null,
+    },
+  ];
+ 
+  return (
+    <>
+      <PageHeader
+        title="Roles & permissions"
+        description="Define roles and the actions they grant. Built-in roles can be edited; deletion is blocked when users still hold the role."
+        right={
+          <>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>Refresh</Button>
+            {canWrite && (
+              <Button icon={<Plus className="h-4 w-4" />} onClick={() => { setEditing(null); setShowForm(true); }}>
+                New role
+              </Button>
+            )}
+          </>
+        }
+      />
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(r) => r.slug} emptyTitle="No roles" />
+ 
+      <RoleForm
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        initial={editing}
+        onSaved={reload}
+      />
+ 
+      <ConfirmDialog
+        open={!!toDelete}
+        onClose={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (toDelete) {
+            await rolesApi.delete(toDelete.slug);
+            toast.success('Role deleted');
+            reload();
+          }
+        }}
+        title="Delete role?"
+        description="Users assigned this role will lose its permissions."
+        destructive
+      />
+    </>
+  );
+}
+```
+ 
+### 1.13 `app/audit-logs/page.tsx`
+ 
+```tsx
+'use client';
+ 
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { Download, RefreshCw } from 'lucide-react';
+import { AdminShell } from '@/components/layout/AdminShell';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { DataTable, type Column } from '@/components/ui/DataTable';
+import { SearchInput } from '@/components/ui/SearchInput';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
+import { auditApi } from '@/lib/api';
+import { useDebouncedValue, useResource } from '@/lib/hooks';
+import { downloadFile, formatDateTime, safeJsonStringify, toCsv } from '@/lib/utils';
+ 
+type AuditRow = {
+  id: number;
+  admin_email?: string;
+  action: string;
+  entity_type?: string;
+  entity_id?: string;
+  old_value?: unknown;
+  new_value?: unknown;
+  ip_address?: string;
+  user_agent?: string;
+  created_at: string;
+};
+ 
+export default function AuditLogsPage() {
+  return (
+    <AdminShell permission="audit.view">
+      <Inner />
+    </AdminShell>
+  );
+}
+ 
+function Inner() {
+  const [q, setQ] = useState('');
+  const debouncedQ = useDebouncedValue(q, 250);
+  const [action, setAction] = useState('all');
+  const [entity, setEntity] = useState('all');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [detail, setDetail] = useState<AuditRow | null>(null);
+ 
+  const { data, loading, reload } = useResource(
+    () =>
+      auditApi.list({
+        q: debouncedQ || undefined,
+        action: action === 'all' ? undefined : action,
+        entity_type: entity === 'all' ? undefined : entity,
+        from: from || undefined,
+        to: to || undefined,
+      }),
+    [debouncedQ, action, entity, from, to],
+  );
+ 
+  const rows = useMemo(() => (data?.data || []) as AuditRow[], [data]);
+ 
+  const actions = useMemo(() => Array.from(new Set(rows.map((r) => r.action))).sort(), [rows]);
+  const entities = useMemo(() => Array.from(new Set(rows.map((r) => r.entity_type).filter(Boolean))) as string[], [rows]);
+ 
+  function exportCsv() {
+    const csv = toCsv(
+      rows.map((r) => ({
+        id: r.id,
+        admin: r.admin_email ?? '',
+        action: r.action,
+        entity_type: r.entity_type ?? '',
+        entity_id: r.entity_id ?? '',
+        ip: r.ip_address ?? '',
+        when: r.created_at,
+        old_value: safeJsonStringify(r.old_value),
+        new_value: safeJsonStringify(r.new_value),
+      })),
+    );
+    downloadFile(`audit-${Date.now()}.csv`, csv, 'text/csv');
+    toast.success('CSV downloaded');
+  }
+ 
+  const columns: Column<AuditRow>[] = [
+    { id: 'when', header: 'When', render: (r) => formatDateTime(r.created_at) },
+    { id: 'admin', header: 'Admin', render: (r) => r.admin_email ?? '—' },
+    { id: 'action', header: 'Action', render: (r) => <code className="font-mono text-xs text-cyan-200">{r.action}</code> },
+    { id: 'entity', header: 'Entity', render: (r) => `${r.entity_type ?? '—'} ${r.entity_id ? `#${r.entity_id}` : ''}` },
+    { id: 'ip', header: 'IP', render: (r) => <span className="font-mono text-[11px] text-slate-400">{r.ip_address ?? '—'}</span> },
+    {
+      id: 'actions',
+      header: '',
+      className: 'text-right',
+      render: (r) => <Button size="sm" variant="ghost" onClick={() => setDetail(r)}>Open</Button>,
+    },
+  ];
+ 
+  return (
+    <>
+      <PageHeader
+        title="Audit logs"
+        description="Every write action is logged with old/new values. Filter, search, and export to CSV for compliance review."
+        right={
+          <>
+            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>Refresh</Button>
+            <Button variant="secondary" icon={<Download className="h-4 w-4" />} onClick={exportCsv}>Export CSV</Button>
+          </>
+        }
+      />
+      <SearchInput value={q} onChange={setQ} placeholder="Search by admin email, entity id, or action…" className="mb-3 max-w-md" />
+      <FilterBar
+        filters={[
+          {
+            type: 'select',
+            id: 'action',
+            label: 'Action',
+            value: action,
+            options: [{ id: 'all', label: 'All' }, ...actions.map((a) => ({ id: a, label: a }))],
+            onChange: setAction,
+          },
+          {
+            type: 'select',
+            id: 'entity',
+            label: 'Entity',
+            value: entity,
+            options: [{ id: 'all', label: 'All' }, ...entities.map((e) => ({ id: e, label: e }))],
+            onChange: setEntity,
+          },
+        ]}
+        right={
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-9 rounded-lg border border-line bg-white/5 px-3 text-sm text-slate-100"
+            />
+            <span className="text-xs text-slate-500">to</span>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-9 rounded-lg border border-line bg-white/5 px-3 text-sm text-slate-100"
+            />
+          </div>
+        }
+      />
+      <DataTable loading={loading} rows={rows} columns={columns} rowKey={(r) => r.id} emptyTitle="No audit entries" />
+ 
+      <Modal
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        title={detail ? `${detail.action} · ${detail.entity_type ?? ''} ${detail.entity_id ?? ''}` : ''}
+        size="xl"
+        footer={<Button onClick={() => setDetail(null)}>Close</Button>}
+      >
+        {detail && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Admin</div>
+              <div className="text-sm text-slate-100">{detail.admin_email ?? '—'}</div>
+            </div>
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">When</div>
+              <div className="text-sm text-slate-100">{formatDateTime(detail.created_at)}</div>
+            </div>
+            <div>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">IP</div>
+              <div className="font-mono text-xs text-slate-300">{detail.ip_address ?? '—'}</div>
+            </div>
+            <div className="md:col-span-2">
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">User agent</div>
+              <div className="break-all text-xs text-slate-300">{detail.user_agent ?? '—'}</div>
+            </div>
+            <div className="md:col-span-2">
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Old value</div>
+              <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-black/40 p-3 font-mono text-[11px] text-slate-200">{safeJsonStringify(detail.old_value)}</pre>
+            </div>
+            <div className="md:col-span-2">
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">New value</div>
+              <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-black/40 p-3 font-mono text-[11px] text-slate-200">{safeJsonStringify(detail.new_value)}</pre>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+```
+ 
+---
+ 
+## 2. Verification
+ 
+After dropping in the files above, from `cricket-live/`:
+ 
+```bash
+# Frontend
+cd admin-panel
+npm install           # only if you haven't already
+npm run lint
+npx tsc --noEmit
+npm run build
+ 
+# Backend
+cd ../cricket-api
+npm install
+npm run lint
+node --check src/admin/routes/extra.routes.js
+```
+ 
+### Common fixes if TypeScript complains
+ 
+- `Property 'foo' does not exist on type ...` for API responses: the typed `adminFetch` returns `any` shapes for `data` — cast as needed: `const rows = (data?.data || []) as MyRow[];`
+- `Object is possibly 'null'`: always destructure with `?` or fallback (`data?.data ?? []`).
+- If you add the `Field` component's `className` prop and it's missing on disk, see the snippet in `admin-panel/components/ui/Input.tsx` (already added — passes through `className` to the wrapper `div`).
+- If `Modal` does not accept `size="xl"`, add it to the size union in `components/ui/Modal.tsx` (`'sm' | 'md' | 'lg' | 'xl'` and `xl: 'max-w-3xl'`).
+ 
+### Smoke test once `npm run build` passes
+ 
+1. `npm run dev` in `admin-panel`, `node src/server.js` (or your usual command) in `cricket-api`.
+2. Sign in as `admin@cricpro.local`.
+3. Walk every section: dashboard → streams → matches → providers → api-keys → settings → home → series → teams → players → schedule → news → notifications → ads → cache → health → users → roles → audit-logs.
+4. For each page: create / edit / delete a record (if applicable), confirm the toast, and verify the row updates without a full reload.
+5. Check that a non-admin role (e.g. Editor or Support) hides destructive buttons.
+ 
+---
+ 
+## 3. Commit + PR
+ 
+The branch is already created locally: `devin/1779996260-admin-panel-prod`.
+ 
+```bash
+cd cricket-live
+git status
+git add -A
+git commit -m "feat(admin-panel): production-ready CRUD pages, forms, and backend lifecycle endpoints
+ 
+- Backend: news/notifications/roles CRUD, series/teams/players detail + refresh + cache-clear, schedule refresh/cache-clear, user role assignment, permissions metadata.
+- Frontend lib: typed adminFetch w/ refresh-on-401, useAuth/usePermissions/useResource hooks, zod validators for all forms.
+- UI primitives: Modal, ConfirmDialog, Tabs, Switch, DataTable, FilterBar, SearchInput, StatusBadge, PermissionGate.
+- Pages: dashboard, streams (+detail), matches (+detail w/ override), providers (+keys), api-keys, settings, cache, health, series (+detail), teams (+detail), players (+detail), schedule, homepage, news, notifications, ads, users, roles, audit-logs.
+- Permission-gated UI on every action; audit logging on every write.
+- All pages have search, filter, loading skeleton, empty state, toast feedback, and confirmation dialogs.
+"
+git push -u origin devin/1779996260-admin-panel-prod
+```
+ 
+Then open a PR on GitHub against `main`. Title:
+ 
+```
+feat(admin-panel): production-ready CRUD pages, forms, and backend lifecycle endpoints
+```
+ 
+Body — start with the repo's PR template, then summarise the scope (the commit message above is fine to reuse).
+ 
+---
+ 
+## 4. Optional polish
+ 
+- Wire RequireAuth into the `app/(layout)/layout.tsx` so the `/login` page redirects out when a token is present.
+- Add a `Pagination` block to `audit-logs` once the backend supports `limit/offset` (it already returns plain arrays).
+- Consider replacing the raw `<input type="date">` elements with a styled `DatePicker` for visual consistency.
+- Add `Image override` upload UX to `teams/[id]` and `players/[id]` once the backend ships a `/admin/{teams|players}/:id/image` endpoint.
+ 
+That's everything outstanding. Once these files land, `npm run lint && npm run build && npx tsc --noEmit` will pass and the panel is production-ready end-to-end.

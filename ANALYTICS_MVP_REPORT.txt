@@ -1,0 +1,254 @@
+================================================================================
+ANALYTICS MVP — IMPLEMENTATION REPORT
+File: ANALYTICS_MVP_REPORT.txt
+Generated: 2026-06-12
+Scope: Privacy-safe analytics MVP for CricPro (cricket-api + admin-panel + Flutter app).
+       No Firebase. Anonymous device/session IDs only. Fire-and-forget on the app.
+================================================================================
+
+NOTE ON LIVE-SCORE SWR
+----------------------
+This task did NOT touch live-score SWR. Live-line SWR Batch 1 remains scoped to
+/match/:id/live-line only. TTLs unchanged. No PM2 cluster, no WebSocket/SSE added.
+
+
+1. FILES CHANGED
+--------------------------------------------------------------------------------
+Backend (cricket-api):
+  M src/db/migrate.js
+      - Added analytics_events + analytics_devices CREATE TABLE statements.
+      - Seeded api_endpoint_rules row: group 'analytics_ingest', auth 'none',
+        rate_limit_per_minute 100.
+  M src/lib/api-security.js
+      - resolveEndpointGroup(): '/analytics/events' -> 'analytics_ingest'.
+      - Middleware fallback rule for analytics_ingest (auth none, enabled,
+        100 rpm) so ingest works even before the DB rule is seeded / in enforce
+        mode on an un-migrated backend.
+  A src/routes/analytics.js
+      - Public POST /analytics/events (batch ingest, validation, device upsert).
+  M src/server.js
+      - import + register analyticsRoutes.
+  A src/admin/routes/analytics.routes.js
+      - Admin GET /summary, /timeseries, /breakdown (read-only).
+  M src/admin/index.js
+      - import + register analyticsAdminRoutes at prefix /admin/analytics.
+  M src/admin/rbac.js
+      - New permission 'analytics.view'. Granted to super_admin (all), admin,
+        support.
+  M src/lib/api-security.test.js
+      - Test: '/analytics/events' classifies as 'analytics_ingest'.
+
+Admin Panel (admin-panel):
+  M lib/api.ts
+      - analyticsApi client (summary / timeseries / breakdown) + types.
+  M lib/constants.ts
+      - Nav item "Analytics" (/analytics, ops group, BarChart3 icon,
+        permission analytics.view).
+  A app/analytics/page.tsx
+      - Analytics dashboard page (cards, mini bar charts, tables, date filter).
+
+Flutter app (lib/):
+  M pubspec.yaml
+      - Added dependency shared_preferences: ^2.3.2.
+  A lib/services/analytics_service.dart
+      - Singleton AnalyticsService (queue, flush triggers, fire-and-forget).
+  M lib/main.dart
+      - AnalyticsService.initialize() on app start; flush on app background.
+  M lib/screens/matches/matches_screen.dart
+      - screen_view('matches'); pull_refresh on manual refresh.
+  M lib/screens/home/home_screen.dart
+      - screen_view('home').
+  M lib/screens/match_details/match_details_screen.dart
+      - match_open + screen_view('match_details') (once per match open).
+  M lib/screens/live/live_player_screen.dart
+      - live_stream_open + screen_view('live_player'); quality_selected on user
+        quality change; rewarded_unlock on premium ad unlock.
+  M lib/components.dart
+      - retry_after_error fired from the shared CricOfflineCard retry button.
+  M lib/services/notification_service.dart
+      - notification_open on notification click.
+  A test/analytics_service_test.dart
+      - Unit tests for device id / queue cap / session rotation.
+
+
+2. DB TABLES ADDED
+--------------------------------------------------------------------------------
+analytics_events
+  id          BIGINT PK AUTO_INCREMENT
+  event_name  VARCHAR(60) NOT NULL
+  device_id   VARCHAR(64)
+  session_id  VARCHAR(64)
+  payload     JSON
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+  INDEX (event_name, created_at), (device_id, created_at),
+        (session_id, created_at), (created_at)
+
+analytics_devices   (deduplicated devices = approximate installs / first opens)
+  device_id   VARCHAR(64) PRIMARY KEY
+  first_seen  DATETIME DEFAULT CURRENT_TIMESTAMP
+  last_seen   DATETIME DEFAULT CURRENT_TIMESTAMP
+  app_version VARCHAR(20)
+  platform    VARCHAR(10)
+  os_version  VARCHAR(30)
+  country     VARCHAR(5)
+  INDEX (last_seen), (platform), (app_version)
+
+Both use CREATE TABLE IF NOT EXISTS (idempotent — safe to re-run migrate).
+
+
+3. ENDPOINTS ADDED
+--------------------------------------------------------------------------------
+PUBLIC (no login, no api-key):
+  POST /analytics/events
+    Body: { "events": [ { event_name, device_id, session_id, payload, ts } ] }
+    - Batch capped at 50 events per request.
+    - event_name validated against an allowlist; invalid events dropped silently.
+    - payload sanitized: only short scalar fields kept (no nested objects, no
+      long strings) — defends against PII / cardinality blowups.
+    - Rate limited: 100 req/min (api_endpoint_rules group 'analytics_ingest').
+    - Always returns 204 No Content (even on bad input) so clients never
+      retry-storm.
+    - app_open events also upsert analytics_devices (first_seen/last_seen +
+      app_version/platform/os_version/country).
+
+ADMIN (Bearer token + permission analytics.view):
+  GET /admin/analytics/summary?from=&to=
+      Active users (today/7d/30d), first opens/approx installs, sessions,
+      screen views, match opens, live stream opens, quality selections,
+      pull refreshes, retry-after-error count, top screens, top matches,
+      top stream qualities, app versions, platforms.
+  GET /admin/analytics/timeseries?metric=&from=&to=&granularity=day|hour
+      metric: active_users | sessions | live_stream_opens | match_opens |
+              screen_views | retry_after_error
+      Returns [ { date, value } ].
+  GET /admin/analytics/breakdown?dimension=&from=&to=
+      dimension: app_version | platform | country | quality | screen
+
+
+4. FLUTTER EVENTS TRACKED
+--------------------------------------------------------------------------------
+  app_open           app start (main.dart)         payload: app_version, platform
+  session_start      app start / startSession()    payload: app_version
+  screen_view        home, matches, match_details, live_player (once per open)
+  match_open         Match Details open            payload: match_id
+  live_stream_open   Live Player open              payload: match_id
+  quality_selected   user changes HLS quality      payload: quality_code,
+                                                             quality_label, match_id
+  pull_refresh       manual pull-to-refresh (matches) payload: screen_name
+  retry_after_error  shared CricOfflineCard retry  payload: error_type
+  notification_open  notification click            payload: notification_type
+  rewarded_unlock    premium stream unlocked by ad payload: match_id, stream_id
+
+Anti-spam: screen_view fires once per screen open (guarded by init/match-id
+checks), quality_selected only on actual change, pull_refresh only on manual
+refresh (not auto-poll).
+
+
+5. ADMIN PAGE FEATURES (/analytics)
+--------------------------------------------------------------------------------
+  - Date filter: Today | 7 days | 30 days | Custom (date pickers).
+  - Summary cards: active users (today/7d/30d), first opens/approx installs,
+    sessions, live stream opens, match opens, retry after error, screen views,
+    quality selections, pull refreshes.
+  - Charts (dependency-free CSS bar charts):
+      Daily active users, Sessions over time, Live stream starts over time.
+  - Tables: Top screens, Top matches, Quality selected breakdown,
+    App versions, Platform breakdown.
+  - Manual Refresh button. Consistent with existing admin design (AdminShell,
+    StatCard, DataTable, PageHeader). Gated by permission analytics.view.
+
+
+6. PRIVACY NOTES
+--------------------------------------------------------------------------------
+  - device_id: random hex (Random.secure()) generated on first launch, stored
+    locally via SharedPreferences. NOT derived from IMEI / hardware / advertising
+    id. session_id: random hex, regenerated each app start.
+  - NO name, email, phone, IMEI, exact GPS, or any personal data is collected
+    or stored. country is optional and only a coarse 5-char code (not stored
+    unless explicitly provided in payload — currently not sent by the app).
+  - Backend payload sanitizer drops nested objects and truncates strings, so the
+    app cannot accidentally leak large/identifying values.
+  - Analytics is fire-and-forget: never blocks the UI, never throws into
+    navigation/loading. If the network or server fails, events stay queued
+    (capped at 200) and the app continues normally.
+  - Endpoint is public but write-only: it never returns admin data and never
+    requires user login.
+
+
+7. HOW TO DEPLOY ON VPS
+--------------------------------------------------------------------------------
+  # Backend (cricket-api)
+  cd /path/to/cricket-live
+  git pull
+  cd cricket-api
+  npm install            # only if dependencies changed (none added this task)
+  node src/db/migrate.js # creates analytics_events + analytics_devices,
+                         # seeds the analytics_ingest endpoint rule (idempotent)
+  pm2 restart cricket-api
+
+  # Admin panel (admin-panel)
+  cd ../admin-panel
+  npm install            # only if dependencies changed (none added this task)
+  npm run build
+  pm2 restart admin-panel   # use your actual PM2 process name for the panel
+                            # (e.g. pm2 restart cricpro-admin). If the panel is
+                            # served statically by nginx instead of PM2, just
+                            # rebuild — no PM2 restart needed.
+
+  # Flutter app
+  # Rebuild + ship the APK/AAB through your normal release pipeline:
+  flutter build apk --release --target-platform android-arm64
+  # (shared_preferences was added; `flutter pub get` runs as part of build.)
+
+  NOTE: prod .env / PM2 ecosystem / nginx are intentionally NOT in the repo
+  (see SERVER_HIGH_TRAFFIC_CHECKLIST.txt). No new env vars are required for
+  analytics.
+
+
+8. HOW TO VERIFY EVENTS ARE BEING STORED
+--------------------------------------------------------------------------------
+  a) Send a test event (from any machine — no api-key needed):
+       curl -i -X POST https://api.webcrichd.co/analytics/events \
+         -H 'Content-Type: application/json' \
+         -d '{"events":[{"event_name":"app_open","device_id":"test-dev-1","session_id":"test-sess-1","payload":{"app_version":"1.0.0","platform":"android"}}]}'
+     Expect: HTTP/1.1 204 No Content.
+
+  b) Confirm rows in MySQL:
+       SELECT COUNT(*) FROM analytics_events;
+       SELECT event_name, created_at FROM analytics_events ORDER BY id DESC LIMIT 10;
+       SELECT * FROM analytics_devices WHERE device_id = 'test-dev-1';
+
+  c) Confirm via admin API (replace TOKEN with an admin Bearer token):
+       curl -H 'Authorization: Bearer TOKEN' \
+         'https://api.webcrichd.co/admin/analytics/summary'
+
+  d) In the running app: open a match / live player / change quality, then wait
+     up to 30s (or background the app) for the queue to flush, and re-check (b).
+
+
+9. HOW TO OPEN ADMIN ANALYTICS PAGE
+--------------------------------------------------------------------------------
+  - Log in to the admin panel (admin.webcrichd.co).
+  - Sidebar -> Operations -> "Analytics" (or go to /analytics directly).
+  - Requires the analytics.view permission (super_admin / admin / support roles
+    have it by default). Re-run the admin role seed if existing roles need the
+    new permission materialised.
+
+
+10. WHAT IS INTENTIONALLY NOT INCLUDED YET
+--------------------------------------------------------------------------------
+  - No real Play Store install data. "First Opens / Approx Installs" = distinct
+    devices seen, NOT exact installs (labeled as such in API + UI).
+  - No charting library on the admin panel (used lightweight CSS bars). A richer
+    chart lib (recharts) can be added later.
+  - No retention/cohort analysis, funnels, or per-user journeys.
+  - No automatic data retention/trim job for analytics_events (table will grow;
+    add a scheduled DELETE by created_at later if needed).
+  - No country enrichment from IP (country field exists but is only populated if
+    the client sends it; currently not sent).
+  - ad_impression event is allowlisted on the backend but not yet wired in the
+    app (reserved for when ad SDK callbacks are surfaced).
+  - No realtime analytics (events are batched, up to 30s delay by design).
+  - SWR / live-score work untouched (out of scope for this task).
+
+================================================================================

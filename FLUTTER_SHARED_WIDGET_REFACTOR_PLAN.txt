@@ -1,0 +1,170 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — FLUTTER SHARED WIDGET REFACTOR PLAN
+File: FLUTTER_SHARED_WIDGET_REFACTOR_PLAN.txt
+Generated: 2026-06-12
+Scope: Consolidate duplicated UI across the 6 already-split screens. Visual-
+       preserving ONLY. No redesign. Same colors/spacing/layout/behavior.
+================================================================================
+
+METHOD: only merge patterns that are BYTE-IDENTICAL or trivially parameterizable
+with ZERO visual change. If variants differ (padding, font, dot size, shadow,
+icon, See-All color) -> DO NOT FORCE a shared widget; drift risk > dedup value.
+
+Existing shared lib = lib/components.dart (StatusBadge, PillChip, SectionHeader,
+TeamLogoWidget, PlayerAvatarWidget, EmptyOrErrorImage, GradientButton, GlowOrb*).
+*GlowOrb added this pass.
+
+--------------------------------------------------------------------------------
+PATTERN-BY-PATTERN
+--------------------------------------------------------------------------------
+
+P1. GlowOrb (radial floodlight/accent)            STATUS: DONE THIS PASS
+    Duplicated: home/widgets/home_match_cards.dart (_GlowOrb) ==
+                series/series_premium.dart (GlowOrb). BYTE-IDENTICAL, pure params,
+                NO theme branching, NO visual variant.
+    Shared name/loc: GlowOrb in lib/components.dart.
+    Risk: LOW. Preserve: size/color/alpha radial gradient, IgnorePointer.
+    Action: REFACTORED NOW. Both copies removed, all 5 call sites use shared.
+
+P2. Status badge / pill                            STATUS: SKIP (visual drift)
+    Variants:
+      - home/widgets/home_actions.dart _StatusBadge: pad 9/3, dot 5px, font 10,
+        no shadow, takes (label,color,live,dense).
+      - matches/widgets/matches_cards.dart _StatusBadge: pad 10/5, dot 6px,
+        font 10.5, LIVE has boxShadow blur10, takes _CardKind enum.
+      - schedule/widgets/schedule_cards.dart _MatchStatusPill (different again).
+      - components.dart StatusBadge: pad 14/8, radius 18, font 13, icon slot
+        (used by search_screen) — a DIFFERENT, bigger badge.
+    Why skip: 3 card badges differ in padding/dot/font/shadow. Merging forces one
+    look -> visible change on at least 2 screens. NOT identical.
+    Refactor later? Only if design explicitly unifies them. Keep separate now.
+
+P3. Section header / title row                     STATUS: SKIP (visual drift)
+    Variants:
+      - home _SectionHeader: no icon, title font 16, See-All cyan font 13, chev 18.
+      - matches _SectionTitleRow: bat-ball icon 24, title sp(22), See-All MUTED
+        font 14, chev 20.
+      - match_details MDSectionHeader, components.dart SectionHeader (icon, used by
+        search) — yet more variants.
+    Why skip: icon presence, font size, See-All color all differ. Forced merge =
+    visible change. Keep per-screen.
+
+P4. Venue / date / info row                        STATUS: SKIP (variant + asset)
+    Variants:
+      - matches _VenueRow: Image.asset(iconLocation) 14px fallback icon 15, font 12.
+      - home inline location_on_outlined 13px (home_hero/featured/match_cards).
+      - match_details _MetaLine (location_on_rounded), md_info _InfoItem (label+val).
+      - player/series _InfoRow, _MetaRow, _InfoLine — different label/value layouts.
+    Why skip: icon source (asset vs material), sizes (13/14/15), some have label+
+    value vs single line. Too divergent for one widget without visual change.
+    Refactor later? Possible narrow `IconTextRow` for the pure icon+text cases,
+    but sizes differ -> would need size param per call = low dedup gain. Defer.
+
+P5. Empty / loading / error / skeleton states      STATUS: SKIP (bespoke shapes)
+    Variants: home _HomeEmptyState, _CardSkeleton, _HeroSkeleton;
+      matches _MatchesSkeletonList, _StateCard; schedule _ScheduleSkeletonList;
+      live _MatchInfoSkeleton, _StreamsSkeleton.
+    Why skip: each skeleton mimics ITS screen's card geometry (different box sizes/
+    counts). A shared skeleton would change the placeholder shape on each screen.
+    components.dart EmptyOrErrorImage already exists for the generic image case and
+    IS reused. Keep screen-specific skeletons.
+
+P6. Premium card wrapper                           STATUS: ALREADY SHARED
+    components.dart PremiumCard + series_premium PremiumGlassPanel cover this and
+    are reused. No new dup found in split screens worth merging.
+
+P7. Match card internal parts (team block, VS, top row, action bar)
+                                                    STATUS: SKIP NOW (explicit hold)
+    Per user: do NOT refactor full match cards / their parts yet. _TeamBlock,
+    _VsCenterpiece/_VsBadge/_HomeVsBadge, _CardTopRow differ per screen (sizes,
+    animation, painter). High visual-drift risk. Defer to a dedicated batch.
+
+P8. Watch Live button / action buttons             STATUS: SKIP NOW
+    home _FilledActionButton/_OutlinedActionButton, matches _ActionButton/
+    _DualActionBar — similar but different glow/segment logic. Defer.
+
+P9. Player avatar + name row                        STATUS: ALREADY SHARED
+    components.dart PlayerAvatarWidget / PlayerAvatar / RankingAvatar +
+    widgets/squad.dart cover these and are reused. No action.
+
+P10. Tab / filter chips                             STATUS: SKIP (variant)
+    home _StatusTab, matches _StatusTab/_CategoryChip, schedule _CategoryChip,
+    series_premium SeriesStatusTabs/SeriesCategoryChips. Sizes/gradients differ.
+    components.dart SegmentedTabs + ScrollableSegmentedTabs exist for the generic
+    case. Keep screen chips as-is.
+
+--------------------------------------------------------------------------------
+SUMMARY
+--------------------------------------------------------------------------------
+  REFACTORED NOW (LOW risk, identical): P1 GlowOrb -> components.dart.
+  SKIPPED (visual-drift risk, variants differ): P2,P3,P4,P5,P10.
+  ALREADY SHARED (reuse, no dup): P6,P9 (+ generic StatusBadge/SegmentedTabs/
+    EmptyOrErrorImage).
+  HELD BY USER INSTRUCTION (defer): P7 match cards, P8 action buttons.
+
+  KEY FINDING: the per-screen badge/header/chip "duplicates" are NOT true copies —
+  each screen tuned padding/font/dot/shadow. They look similar but are distinct.
+  Forcing shared widgets would CHANGE the UI on multiple screens. Only GlowOrb was
+  a genuine byte-identical duplicate, so it was the only safe merge.
+
+  NEXT (separate approved batch, with visual QA each):
+   1. Narrow IconTextRow for pure icon+text venue/date rows (size param).
+   2. Unify card status badges IF design signs off on one look.
+   3. Match-card parts (P7) — only after explicit go-ahead.
+================================================================================
+
+================================================================================
+PHASE 3 ADDENDUM — PRESET-WIDGET EVALUATION (2026-06-12)
+================================================================================
+Evaluated CricStatusPill.preset(), CricIconTextRow, CricSectionHeader.preset().
+DECISION: SKIP ALL. None refactored. GlowOrb (prior pass) stays the only merge.
+
+CricStatusPill.{smallHome,matchCard,schedule}() — SKIP
+  Exact visual specs (must each be preserved):
+    home      : pad 9/3 (dense 8/3), dot 5px, font 10 (dense 9.5), fill α.18,
+                border α.85, NO shadow. Input: (label,color,live,dense).
+    matchCard : pad 10/5, dot 6px, font 10.5, fill α.2/.1 (filled/not),
+                border α.85/.6, LIVE boxShadow blur10. Input: _CardKind enum.
+    schedule  : pad 11/6, dot 6px, font 11, fill α.12, border α.6,
+                LIVE boxShadow blur10. Input: CricketMatch (derives label/color).
+  WHY SKIP:
+    1. All three live INSIDE match cards -> user said do NOT touch match cards yet.
+    2. Inputs differ structurally (raw params vs _CardKind enum vs CricketMatch) —
+       a shared widget would pull screen-specific derivation into components.dart.
+    3. 4 distinct presets with different alpha math each = "parameterizing too
+       complex" -> skip rule triggers.
+    4. One constant slip = visible change on EVERY match card app-wide. Gain
+       (~40 lines) < regression risk.
+  TO SHARE SAFELY LATER: first do the match-card batch (P7) with visual QA, then
+    a CricStatusPill with 4 explicit named constructors (each hardcoding its exact
+    pad/dot/font/alpha/shadow), callers pass only label+state. Verify pixel-diff
+    on home/matches/schedule before/after.
+
+CricIconTextRow (venue/date/info rows) — SKIP
+  Exact differences: matches _VenueRow uses Image.asset(iconLocation) 14px w/
+    material fallback 15px, font 12, muted. home inline location_on_outlined 13px.
+    match_details _MetaLine location_on_rounded. md_info/_player/_series rows are
+    label+value (two strings), not single-line.
+  WHY SKIP: icon SOURCE differs (asset vs material), sizes 13/14/15, single-line
+    vs label+value layouts. One widget can't hold all without per-call params that
+    erase the dedup benefit.
+  TO SHARE LATER: split into TWO widgets — CricIconText (single line, params:
+    icon, size, text, color) for the simple cases only; leave label+value rows
+    alone. Still need size param per call (13/14/15) so gain is small.
+
+CricSectionHeader.{home,matches}() — SKIP
+  Exact differences: home no-icon, title font 16, See-All CYAN font 13, chev 18.
+    matches bat-ball asset-icon 24 (fallback 22), title sp(22), See-All MUTED
+    font 14, chev 20. match_details MDSectionHeader + components.dart SectionHeader
+    are yet more variants.
+  WHY SKIP: icon presence, title size, See-All COLOR (cyan vs muted) all differ.
+    Named presets possible but each would hardcode a totally different layout —
+    no shared body left, just two unrelated builds behind one name = no real reuse.
+  TO SHARE LATER: only if design unifies header style. Otherwise keep per-screen.
+
+NET PHASE 3: 0 widgets refactored. All candidates have real visual/structural
+divergence; forcing presets adds indirection without safe dedup. Honoring "do not
+change design to make widgets fit."
+================================================================================
+END
+================================================================================

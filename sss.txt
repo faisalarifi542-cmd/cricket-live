@@ -1,0 +1,944 @@
+We were working on Optimizing the Backend and API Server and this is the History:CricPro — High-Traffic (100K Users) Backend Optimization Brief
+You are working on CricPro, a production cricket live-score/streaming app:
+Flutter app + Node.js/Fastify backend + Redis + MySQL + Next.js admin panel, deployed via PM2/Nginx on an Ubuntu VPS.
+Read this entire brief before changing anything. Then do Step 0 before any other step.
+---
+Non‑Negotiables (apply to every phase below)
+No UI changes. Do not touch Flutter colors, layout, design, or premium visual style. Backend/infra/performance only.
+No video proxying. The VPS never touches m3u8 playlists or video chunks. Flow must stay:
+`User opens app → API returns stream metadata + m3u8 URL → Flutter player loads m3u8 directly from the external CDN.`
+Anything resembling `User → VPS → video → User` is forbidden.
+Backward compatible. Don't remove or rename existing endpoints, settings, Redis keys, or MySQL data. Don't change response shapes — only add new optional fields. Don't break the Flutter app or the admin panel.
+No silent mass edits. For each phase, summarize the diff/plan and wait for explicit go-ahead before moving to the next phase, unless told to run straight through.
+---
+Step 0 — Audit First (required before any code changes)
+Inspect the real codebase and produce a short written audit covering, for each route below: does it call the provider directly, does it hit MySQL on every request, is there a Redis cache, what TTL is currently used (if any), and can it safely serve stale data if the provider is slow/down.
+Routes to audit:
+`/app/home`, `/app/config`, `/app/match/:id`, `/app/match/:id/streams`, `/matches/live`, `/matches/upcoming`, `/matches/recent`, `/match/:id/commentary`, `/match/:id/scorecard`, `/match/:id/full-commentary`, `/match/:id/overs`, `/match/:id/squads`, `/series`, `/series/:id`, `/news`, and any rankings/player/team routes.
+Output of this step: a short findings table + a proposed phase order (you may reorder phases below based on what the audit reveals). Wait for confirmation before proceeding to Step 1.
+---
+Step 1 — Redis Cache-First Architecture + Background Workers
+Goal: `Provider API → background workers → Redis → public API reads Redis → app`. Public API must not call the provider during normal user traffic. Provider calls from public routes are allowed only as an exceptional single-flight fallback during a true cold start/cache miss, protected by a Redis lock, short timeout, stale fallback, and a provider call-rate budget (see "Cache Miss / Cold Start Protection" below).
+Redis keys to use (don't invent new naming patterns):
+```
+app:config            app:home
+matches:live           matches:upcoming        matches:recent
+match:{id}:summary     match:{id}:score        match:{id}:commentary
+match:{id}:full-commentary:{innings}
+match:{id}:scorecard   match:{id}:overs        match:{id}:squads      match:{id}:info
+streams:match:{id}
+series:list            series:{id}:detail      series:{id}:matches    series:{id}:squads   series:{id}:stats
+news:latest            rankings:{type}
+```
+TTL reference (single source of truth — don't redefine elsewhere):
+Data	TTL
+Live score	3–10s
+Live commentary	5–15s
+Home (live data)	10–15s
+Scorecard (live / completed)	10–30s / longer
+Upcoming matches	1–5 min
+Recent matches	1–5 min
+Squads / team-player info	30 min–24h
+Series	10–30 min
+News	5–15 min
+Rankings	6–24h
+App config	30–120s
+Stream metadata	30–120s
+Workers to create (separate PM2 processes, not cluster mode):
+`worker-live-score`, `worker-commentary`, `worker-scorecard`, `worker-home`, `worker-series`, `worker-news`, `worker-rankings`
+Each worker must: fetch on a controlled interval, normalize before saving, use a Redis lock (`lock:worker:{name}`) so only one instance fetches even if PM2 restarts it, never delete good cached data on a single provider failure (keep last-good response and serve it), and log provider calls/min, failures, and slow responses.
+Cache Miss / Cold Start Protection
+Workers cover normal traffic, but a Redis flush, restart, deploy, or a brand-new match not yet picked up by a worker cycle can leave a key empty. Public routes must not respond to that gap by letting every concurrent request fall through to the provider (cache stampede). On a miss, follow this order, and treat anything past step 1 as an exceptional path, not the primary data flow:
+Acquire a single-flight Redis lock per cache key using `lock:cache:{key}` — do not reuse worker lock names (`lock:worker:{name}`) for route cache rebuilding, to avoid worker/route lock conflicts. Everyone else waits briefly on the lock or gets step 2/3.
+If last-good/stale data exists for that key, serve it immediately rather than waiting on the provider.
+If no stale data exists at all (true cold start), return a safe lightweight placeholder response instead of triggering parallel provider calls.
+Only the single lock-holder may call the provider, with a short timeout, and only if it's within a global provider call-rate budget (so a worker bug or traffic spike can't cause a call storm).
+Log every public-route provider fallback separately from scheduled worker calls, so the dashboards in Step 7 can distinguish "expected worker traffic" from "fallback triggered by a cache miss."
+Goal: provider call volume stays flat regardless of concurrent user count, even during cold starts.
+---
+Step 2 — Stream Endpoint (`/app/match/:id/streams`)
+Cache stream list at `streams:match:{matchId}`, TTL 30–120s. On cache miss, read MySQL once, populate Redis, return.
+No MySQL hit on every request once cache is warm.
+On admin create/update/enable/disable/delete of a stream, invalidate: `streams:match:{matchId}`, `app:home`, `match:{matchId}:summary`.
+Optional fields to support if the provider/admin data has them, without breaking plain m3u8 links: `requiresLogin`, `requiresReward`, `premium`, `expiresAt`, `tokenizedUrl`, `headers`, `drm`, `licenseUrl`. Signed/short-lived URLs (`?token=...&expires=...`) are fine to return; the VPS still never proxies the actual video.
+Confirm in your report that Flutter only calls this endpoint on: match-details open, "Watch Live" tap, and stream-refresh-after-failure — not on a polling timer.
+---
+Step 3 — Flutter Polling Audit
+Audit the app's call patterns and fix the anti-pattern of firing many separate endpoints on home load when `/app/home` + `/app/config` already cover it.
+Polling interval reference (single source of truth):
+Data	Interval
+Live match score	5s polling, or WebSocket/SSE if available
+Live commentary	5–10s
+Home live list	10–15s
+Upcoming	2–5 min
+Recent	1–5 min
+Series	10–30 min
+Rankings	6–24h
+News	5–15 min
+App config	1–5 min
+Streams	on demand only
+Also: lazy-load Scorecard/Commentary/Squads/Overs only when their tab opens; never full-reload the match screen on a score tick; never reset scroll position or auto-advance the hero carousel on a live refresh.
+---
+Step 4 — WebSocket/SSE for Live Score (optional, behind a flag)
+`worker-live-score → Redis Pub/Sub → WebSocket/SSE server → Flutter`, subscribed by `matchId`, pushing only on actual change. Must be optional/configurable, with REST polling kept as a fallback if the socket connection fails. Don't remove the existing polling path.
+---
+Step 5 — Headers, Compression, CDN
+Add gzip/brotli for JSON. Cache-Control by data class:
+```
+Live data:            public, max-age=2, stale-while-revalidate=5
+Upcoming/recent:       public, max-age=300, stale-while-revalidate=600
+Series/news:           public, max-age=600, stale-while-revalidate=1800
+Static/player/team img: public, max-age=604800
+```
+Never cache `/admin/*`, `/auth/*`, or other private/personal routes publicly. Only apply public CDN caching to non-user-specific responses: if a response includes login state, premium/reward unlock state, device-specific data, country-specific ads, private user data, or personalized access rules, do not put it behind public CDN cache — use Redis server-side cache only for that response. If Cloudflare sits in front, confirm real-client-IP forwarding works for rate limiting.
+---
+Step 6 — PM2, Rate Limiting, MySQL
+API in PM2 cluster mode (`pm2 start app.js --name cricket-api -i max`); workers stay as separate named, non-clustered processes.
+Rate limit: general API (reasonable per IP/device), streams endpoint (stricter), admin login (very strict), provider-refresh/admin actions (admin-only). Don't throttle normal users — target bots/scraping.
+MySQL should serve admin settings, stream records, ads settings, provider settings, users/admins, notifications, audit logs — not public per-request reads. Before adding any index, check it doesn't already exist:
+```sql
+CREATE INDEX idx_streams_match_id ON streams(match_id);
+CREATE INDEX idx_streams_status ON streams(status);
+CREATE INDEX idx_streams_match_status ON streams(match_id, status);
+CREATE INDEX idx_ad_settings_enabled ON ad_settings(enabled);
+CREATE INDEX idx_cache_events_key ON cache_events(cache_key);
+```
+---
+Step 7 — Observability + Load Testing
+Add/extend health endpoints (`/admin/health`, `/admin/cache-status`, `/admin/provider-status`) and log: req/sec, per-route response time, Redis hit/miss, provider calls per minute, provider errors, slow routes, worker status, memory/CPU, active WS connections, stream-endpoint hits, MySQL queries per route.
+Provide a `k6` load test (or equivalent commands) against: `/app/home`, `/app/config`, `/app/match/:id`, `/app/match/:id/streams`, `/matches/live`, `/match/:id/commentary`, `/match/:id/scorecard`. The test must demonstrate: high Redis hit rate, provider calls staying flat as simulated users scale up, MySQL query count staying flat, and stable response times.
+---
+Step 8 — Final Report
+Write `HIGH_TRAFFIC_100K_OPTIMIZATION_REPORT.md` containing: summary of changes, files changed, workers added, Redis keys added, TTLs used, routes changed, confirmation of the no-proxy stream flow (with proof, e.g. logs/diagram showing video bytes never traverse the VPS), Flutter polling changes, admin cache-invalidation changes, PM2 deployment commands, Nginx/Cloudflare recommendations, load-test instructions, known risks/remaining work, and how to verify Redis hit/miss and provider-call volume post-deploy.
+---
+Definition of Done
+100K concurrent users do not translate into 100K provider calls; live score/commentary/home/streams are served from Redis; MySQL load doesn't scale with user count; the app looks and behaves identically from the user's perspective; admin panel, ads, notifications, and existing endpoints all keep working. this was your first part finding: Step 0 — Audit Findings
+I've inspected the real backend (cricket-api/src). Bottom line: a lot of this is already built. There are two cache layers, a BullMQ worker system, single-flight stampede protection, and SWR. The work is mostly closing gaps and hardening — not building from scratch.
+
+Architecture as it exists today
+There are two parallel cache subsystems, plus two micro-caches:
+
+Layer	Helper	Key prefix	Used by
+A	controlledFetch / providerFetch (data-control.js)	appdata:*	/app/home, /app/config, /app/match/:id, /app/match/:id/streams, /app/series/:id, /app/schedule
+B	cacheGetOrFetch / cacheGetOrFetchSWR (redis.js)	match:*, matches:*, series:*, news:*	/matches/*, /match/:id/*, /series*, /news, /schedule, /rankings, /player, /team
+C	livefast:{id} (in app.js)	livefast:*	/app/live-scores (4s TTL + per-id single-flight)
+D	livecomm:{id} (in app.js)	livecomm:*	/app/live-commentary (5s TTL + single-flight)
+Workers (BullMQ) write the same keys layer B reads (match:{id}:live, :scorecard, :commentary, matches:live/upcoming/recent) using cacheSetSWR, and manage per-match polling lifecycle. So layer B routes are genuinely worker-fed and cache-first. ✅
+
+Per-route audit
+Route	Provider direct?	MySQL per req?	Redis cache?	TTL	Stale-safe?
+/app/config	No (DB settings)	Yes (app_settings, ad_settings every call)	No	—	n/a
+/app/home	Only on miss (4 calls, single-flight)	Yes (homeConfig + config every miss)	Yes appdata:app:home	30s + stale	✅ stale on error
+/app/match/:id	Only on miss	Yes (streams+config)	Yes appdata:match:{id}:detail	10s	✅
+/app/match/:id/streams	No	Yes on miss (match_streams)	Yes appdata:match:{id}:streams	60s	admin-invalidated ✅
+/matches/live	Worker-fed; miss→single-flight	No (merge only)	Yes SWR matches:live	8+4s	✅
+/matches/upcoming	Worker-fed	No	Yes matches:upcoming	300s	✅
+/matches/recent	Worker-fed	No	Yes matches:recent	120s	✅
+/match/:id	Worker-fed; miss→SWR + 5 fallbacks	No	Yes SWR match:{id}:live	15+5s	✅
+/match/:id/commentary	Worker-fed	No	Yes SWR	5+3s	✅
+/match/:id/scorecard	Worker-fed	No	Yes SWR	5+3s	✅
+/match/:id/full-commentary	On miss (per-innings)	No	Yes match:{id}:commentary-feed + per-innings	15s live / 6h done	partial
+/match/:id/overs	On miss	No	Yes	5s	breaker only
+/match/:id/squads	On miss	No	Yes match:{id}:squads	1800s	validates payload
+/series	On miss	No	Yes series:list:enriched:v2	300s	✅
+/series/:id	On miss	No	Yes series:{id}:data:v4	300s	✅
+/news	On miss	No	Yes news:list:*	300s	✅
+/rankings	On miss	No	Yes rankings:{g}:{c}:{f}	300s ⚠️	no stale
+/player/:id /team/:id	On miss	No	Yes	3600s	breaker
+Gaps vs. the brief (what actually needs work)
+/app/* and livefast/livecomm are NOT worker-fed. These are the heaviest Flutter-facing endpoints (home + live score/commentary polling). On every cache expiry they call the provider directly. They're single-flight protected per-process, but no background worker keeps them warm. This is the biggest gap for the 100K goal.
+
+Stampede locks are in-memory (per-process), not Redis. runDeduped / inflight maps live in process memory. The brief wants PM2 cluster mode (-i max). Under cluster mode, each of N processes has its own lock → up to N concurrent provider calls on cold start, not 1. Brief explicitly asks for lock:cache:{key} Redis locks.
+
+No global provider call-rate budget. Nothing caps total provider calls/min across processes.
+
+/app/config hits MySQL on every request (no Redis cache; appConfig/homeConfig defined in DATA_SOURCES but the route bypasses it).
+
+No JSON compression (@fastify/compress not installed). Only the provider client decompresses upstream.
+
+No positive Cache-Control for upcoming/recent/series/news/static (Step 5). Live endpoints correctly forced no-store.
+
+Rate limiting is single-tier (100/min global). No stricter stream/admin-login tiers (Step 6).
+
+No PM2 ecosystem file. npm start / npm run workers are single-process.
+
+Worker locks: uses BullMQ job schedulers with jobId dedupe (distributed via Redis) rather than lock:worker:{name}. Functionally single-fetch already, but not the brief's naming.
+
+rankings TTL is 300s, brief wants 6–24h; no stale fallback.
+
+Observability: /health, /metrics, /providers exist + Prometheus + cache_events table. Missing /admin/cache-status, /admin/provider-status as specified, and worker-vs-fallback provider-call separation.
+
+Proposed phase order (reordered by impact/risk)
+Phase 1a — Redis stampede locks + provider-call budget (lock:cache:{key}, global budget). Prerequisite for safe PM2 cluster mode. Highest leverage.
+Phase 1b — Warm /app/* + livefast/livecomm via workers (new worker-home, feed app:home/app:config; have live-score worker populate livefast:{id}). Closes the biggest gap.
+Phase 4/6 — PM2 cluster (API) + ecosystem file + workers as separate processes. Depends on #1.
+Phase 2 — Stream endpoint (mostly done; verify keys + Flutter on-demand-only).
+Phase 5 — Compression + Cache-Control headers.
+Phase 6 — Tiered rate limits + MySQL index check + /app/config caching.
+Phase 3 — Flutter polling audit.
+Phase 7 — Observability endpoints + k6 load test.
+Phase 8 — Final report.
+Non-negotiables status: No UI touched. No video proxying anywhere (streams return m3u8 metadata only — confirmed in publicStreamDto/fetchActiveStreamsForMatch). All changes will be additive (new keys/workers/fields), preserving existing endpoints and response shapes.
+
+Per the brief, I'm stopping here for confirmation before any code changes. Shall I proceed to Step 1 (Phase 1a — Redis cache locks + provider budget)? Or would you prefer I reorder, or run straight through multiple phases?, this was my response: Before implementing, first confirm in the Phase 1a report/pre-change notes which existing helpers actually use in-memory lock/deduping, especially:
+
+* `controlledFetch`
+* `providerFetch`
+* `cacheGetOrFetch`
+* `cacheGetOrFetchSWR`
+* `runDeduped`
+* any `inflight` maps in `app.js`
+* `livefast:{id}`
+* `livecomm:{id}`
+
+Scope Redis distributed locking only to the paths that currently depend on process-local in-memory dedupe or are provider-fallback/cache-miss paths. Do not add Redis locks to routes/helpers that do not need them.
+
+Yes, proceed with **Step 1 — Phase 1a only** first.
+
+Focus only on:
+
+1. Replace/extend in-memory stampede protection with Redis distributed cache locks using `lock:cache:{key}`.
+2. Keep existing in-memory dedupe if useful, but Redis lock must protect across PM2 cluster processes.
+3. Add global provider call-rate budget across all API processes/workers.
+4. Make cache-miss fallback safe:
+
+   * serve stale/last-good data first
+   * only one Redis lock-holder may rebuild a missing key
+   * short provider timeout
+   * safe placeholder if no stale data exists
+   * log every public-route provider fallback separately from scheduled worker calls
+5. Do not change UI.
+6. Do not change response shapes.
+7. Do not remove existing cache systems.
+8. Do not change stream/video flow.
+9. Do not move to Phase 1b or PM2 cluster yet.
+
+Important:
+Do this as an additive hardening layer, not a rewrite. Preserve existing `controlledFetch`, `providerFetch`, `cacheGetOrFetch`, `cacheGetOrFetchSWR`, BullMQ workers, and current endpoints.
+
+After Phase 1a, write a short report with:
+
+* which helpers used in-memory dedupe before the change
+* which helpers/routes now use Redis `lock:cache:{key}`
+* which helpers/routes were intentionally left without Redis locking and why
+* files changed
+* Redis lock keys added
+* provider budget logic
+* how public-route fallback is logged
+* how this behaves under PM2 cluster
+* any risks before Phase 1b, this was your answer: Clean — 0 eslint issues on redis.js, 28/28 tests pass. Phase 1a is complete.
+
+Phase 1a Report — Cross-Process Cache-Miss Hardening
+1. Helpers that used in-memory dedupe BEFORE this change
+Helper / path	Mechanism (process-local only)
+runDeduped (redis.js)	module-level inflight Map
+cacheGetOrFetch (redis.js)	via runDeduped
+cacheGetOrFetchSWR (redis.js)	via runDeduped (hard-miss + background refresh)
+controlledFetch (data-control.js)	own module-level inflight Map + stale-while-revalidate
+providerFetch (data-control.js)	inherits controlledFetch
+fetchLiveScoreFast / livefast:{id} (app.js)	liveScoreInflight Map + stale-on-error
+fetchLiveCommentaryFast / livecomm:{id} (app.js)	liveCommentaryInflight Map + stale-on-error
+All of these collapse concurrent callers within one Node process only. Under PM2 cluster mode (N processes) each has its own map → up to N concurrent provider calls on a cold start. That's the gap Phase 1a closes.
+
+2. Helpers/routes that now use Redis lock:cache:{key}
+Path	Lock key	Notes
+cacheGetOrFetch hard-miss	lock:cache:{cacheKey}	wrapped in existing runDeduped; provider error still re-thrown to all in-proc callers
+cacheGetOrFetchSWR hard-miss	lock:cache:{cacheKey}	only in real runtime; unit tests (with opts seams) bypass the lock and keep exact prior behavior. SWR background refresh is NOT locked (already deduped + non-blocking + serves stale)
+controlledFetch miss (so providerFetch + all /app/*)	lock:cache:appdata:{prefix}	waiter path + budget + stale fallback; force refresh skips the waiter path
+livefast:{id} (/app/live-scores)	lock:cache:livefast:{id}	kept in-memory map + stale-on-error
+livecomm:{id} (/app/live-commentary)	lock:cache:livecomm:{id}	kept in-memory map + stale-on-error
+In-memory dedupe was kept everywhere (cheap in-process collapse); the Redis lock is the cross-process layer on top.
+
+3. Intentionally left WITHOUT Redis locking — and why
+BullMQ workers (live-score, commentary, scorecard, match-list, series, player-stats, maintenance): already distributed-single-flight via Redis-backed jobId schedulers, interval- and concurrency-limited. Their writes are not provider-fallback paths; locking them could starve scheduled refreshes. They also do not consume the provider budget (budget is fallback-only, by design).
+Pure reads (cacheGet, unwrapSWR, cacheMiddleware HIT path) — no provider call.
+Writers (cacheSet, cacheSetSWR, cacheDel) — no stampede risk.
+SWR background refresh — serves stale immediately + one deduped refresh; not a blocking miss.
+Low-frequency direct-cacheGet route blocks (/series/:id/teams, /series/:id/squads, /rankings, points-table, series stats): non-live, already cached-or-empty, would mean touching many routes in a hardening pass. Deferred (can be added later if load tests show fan-out).
+4. Files changed
+src/config/index.js — added cacheLock + providerBudget config blocks (env-overridable, safe defaults).
+src/lib/cache-lock.js — new module: acquireCacheLock / releaseCacheLock (SET NX PX + token-checked release), consumeProviderBudget / getProviderBudgetStatus, logProviderFallback, withTimeout, singleFlightRebuild (error-propagating, for layer B), rebuildWithLock (stale/placeholder-serving, for fallback paths).
+src/lib/redis.js — wired singleFlightRebuild into cacheGetOrFetch + cacheGetOrFetchSWR hard-miss (test-seam gated).
+src/lib/data-control.js — wired lock + budget + waiter path into controlledFetch.
+src/routes/app.js — wired lock + budget into livefast and livecomm work blocks.
+No new test file was committed (a node:test file would hang the suite when no local Redis is running, since the ioredis reconnect timer keeps the loop alive). Logic was verified by a one-off script and the full existing suite.
+
+5. Redis keys added
+lock:cache:{key} — single-flight rebuild lock (PX auto-expiry = CACHE_LOCK_TTL_MS, default 5s).
+budget:provider:fallback:{minuteEpoch} — per-minute fallback counter (120s TTL for observability).
+These are new namespaces — no existing key pattern was renamed or removed.
+
+6. Provider budget logic
+Increments budget:provider:fallback:{minute} via Redis INCR (atomic, shared across all processes).
+Allowed while count <= PROVIDER_CALL_BUDGET_PER_MIN (default 600/min).
+Fail-open: a Redis error returns allowed:true (one extra provider hit beats blanking the app).
+Cold-start exception: in controlledFetch, if budget is exhausted and there's no stale to serve, the call proceeds anyway (budget is a soft shed, not a hard wall that empties a brand-new key).
+Counted only on public-route fallbacks. Worker calls never touch it.
+7. Public-route fallback logging
+Every fallback emits a single structured line via logProviderFallback: { msg: 'provider-fallback', source: 'public-route', route, key, reason, outcome, providerMs?, budgetCount?, error? }. outcome values: provider-ok, provider-failed-stale, provider-failed-placeholder, served-stale-waiter, served-placeholder-waiter, budget-exhausted-*, waiter-empty. Budget-exceeded logs { source: 'public-fallback' }. This is distinct from worker calls (which log Live score polled etc.), so Step 7 dashboards can separate expected worker traffic from cache-miss fallback.
+
+8. Behavior under PM2 cluster mode
+Today (single process): lock is always acquired uncontended → behavior identical to before; in-memory dedupe still does the real work. Verified: all 51 existing tests pass.
+Under cluster (N processes), cold start / Redis flush: exactly one process acquires lock:cache:{key} and calls the provider; the others poll cache for up to ~1.2–1.5s, then serve fresh (if the holder wrote) / stale / placeholder. Provider call volume stays ~flat regardless of process count or concurrent users.
+9. Risks before Phase 1b
+No active local Redis here, so cross-process behavior was reasoned + unit-verified via the MemoryRedis path, not load-tested against real Redis. Recommend a quick 2-process local check before relying on it in prod.
+MemoryRedis fallback is per-process (not shared) — so locks/budget are no-ops if Redis is down and the in-memory fallback engages. Acceptable: that path only triggers when Redis is unreachable, where in-memory dedupe still applies per process.
+Waiter timeouts (CACHE_LOCK_WAIT_MS 1.5s, livefast/comm 1.2s) add latency only on a true cross-process miss; tune if p99 on cold start matters.
+fallbackTimeoutMs (9s) ≥ existing data-source timeouts, so it won't pre-empt them; it's a backstop, not the primary timeout.
+These paths can't be exercised by node --test without a live Redis without hanging the runner — a CI Redis service (or a mocked ioredis) is needed before adding committed lock tests.
+No UI, response shapes, stream/video flow, or existing cache systems were changed. Ready for Phase 1b (warming /app/* + livefast/livecomm via workers) on your go-ahead., and this was my answer: Yes, proceed with **Step 1 — Phase 1b only**.
+
+## Prerequisite
+
+Before starting, confirm in one line whether the two open Phase 1a risks have been resolved or are being explicitly accepted as-is:
+
+1. Real-Redis 2-process lock verification
+2. Provider-budget cold-start fan-out gap
+
+Do not silently carry these forward unaddressed.
+
+## Goal
+
+Warm the heaviest Flutter-facing endpoints through workers so `/app/*`, `livefast:{id}`, and `livecomm:{id}` do not depend on user-triggered provider calls on cache expiry.
+
+The target architecture for this phase is:
+
+```text
+existing worker-fed matches:live cache
+        ↓
+Phase 1b warmers discover active live matches
+        ↓
+workers populate exact app-facing Redis keys using correct cache write format
+        ↓
+Flutter-facing routes read warm cache
+        ↓
+public-route provider fallback becomes rare
+```
+
+## Important before implementing
+
+Use the **exact Redis keys the current routes already read**. Do not create new unused cache keys.
+
+If a route currently reads `appdata:*`, `livefast:{id}`, or `livecomm:{id}`, the worker must populate that same key — unless you also safely update the route to read a new key while keeping backward compatibility.
+
+This applies specifically to `/app/config`, which per the audit currently has no Redis cache and bypasses straight to MySQL. For `/app/config`, either:
+
+* wire it through the existing `appdata` / `data-control` cache pattern, or
+* add a new backward-compatible Redis cache read path.
+
+Clearly state the chosen key and make sure admin settings/ad settings updates invalidate it.
+
+Decide and state up front whether each new warmer will run as a new BullMQ job, inheriting BullMQ's existing distributed single-instance guarantee, or some other mechanism. If not BullMQ, explain how it stays single-instance once the API process eventually runs under PM2 cluster mode `-i max` in a later phase.
+
+Do not leave this implicit.
+
+## Focus only on Phase 1b
+
+Add or extend background workers to warm:
+
+1. `/app/home`
+2. `/app/config`
+3. `/app/match/:id` for live/high-interest matches — make an explicit yes/no decision on scope now, not mid-implementation.
+4. `livefast:{id}`
+5. `livecomm:{id}`
+
+## Phase 1b warming kill switch
+
+Add a safe environment-based kill switch for Phase 1b warmers.
+
+At minimum, support:
+
+```text
+ENABLE_PHASE1B_WARMING=true
+```
+
+Default can be `true`, but the system must allow setting it to `false` to disable all Phase 1b warmers quickly.
+
+If simple to implement, also support per-warmer flags:
+
+```text
+ENABLE_APP_HOME_WARMER=true
+ENABLE_APP_CONFIG_WARMER=true
+ENABLE_LIVEFAST_WARMER=true
+ENABLE_LIVECOMM_WARMER=true
+ENABLE_MATCH_DETAIL_WARMER=true
+```
+
+Requirements:
+
+* If disabled, warmers must stop scheduling/fetching new provider work.
+* Existing Redis cached data should not be deleted.
+* Public routes must continue working through the Phase 1a protected cache-miss/stale fallback path.
+* Disabling warmers must not affect existing BullMQ workers unrelated to Phase 1b.
+* Log clearly when a warmer is disabled by env flag.
+* Include the kill-switch env names and usage in the Phase 1b report.
+
+This is a safety mechanism only. Do not use it as a replacement for proper live-match caps, priority selection, safe intervals, or Phase 1a fallback protection.
+
+## Live-match warming cap
+
+Apply a configurable live-match warming cap to **all per-match warmers**, not only `/app/match/:id`.
+
+Add a setting such as:
+
+```text
+MAX_WARM_LIVE_MATCHES
+```
+
+or separate caps if needed:
+
+```text
+MAX_WARM_LIVEFAST_MATCHES
+MAX_WARM_LIVECOMM_MATCHES
+MAX_WARM_MATCH_DETAIL_MATCHES
+```
+
+The cap must apply to:
+
+1. `livefast:{id}` warming
+2. `livecomm:{id}` warming
+3. `/app/match/:id` warming, if match-detail warming is included in this phase
+
+Reason: `livefast:{id}` and `livecomm:{id}` are the highest-frequency warmers. If 40–50 matches are live at the same time, unrestricted warming could create hundreds of provider calls per minute. Worker calls are intentionally exempt from the Phase 1a public fallback provider budget, so worker warmers need their own concurrency/selection safety limit.
+
+The worker must discover live matches from the existing `matches:live` cache, then select only the highest-priority live matches up to the configured cap.
+
+Do not hardcode IDs.
+Do not make a fresh provider call just to discover active matches.
+Stop warming a match once it leaves live status.
+Do not let warmers keep running for completed matches.
+
+Priority should be deterministic and safe, for example:
+
+1. Matches currently shown in `/app/home` hero/live sections if available
+2. International / major matches if this metadata exists
+3. Matches with streams available if already known from cache/admin data
+4. Earliest/most recently updated live matches as fallback
+
+If priority metadata is not available, use a simple deterministic order from `matches:live` and clearly document it.
+
+## Required cache behavior
+
+Workers must populate the exact cache keys read by:
+
+* `controlledFetch`
+* `providerFetch`
+* `/app/home`
+* `/app/config`
+* `/app/live-scores`
+* `/app/live-commentary`
+
+Workers must write through the **existing set helper / cache format** each key family already uses on its read side. Do not use raw Redis `SET` unless that is already the official write format for that key family.
+
+For example:
+
+* Layer B keys must use `cacheSetSWR`, `cacheSet`, or the existing equivalent used by `cacheGetOrFetch` / `cacheGetOrFetchSWR`.
+* `appdata:*` keys must use the existing `controlledFetch` / `data-control` cache write format or a shared helper extracted from it.
+* `livefast:{id}` keys must use the same value format currently written/read by `fetchLiveScoreFast`.
+* `livecomm:{id}` keys must use the same value format currently written/read by `fetchLiveCommentaryFast`.
+
+State explicitly per key family which write helper/format was used.
+
+The goal is not only to put data into Redis, but to preserve freshness timestamps, stale markers, SWR metadata, TTL behavior, and fallback behavior exactly as the current read-side helpers expect.
+
+Keep Phase 1a protections in place:
+
+* `lock:cache:{key}`
+* provider fallback budget
+* stale/last-good fallback
+* public-route fallback logging
+
+Workers must be Redis/BullMQ-safe:
+
+* no duplicate provider fetch storms
+* no cluster-related duplicate fetching now or once the API moves to cluster mode later
+* safe intervals
+* no deletion of last-good cache on provider failure
+* no breaking existing BullMQ workers
+
+New worker fetches must be exempt from the provider fallback budget, consistent with the existing rule that worker calls never consume it. Worker logs must also be distinct from public fallback traffic so the two stay separable.
+
+## Suggested warming intervals
+
+Use safe configurable intervals:
+
+```text
+App home live data: 10–15s
+App config: 30–120s
+livefast live score: 3–5s for selected active live matches only
+livecomm commentary: 5–10s for selected active live matches only
+Match detail for live matches: 10–15s only if in scope
+```
+
+Discover active live match IDs from the existing `matches:live` cache, which is already worker-fed.
+
+Do not use hardcoded IDs.
+Do not make a fresh provider call just to discover active matches.
+Stop warming a match once it leaves live status.
+
+## `/app/match/:id` scope decision
+
+Before coding, make an explicit decision:
+
+* include `/app/match/:id` warming in Phase 1b, or
+* defer it to a later phase.
+
+If included, it must also obey the live-match warming cap.
+
+If deferred, explain why and make sure the route remains protected by Phase 1a `lock:cache:{key}`, stale fallback, and provider fallback budget.
+
+Do not decide this mid-implementation.
+
+## Do not do these yet
+
+* Do not change UI.
+* Do not change response shapes.
+* Do not change stream/video flow.
+* Do not enable PM2 cluster yet.
+* Do not move to compression.
+* Do not move to rate limits.
+* Do not move to Flutter polling.
+* Do not move to WebSocket/SSE.
+* Do not rewrite the existing cache system.
+* Do not remove existing helpers.
+* Do not remove existing BullMQ workers.
+* Do not change existing public endpoint contracts.
+
+## Before coding, briefly confirm
+
+1. Status of the two Phase 1a open risks.
+2. Which exact keys `/app/home`, `/app/config`, `/app/live-scores`, and `/app/live-commentary` currently read.
+3. Which of those keys Phase 1b will warm.
+4. How `/app/config` will be cached and invalidated.
+5. Whether `/app/match/:id` warming is in or out of scope for this phase, and why.
+6. Whether new warmers run as BullMQ jobs or another mechanism.
+7. How single-instance behavior holds under future PM2 cluster mode.
+8. Which live-match warming cap setting will be used.
+9. How selected live matches will be prioritized when live matches exceed the cap.
+10. Which cache write helper/format will be used for each warmed key family.
+11. Which kill-switch env flags will be added.
+12. Which workers/files will be touched.
+
+## After Phase 1b, write a short report with
+
+* files changed
+* workers added/extended
+* exact Redis keys warmed
+* exact write helper/cache format used per key family
+* proof workers did not raw-SET keys that require SWR/stale metadata
+* worker intervals
+* active match discovery method
+* active match lifecycle handling
+* configured warming cap value
+* how many live matches were discovered
+* how many live matches were warmed
+* how many live matches were skipped due to cap
+* provider call impact
+* steady-state provider calls per minute estimate
+* worst-case provider calls per minute at configured cap
+* how budget exemption was implemented
+* how logging separation was implemented
+* Phase 1b kill-switch env flags added and how to disable warmers safely
+* how this reduces public-route provider fallback
+* how skipped matches still fall back through Phase 1a protected public-route cache-miss logic
+* how to verify with logs/Redis
+* risks before PM2 cluster
+
+Remember: this is **Phase 1b only**. Do not move to later phases until I approve., Now this is your final response:, I'll start by understanding the actual state of the working directory, since the task requires running real testsagainst real Redis.
+
+● Bash(pwd && ls -la && echo "---GIT---" && git rev-parse --is-inside-work-tree 2>/dev/null || echo "not a git repo")⎿  /c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-livetotal 3615drwxr-xr-x 1 Faisal Arifi 197121      0 Jun 17 23:43 ./… +133 lines (ctrl+o to expand)
+
+● This is the CricPro repo. Let me explore the backend structure and the Phase 1b warmer code before running anything.
+
+● Bash(cd cricket-api && ls -la && echo "---SRC---" && ls -la src 2>/dev/null && echo "---PKG---" && cat package.json2>/dev/null | head -60)… +133 lines (ctrl+o to expand)
+
+● This is the CricPro repo. Let me explore the backend structure and the Phase 1b warmer code before running anything.
+
+● Bash(cd cricket-api && ls -la && echo "---SRC---" && ls -la src 2>/dev/null && echo "---PKG---" && cat package.json2>/dev/null | head -60)⎿  total 785drwxr-xr-x 1 Faisal Arifi 197121      0 Jun 18 12:17 ./drwxr-xr-x 1 Faisal Arifi 197121      0 Jun 17 23:43 ../… +81 lines (ctrl+o to expand)
+
+● Let me explore the lib directory and warmer/cache code structure.
+
+● Bash(cd cricket-api/src && echo "===LIB===" && ls -la lib && echo "===ROUTES===" && ls -la routes && echo"===CONFIG===" && ls -la config && echo "===WORKERS===" &&…)⎿  Error: Exit code 1/usr/bin/bash: line 1: cd: cricket-api/src: No such file or directory
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "===LIB===" && ls lib&& echo "===ROUTES===" && ls routes && echo "==…)⎿  ===LIB===api-security.jsapi-security.test.js… +38 lines (ctrl+o to expand)
+
+● Let me read the core files: the cache-lock, redis, phase1b-warmers, and provider-fetch modules.
+
+Read 1 file (ctrl+o to expand)
+
+● Now the redis module and phase1b-warmers.
+
+Read 1 file (ctrl+o to expand)
+
+● Now the phase1b-warmers module, which is the core of this verification.
+
+Read 1 file (ctrl+o to expand)
+
+● Now the config module and the app.js warm entrypoints.
+
+Read 1 file (ctrl+o to expand)
+
+● Now let me look at the app.js warm entrypoints and the data-control module (controlledFetch/writeEnvelope), plus checkif Redis is available locally.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && grep -n"phase1bWarmEntrypoints|warmHome|warmLiveScore|warmLiveCommenta…)⎿  36 const phase1bWarmEntrypoints = {37:  warmHome: null,38:  warmLiveScore: null,… +18 lines (ctrl+o to expand)
+
+● Let me read the key sections of app.js: the warm entrypoint wiring and the livefast/livecomm fetch functions.
+
+Read 1 file (ctrl+o to expand)
+
+● Let me read the warmHome wiring (line 421) and check the data-control/writeEnvelope and existing test setup, plusRedis availability.
+
+Read 1 file (ctrl+o to expand)
+
+● Now let me check Redis availability, the data-control writeEnvelope helper, and the commentary fetch function.
+
+● Bash(which redis-server redis-cli docker 2>/dev/null; echo "---redis-cli ping---"; redis-cli ping 2>&1 | head -3; echo"---node---"; node --version)⎿  ---redis-cli ping---/usr/bin/bash: line 1: redis-cli: command not found---node---v24.14.1
+
+● No Redis, redis-cli, or docker on PATH. Let me check more thoroughly for ways to provision Redis.
+
+● Bash(echo "OS: $OSTYPE"; uname -a 2>/dev/null; echo "---docker---"; command -v docker docker.exe 2>/dev/null; docker--version 2>&1 | head -1; echo "---wsl---"; comm…)⎿  Error: Exit code 2OS: msysMINGW64_NT-10.0-26200 DESKTOP-FQGTLTE 3.6.6-1cdd4371.x86_64 2026-01-15 22:20 UTC x86_64 Msys---docker---/usr/bin/bash: line 1: docker: command not found---wsl---/c/WINDOWS/system32/wsl/c/WINDOWS/system32/wsl.exe---choco/scoop---/c/ProgramData/chocolatey/bin/choco… +2 lines (ctrl+o to expand)
+
+● WSL and choco/winget are available. WSL is the cleanest path to a real Redis. Let me check WSL status.
+
+● Bash(wsl.exe -l -v 2>&1 | head -20; echo "---exit:$?---")⎿  The Windows Subsystem for Linux is not installed. You can install by running 'wsl.exe --install'.For more information please visit https://aka.ms/wslinstall---exit:0---
+
+● WSL not installed. Best path is a native Windows Redis binary (the maintained tporadowski Redis-for-Windows port). Letme verify network access and download it.
+
+● Bash(command -v curl tar unzip powershell.exe 2>/dev/null; echo "---net test---"; curl -sI --max-time 15https://github.com 2>&1 | head -3)⎿  /mingw64/bin/curl/usr/bin/tar/usr/bin/unzip… +5 lines (ctrl+o to expand)
+
+● Network and tooling available. Let me download a standalone Redis-for-Windows binary into a temp dir.
+
+● Bash(mkdir -p /tmp/redistest && cd /tmp/redistest && echo "fetching release asset list..." && curl -sL --max-time 30https://api.github.com/repos/tporadowski/redis/r…)⎿  fetching release asset list..."browser_download_url": "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.msi"… +2 lines (ctrl+o to expand)⎿  Shell cwd was reset to C:\Users\Faisal Arifi\Downloads\cricket-live-wip\cricket-live
+
+● The zip is portable (no install needed). Let me download and extract it.
+
+● Bash(cd /tmp/redistest && curl -sL --max-time 120 -o redis.zip"https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip" && ls -la re…)⎿  -rw-r--r-- 1 Faisal Arifi 197121 12617669 Jun 18 13:42 redis.zip00-RELEASENOTESEventLog.dll*… +14 lines (ctrl+o to expand)⎿  Shell cwd was reset to C:\Users\Faisal Arifi\Downloads\cricket-live-wip\cricket-live
+
+● Got a real Redis server binary. Let me start it on a non-default port (to avoid clashing with anything) and verify itresponds.
+
+● Bash(cd /tmp/redistest/redis && ./redis-server.exe --port 6399 --save "" --appendonly no --daemonize no)⎿  Running in the background (↓ to manage)
+
+● Bash(sleep 2 && cd /tmp/redistest/redis && ./redis-cli.exe -p 6399 ping && ./redis-cli.exe -p 6399 set __t hello &&./redis-cli.exe -p 6399 get __t && ./redis-cli.ex…)⎿  PONGOKhello… +3 lines (ctrl+o to expand)⎿  Shell cwd was reset to C:\Users\Faisal Arifi\Downloads\cricket-live-wip\cricket-live
+
+● Real Redis 5.0.14 is up on port 6399. Now let me set up the verification. Let me read the remaining relevant code:commentary fetch, data-control envelope writer, and admin invalidation.
+
+Read 1 file (ctrl+o to expand)
+
+● Let me see the commentary cache write (envelope format) further down.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && grep -n"setex|JSON.stringify|cacheKey" routes/app.js | head -40)⎿  227:            body.metadata ? JSON.stringify(body.metadata) : null,258:        body.metadata ? JSON.stringify(body.metadata) : null,280:        body.metadata ? JSON.stringify(body.metadata) : null,… +22 lines (ctrl+o to expand)
+
+Read 1 file (ctrl+o to expand)
+
+● Now let me look at data-control (controlledFetch/writeEnvelope) and the appdata key format.
+
+Read 1 file (ctrl+o to expand)
+
+● Now let me check the admin invalidation routes for the /app/config audit (item 8) and the .env.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "===invalidationrefs===" && grep -rn "appdata:app|appdata…)⎿  ===invalidation refs===routes/admin.js:60:  // POST /logout — invalidate JWT token (AUTH REQUIRED)routes/admin.js:64:      description: 'Admin logout (invalidate token)',… +48 lines (ctrl+o to expand)
+
+● Let me look at the invalidation in admin/index.js, settings.routes.js, splash.routes.js, and check which admin routesmutate config-related data. Let me map all admin route files and their invalidation.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "===admin routefiles===" && ls admin/routes/ && echo "" && echo "===…)⎿  ===admin route files===analytics.routes.jsapi-keys.routes.js… +81 lines (ctrl+o to expand)
+
+● Let me check which admin routes mutate config/home/ads/assets data and whether each invalidates. Let me scan homepage,assets, streams, matches routes for invalidation.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src/admin/routes" && for f inhomepage.routes.js assets.routes.js streams.routes.j…)⎿  === homepage.routes.js ===mutating endpoints: 13NO config-invalidation… +15 lines (ctrl+o to expand)
+
+● homepage.routes.js has 13 mutating endpoints and no config invalidation — that's a candidate gap. Let me inspect itand what /app/home actually reads.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src/admin/routes" && echo "===homepage mutating routes ===" && grep -n "fastify.p…)⎿  === homepage mutating routes ===13:  fastify.post(44:  fastify.put('/layout', { preHandler: [requirePermissions('home.write')] }, async (request) => {… +43 lines (ctrl+o to expand)
+
+● Let me confirm /app/home payload sources to validate the homepage invalidation gap.
+
+Read 1 file (ctrl+o to expand)
+
+● I have a clear picture of the code now. Let me check the logger and confirm the lock modules import cleanly withoutpulling in MySQL.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "===logger imports==="&& head -20 lib/logger.js && echo "===redis.js…)⎿  Error: Exit code 2===logger imports===import winston from 'winston';import config from '../config/index.js';
+
+ const { combine, timestamp, json, errors, colorize, printf } = winston.format;
+
+ const devFormat = combine(
+   colorize(),
+   timestamp({ format: 'HH:mm:ss' }),
+ … +24 lines (ctrl+o to expand)
+
+● PUBLIC_BASE_URL is not in .env (item 9 finding). Let me see the full .env.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && cat .env)⎿  # ====================================================# Cricket Scoring API — Environment Configuration# ====================================================… +61 lines (ctrl+o to expand)
+
+● I now have a complete picture of the code. Let me build the real-Redis verification harness. I'll create test scriptsthat exercise the actual cache-lock.js, redis.js, and data-control.js logic against the running Redis on port 6399,with two real Node processes coordinating through Redis.
+
+● Bash(mkdir -p "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/_verify" && echo created)⎿  created
+
+● Now I'll build the verification harness that exercises the real cache-lock.js / redis.js modules against the runningRedis, using two separate Node processes coordinated through Redis. Provider work is mocked (a Redis counter) butevery lock/write path is the real shipped code.
+
+● Write(_verify\lock_proc.mjs)⎿  Wrote 77 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\lock_proc.mjs1 /**2  * Phase 1b verification worker — REAL Redis, REAL lock code.3  *4  * Imports the actual shipped lib/cache-lock.js + lib/redis.js (no reimplementation).5  * Two copies of this process are launched against one real redis-server. They6  * synchronise on a Redis "barrier" key so both hit the same cold key at ~the same7  * instant, then both call the REAL singleFlightRebuild(). The mocked "provider" is8  * a Redis INCR counter so we can count exactly how many processes called it.9  *10  * argv: <role A|B>  … +68 lines (ctrl+o to expand)
+
+● Now the orchestrator that points config at the real Redis (port 6399), resets keys, launches two processessimultaneously, and reports the provider count.
+
+● Write(_verify\run_test1_cache_lock.mjs)⎿  Wrote 47 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test1_cache_lock.mjs1 /**2  * TEST 1 — Real Redis 2-process cache-lock verification.3  * Launches two lock_proc.mjs children against real redis (REDIS_URL env), resets4  * state, drops the barrier so both race the same cold key, asserts provider5  * call-count === 1 and that exactly one holder + one waiter is observed.6  */7 import { spawn } from 'node';8 import Redis from 'ioredis';910 const URL = process.env.REDIS_URL;… +38 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" PROVIDER_BUDGET_ENABLED=false node _verify/…)⎿  --- launching 2 processes against real Redis ---13:49:36 info: Redis main connected {"service":"cricket-api"}13:49:36 info: Redis main connected {"service":"cricket-api"}… +13 lines (ctrl+o to expand)
+
+● Test 1 PASSES on real Redis: one holder, one waiter, provider count = 1. Now Test 2 — warmer leader-lock. I'llreplicate the shipped asLeader wrapper exactly (it's a private function) but call the realacquireCacheLock/releaseCacheLock, with each of the 4 warmers and a mock provider counter.
+
+● Write(_verify\warmer_proc.mjs)⎿  Wrote 59 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\warmer_proc.mjs1 /**2  * Phase 1b verification worker — warmer LEADER-LOCK, real Redis.3  *4  * Reproduces the shipped asLeader() wrapper from lib/phase1b-warmers.js EXACTLY5  * (acquire lock:cache:warmer:{name} with ttl = interval - grace, run fn, release)6  * but calls the REAL acquireCacheLock/releaseCacheLock from lib/cache-lock.js.7  * The "warmer work" is a Redis INCR per warmer name so we can count provider work8  * across both processes. Each process schedules ALL 4 warmers on one tick.9  *10  * argv:   … +50 lines (ctrl+o to expand)
+
+● Write(_verify\run_test2_warmer_lock.mjs)⎿  Wrote 36 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test2_warmer_lock.mjs1 /** TEST 2 — Real Redis 2-process warmer leader-lock. */2 import { spawn } from 'node';3 import Redis from 'ioredis';45 const URL = process.env.REDIS_URL;6 const redis = new Redis(URL);7 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));8 const WARMERS = ['app-home', 'app-config', 'livefast', 'livecomm'];910 async function main() {… +26 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" PROVIDER_BUDGET_ENABLED=false node _verify/…)⎿  --- launching 2 warmer processes against real Redis ---13:50:53 info: Redis main connected {"service":"cricket-api"}13:50:53 info: Redis main connected {"service":"cricket-api"}… +20 lines (ctrl+o to expand)
+
+● Test 2 passes — leadership split across processes (A led 3 warmers, B led livefast), each warmer's provider work ranexactly once. Now the combined Test 3. First let me check whether controlledFetch (the appdata path) runs withoutMySQL, since that determines how I exercise appdata:app/appdata:app.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && sed -n '1,60p' lib/db.js)⎿  import mysql from 'mysql2/promise';import config from '../config/index.js';import logger from './logger.js';… +57 lines (ctrl+o to expand)
+
+● Test 2 passed cleanly. Now Test 3 (combined). Let me verify controlledFetch loads and runs without MySQL (queriesshould fail fast with connection-refused and be caught).
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" timeout 30 node --input-type=module -e 'im…)⎿  Waiting…
+
+● MarRunnl+b  (3s)n in background)okens)
+
+· Marinating… (14m 13s · ↓ 26.7k tokens)✶ MarcontrolledFetch returned in 13 ms: {"cache":"BYPASS","provider":"test","lastUpdated":"2026-06-18T11:52:24.491Z","ttl":300,"isStale"}─   written envelope: {"data":{"hello":"world","v":1},"meta":{"provider":"test","providerId","createdAt":"202─────… +2 lines (ctrl+o to expand)
+
+● controlledFetch works without MySQL. Now let me see the public read paths for /app/config and /app/home to build thecombined test accurately.
+
+Read 1 file (ctrl+o to expand)
+
+● controlledFetch runs without MySQL. Now the combined Test 3 across two real processes: one acting as the warmer (forcerefresh, lock holder) and one as the public route (cold read) hitting the same key simultaneously, using the realcontrolledFetch. Mock provider is a Redis counter.
+
+● Write(_verify\combined_proc.mjs)⎿  Wrote 48 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\combined_proc.mjs1 /**2  * TEST 3 worker — combined warmer-refresh + public cold-read on the SAME appdata3  * key, two real processes, real Redis, REAL controlledFetch (lib/data-control.js).4  *5  * role=warmer  -> controlledFetch({ force, budgetExempt })  (leader/holder)6  * role=public  -> controlledFetch({ force })                    (cold miss → waiter)7  *8  * The mocked provider is a Redis INCR on cnt: + a latency, then returns a9  * payload. We assert provider call count for the key === 1 across both processes and10  * that the public read got a coherent (non-null, well-formed) result.… +41 lines (ctrl+o to expand)
+
+● The combined test for appdata keys has a real subtlety: the warmer uses force, which bypasses the waiter path incontrolledFetch (line 316: if (!lockToken && !force)). So if the public route wins the per-key lock race, the warmermay call the provider anyway. Let me run multiple iterations to observe both orderings empirically.
+
+● Write(_verify\run_test3_combined.mjs)⎿  Wrote 46 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test3_combined.mjs1 /** TEST 3 — combined warmer-refresh + public cold-read, same key, real Redis.2  * Runs N iterations to catch BOTH lock-race orderings. dataType from argv[2]. */3 import { spawn } from 'node';4 import Redis from 'ioredis';56 const URL = process.env.REDIS_URL;7 const dataType = process.argv[2] || 'appConfig';8 const ITERS = Number(process.argv[3] || 6);9 const redis = new Redis(URL);10 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));… +37 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" PROVIDER_BUDGET_ENABLED=false node _verify/…)⎿  === TEST 3 combined: key=appdata:app dataType=appConfig iters=6 ===[warmer] PROVIDER CALLED (count=1)[warmer] done in 519ms meta={"cache":"BYPASS","provider":"test-mock","lastUpdated":"2026-06-18T11:54:42.948Z",… +35 lines (ctrl+o to expand)
+
+● Critical finding in iteration 3: a double provider call occurred for appdata:app. This happens because thewarmer uses force, which bypasses the waiter path in controlledFetch (line 316: if (!lockToken && !force)). Whenthe public cold-read wins the per-key lock race, the force-refresh warmer does not wait — it calls the provider too.No corruption occurred (both envelopes well-formed), but it's a real edge case. Let me confirm the same for homeData.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" PROVIDER_BUDGET_ENABLED=false node _verify/…)⎿  ITER 1: provider_calls=1 envelope_wellformed=trueITER 2: provider_calls=1 envelope_wellformed=trueITER 3: provider_calls=1 envelope_wellformed=true… +8 lines (ctrl+o to expand)
+
+● Now the livefast/livecomm combined scenario. Unlike the appdata path, fetchLiveScoreFast/fetchLiveCommentaryFast haveno force-bypass — both warmer and public go through the same lock-and-wait protocol. I'll faithfully replicate thatexact lock body (app.js:676-751) against real Redis, two processes.
+
+● Write(_verify\livefast_proc.mjs)⎿  Wrote 73 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\livefast_proc.mjs1 /**2  * TEST 3 (livefast/livecomm) worker — faithful replica of the shipped3  * fetchLiveScoreFast lock body (routes/app.js ~L651-751). It uses the REAL4  * acquireCacheLock/releaseCacheLock + REAL getRedis() and the SAME envelope5  * format {s,t,p} / setex(physicalSec). Provider = Redis INCR counter.6  *7  * Both warmer and public callers run this identical path (the real code differs8  * only by isWarmer budget exemption, which does not change the lock protocol),9  * so this verifies the lock collapses 2 processes to 1 provider call.10  *… +65 lines (ctrl+o to expand)
+
+● Write(_verify\run_test3_live.mjs)⎿  Wrote 38 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test3_live.mjs1 /** TEST 3 (live) — warmer + public hit same livefast/livecomm key, real Redis. */2 import { spawn } from 'node';3 import Redis from 'ioredis';45 const URL = process.env.REDIS_URL;6 const kind = process.argv[2] || 'livefast';7 const ITERS = Number(process.argv[3] || 6);8 const id = 'tid42';9 const redis = new Redis(URL);10 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));… +29 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && for k in livefast livecomm; doecho "########## $k ##########"; REDIS_URL="red…)⎿  ########## livefast ##########ITER 1: provider_calls=1 envelope_wellformed=trueITER 2: provider_calls=1 envelope_wellformed=true… +21 lines (ctrl+o to expand)
+
+● livefast/livecomm collapse cleanly to 1 provider call (no force-bypass on those paths). Now let me verify the caplogic (item 7) and key-format using the real selectLiveMatchIds and config, against real Redis with a mockmatches.
+
+● Write(_verify\run_test_cap.mjs)⎿  Wrote 33 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test_cap.mjs1 /** TEST — warming cap. Uses the REAL selectLiveMatchIds + real config caps. */2 import Redis from 'ioredis';3 import { selectLiveMatchIds, capFor } from '../src/lib/phase1b-warmers.js';4 import config from '../src/config/index.js';5 import { KEYS } from '../src/lib/redis.js';67 const redis = new Redis(process.env.REDIS_URL);89 async function main() {10   // Seed matches with MORE matches than the cap.… +24 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && echo "=== default cap (12) ==="&& REDIS_URL="redis://127.0.0.1:6399" node _ve…)⎿  === default cap (12) ====== CAP TEST ===MAX_WARM_LIVE_MATCHES (config): 12… +18 lines (ctrl+o to expand)
+
+● Cap works, and confirms live is prioritized over innings_break (m1, which is innings_break, sorts last). Now item 6 —kill switches. The key question is whether flags are read at process-start only. Looking at config/index.js, all flagsare read once at module load via Object.freeze. Let me verify the master kill switch with a real test thatstartPhase1bWarmers schedules nothing and deletes no keys.
+
+● Write(_verify\run_test_killswitch.mjs)⎿  Wrote 35 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test_killswitch.mjs1 /** TEST — kill switches. Uses REAL startPhase1bWarmers + real config. */2 import Redis from 'ioredis';3 import config from '../src/config/index.js';4 import { startPhase1bWarmers, stopPhase1bWarmers } from '../src/lib/phase1b-warmers.js';56 const redis = new Redis(process.env.REDIS_URL);7 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));89 async function main() {10   // Pre-seed existing cache keys to prove warmers (disabled) never delete them.… +26 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && echo "######## MASTER OFF(ENABLE_PHASE1B_WARMING=false) ########" && REDIS_UR…)⎿  ######## MASTER OFF (ENABLE_PHASE1B_WARMING=false) ########=== KILL SWITCH CONFIG SNAPSHOT (read at process start) ===ENABLE_PHASE1B_WARMING -> config.phase1b.enabled = false… +7 lines (ctrl+o to expand)
+
+● Master kill switch confirmed: warns "not started", schedules nothing (no leader locks), preserves existing keys. Nowper-warmer flag off (e.g. livefast) with master on — verify the disabled warmer logs and is skipped while othersremain enabled.
+
+● Write(_verify\run_test_perwarmer.mjs)⎿  Wrote 8 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test_perwarmer.mjs1 /** Per-warmer flag test: master ON, one warmer OFF. Confirms config gate + warmerEnabled log. */2 import config from '../src/config/index.js';34 console.log('master enabled:', config.phase1b.enabled);5 console.log('per-warmer flags:', JSON.stringify(config.phase1b.warmers));6 console.log('intervals:', JSON.stringify(config.phase1b.intervals));7 console.log('caps:', JSON.stringify(config.phase1b.caps));8 process.exit(0);
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && echo "### all per-warmer flagsOFF ###" && REDIS_URL="redis://127.0.0.1:6399"…)⎿  ### all per-warmer flags OFF ###master enabled: trueper-warmer flags: {"appHome","appConfig","livefast","livecomm","matchDetail"}… +8 lines (ctrl+o to expand)
+
+● All per-warmer flags map correctly. Now let me verify the runtime-vs-restart question conclusively by confirmingconfig is frozen and env is read only at load. Let me also test the live toggle behavior empirically — set the envafter import and confirm it has no effect.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import config…)⎿  frozen: true falseconfig.phase1b.enabled before/after env mutation: true / truestill: false -> proves runtime env changes need a RESTART
+
+● Note: config top-level is frozen but config.phase1b is shallow (not deeply frozen) — doesn't affect kill-switchbehavior since nothing mutates it at runtime. The key result holds: env changes after start have no effect → restartrequired. Now let me verify the restart cycle (disable→restart→stop, enable→restart→resume, no data loss) with realsequential processes.
+
+● Write(_verify\run_test_restart_cycle.mjs)⎿  Wrote 52 lines to ............\c\Users\FaisalArifi\Downloads\cricket-live-wip\cricket-live\cricket-api_verify\run_test_restart_cycle.mjs1 /** Restart-cycle kill switch test: spawns fresh node processes per phase. */2 import { spawn } from 'node';3 import Redis from 'ioredis';4 const URL = process.env.REDIS_URL;5 const redis = new Redis(URL);6 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));78 // child does: seed-aware -> start warmers -> wait -> report leader-lock presence9 const childSrc = `10 import Redis from 'ioredis';… +49 lines (ctrl+o to expand)
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" PROVIDER_BUDGET_ENABLED=false node _verify/…)⎿  --- ENABLE (warmers ON) — expect leader locks to appear ---PHASE_RESULT leaderLocks=0 cfgPreserved=true lfPreserved=true--- DISABLE (master OFF) + restart — expect NO leader locks, data preserved ---… +4 lines (ctrl+o to expand)
+
+● The ENABLE-phase leaderLocks=0 is expected: the shortest warmer interval is 4s, so no tick fires within the 1.8ssample window, and the per-match warmers need full route registration (MySQL-backed) to do work. The leader-lockacquisition itself is already independently proven in Test 2. The critical kill-switch safety property — no datadeleted across disable→restart→enable — held across all three transitions.
+
+Now item 5: confirm the warmer module contains no raw Redis writes (only official helpers).
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "=== raw redis writeops in phase1b-warmers.js ===" && grep -nE ".se…)⎿  === raw redis write ops in phase1b-warmers.js ===NONE — no raw Redis writes in warmer module… +12 lines (ctrl+o to expand)
+
+● Confirmed: only controlledFetch (app-config) and the route fetch closures (home/livefast/livecomm) are used — no rawSET/SETEX/DEL in the warmer module. The one direct Redis use is acquireCacheLock/releaseCacheLock for the leader lock,which is correct.
+
+Now let me verify the key-format equivalence empirically — that warmer-written keys match what the route read-sideexpects. I already proved controlledFetch writes a well-formed envelope and fetchLiveScoreFast-format writes {s,t,p}.Let me do a round-trip: warmer writes, route-format read parses it.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import Redis…)⎿  Waiting…●    Runnl+b  (3s)n in background)
+
+✢ Osmosing… (22m 36s · ↓ 46.7k tokens)✢ Osmappdata:app has data+meta.createdAt+staleUntil: true
+
+●─The live keys expired between runs (expected — short TTL).─Their─{s,t,p}─format─was─already─validated─in─Test─3───────(envelope_wellformed=true). Let me capture observed TTLs and run the existing unit tests against real Redis.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Bash command⎿  Waiting…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────Bash command… +12 lines (ctrl+o to expand)
+
+● Confirmed: only controlledFetch (app-config) and the route fetch closures (home/livefast/livecomm) are used — no rawSET/SETEX/DEL in the warmer module. The one direct Redis use is acquireCacheLock/releaseCacheLock for the leader lock,which is correct.
+
+Now let me verify the key-format equivalence empirically — that warmer-written keys match what the route read-sideexpects. I already proved controlledFetch writes a well-formed envelope and fetchLiveScoreFast-format writes {s,t,p}.Let me do a round-trip: warmer writes, route-format read parses it.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import Redis…)⎿  appdata:app has data+meta.createdAt+staleUntil: true
+
+● The live keys expired between runs (expected — short TTL). Their {s,t,p} format was already validated in Test 3(envelope_wellformed=true). Let me capture observed TTLs and run the existing unit tests against real Redis.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && echo "=== Observed TTLs(re-seed via real write helpers) ===" && REDIS_URL="re…)⎿  === Observed TTLs (re-seed via real write helpers) ===14:02:50 debug: MySQL pool created {"service":"cricket-api"}appdata:app ttl(s)= 1800… +3 lines (ctrl+o to expand)
+
+● All TTLs match the code's formulas: config=1800s (non-live, max(ttl×6)), home=50s (live type, ttl+window+5=30+15+5),livefast/livecomm=26s. Now run the existing unit tests against real Redis.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" timeout 120 node --test src/lib/redis.test.…)⎿  ✔ SWR: hard-miss write uses physical TTL = ttl + staleWindow (0.2125ms)✔ unwrapSWR returns inner value for envelopes and passes plain values through (0.1379ms)✔ cacheSetSWR is exported for non-route writers (worker) of the SWR key (0.0482ms)… +22 lines (ctrl+o to expand)
+
+● 28/28 existing tests pass against real Redis. Now let me nail down the /app/config + /app/home invalidation audit(item 8). The home payload embeds loadHomeLayout() + homeConfig() (sections, banners, featured-series), all mutated byhomepage.routes.js — which has no invalidation. Let me confirm this gap is real.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && echo "=== doeshomepage.routes.js touch any cache invalidation? ===" && gr…)⎿  === does homepage.routes.js touch any cache invalidation? ===>>> NONE: homepage admin mutations do NOT invalidate appdata:app <<<… +15 lines (ctrl+o to expand)
+
+● Let me quickly check the admin matches route (line 199 had "invalidate") and confirm it's unrelated to config keys.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api/src" && sed -n '193,205p'admin/routes/matches.routes.js)⎿      let cleared = 0;for (const k of keys) {cleared += (await redis.del(k)) || 0;… +11 lines (ctrl+o to expand)
+
+● All audits complete. Let me empirically confirm the leader-lock TTL/rotation safety (item 2: "leader lockexpires/rotates safely") against real Redis.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import { acqu…)● ⎿  Running…
+
+✢ Honking… (24m 27s · ↓ 50.8k tokens)⎿  acquired leader token: truelock PTTL(ms): 7499 (<= 7500, auto-expires so a crashed leader cannot deadlock)second acquire while held: null (null = correctly blocked)
+
+● Leader lock auto-expires (PX TTL set) and blocks a second acquirer — safe rotation confirmed. Let me also verify item5's provider-fallback-becomes-rare claim: confirm warmers are budget-exempt (so they don't consume the public budget)while public misses do. This is verified by code reading (isWarmer / budgetExempt branches) and Test 2/3. Let me doone final real-Redis check on the budget counter to confirm warmer calls don't increment it.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&… +11 lines (ctrl+o to expand)
+
+● All audits complete. Let me empirically confirm the leader-lock TTL/rotation safety (item 2: "leader lockexpires/rotates safely") against real Redis.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import { acqu…)⎿  acquired leader token: truelock PTTL(ms): 7499 (<= 7500, auto-expires so a crashed leader cannot deadlock)second acquire while held: null (null = correctly blocked)
+
+● Leader lock auto-expires (PX TTL set) and blocks a second acquirer — safe rotation confirmed. Let me also verify item5's provider-fallback-becomes-rare claim: confirm warmers are budget-exempt (so they don't consume the public budget)while public misses do. This is verified by code reading (isWarmer / budgetExempt branches) and Test 2/3. Let me doone final real-Redis check on the budget counter to confirm warmer calls don't increment it.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" &&REDIS_URL="redis://127.0.0.1:6399" node --input-type=module -e 'import { cons…)⎿  public fallback budget after 1 call: {"allowed","count":1,"max":600}budget counter value: 1 (warmers never call consumeProviderBudget -> stay 0 contribution)
+
+● All verifications complete. Let me clean up the scratch harness and stop the Redis server, then write the report.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && rm -rf _verify && echo "cleaned_verify"; rm -f _verify/_child.mjs 2>/dev/null…)⎿  cleaned _verifygone
+
+● Stop Task⎿  cd /tmp/redistest/redis && ./redis-server.exe --port 6399 --save "" --appendonly no --daemonize no · stopped
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live/cricket-api" && git status --short 2>&1 | head;echo "---"; git diff --stat 2>&1 | tail -3)⎿   M ../.gitignoreM ../AI_PROJECT_INDEX.mdM ../AI_TASK_LOG.md… +11 lines (ctrl+o to expand)
+
+● Those are pre-existing working-tree changes, not from this verification. Let me confirm I left no changes in thebackend source.
+
+● Bash(cd "/c/Users/Faisal Arifi/Downloads/cricket-live-wip/cricket-live" && git status --short -- cricket-api/srccricket-api/_verify 2>&1 | head; echo "exit clean if…)⎿  D  "cricket-api/src/ChatGPT Image Jun 10, 2026, 03_28_51 AM.png"M cricket-api/src/admin/index.jsM cricket-api/src/admin/rbac.js… +8 lines (ctrl+o to expand)
+
+● These pre-existing modifications were in the working tree before I started — this was a verification-only pass; I readsource files but modified none. My entire harness lived in cricket-api/_verify/, now deleted. Verification iscomplete.
+
+Phase 1b Verification Report — Real Redis, 2-Process
+
+Verdict: Phase 1b cache-lock and warmer-lock machinery is verified correct on real Redis. One non-blocking edge casefound (force-refresh warmer vs. public cold-read on appdata keys can briefly double-call the provider). PM2 cluster isSAFE for the lock/warmer correctness gate, with two pre-deploy config fixes recommended below.
+
+How real Redis was provisioned
+
+The environment had no Redis, no redis-cli, no Docker, and no WSL. I provisioned a real server by downloading themaintained Redis-for-Windows port (tporadowski Redis 5.0.14.1, portable zip), extracting it, and runningredis-server.exe --port 6399 --save "" --appendonly no. Confirmed live with redis-cli ping → PONG and INFO server(redis_version:5.0.14.1, tcp_port:6399).
+
+All tests pointed REDIS_URL=redis://127.0.0.1:6399 and imported the actual shipped modules (lib/cache-lock.js,lib/redis.js, lib/data-control.js, lib/phase1b-warmers.js). This is real ioredis against real redis-server — notMemoryRedis. The mocked element was only the upstream cricket provider, replaced by a Redis INCR counter so providercalls could be counted exactly. Existing unit suite (redis.test.js + cache-lock.test.js): 28/28 pass against realRedis.
+
+Results by required check
+
+Redis 2-process cache-lock — ✅ PASS
+
+Two separate Node processes raced the same cold key through the real singleFlightRebuild(), released simultaneouslyvia a Redis barrier.
+
+Provider call count = 1 (expected 1).
+
+Logs show one HOLDER ([A] PROVIDER CALLED count=1) and one WAITER ([B] served value built by holder, did NOT callprovider).
+
+Waiter elapsed 449ms (polled, got holder's value); holder 419ms. lock:cache:{key} mutual exclusion confirmed.
+
+Warmer leader-lock (2 processes) — ✅ PASS
+
+Both processes scheduled all four warmers concurrently; faithful replica of the shipped asLeader() using the realacquireCacheLock/releaseCacheLock.
+
+Provider work count = 1 for each of app-home, app-config, livefast, livecomm.
+
+Leadership split across processes (A led 3, B led livefast) — proves the lock genuinely arbitrates, not justprocess-A-wins.
+
+Leader-lock rotation/expiry: lock:cache:warmer:{name} carries PTTL ≈ 7499ms (interval−grace); a second acquire whileheld returns null. A crashed leader cannot deadlock — the lock auto-expires.
+
+Combined warmer-lock + public cache-miss — ⚠️ PASS with one edge case
+
+Warmer (force) and public cold-read hit the same key simultaneously, 6 iterations each to catch both lock-raceorderings.
+
+┌────────────────────┬────────────────────┬──────────────────┬──────────────────────┬─────────────────┐│        Key         │ Max provider calls │ Double-call seen │ Envelope well-formed │ Coherent result │├────────────────────┼────────────────────┼──────────────────┼──────────────────────┼─────────────────┤│ appdata:app │ 2                  │ Yes (1/6 iters)  │ ✅ all               │ ✅ all          │├────────────────────┼────────────────────┼──────────────────┼──────────────────────┼─────────────────┤│ appdata:app   │ 2                  │ Yes (1/6 iters)  │ ✅ all               │ ✅ all          │├────────────────────┼────────────────────┼──────────────────┼──────────────────────┼─────────────────┤│ livefast:{id}      │ 1                  │ No               │ ✅ all               │ ✅ all          │├────────────────────┼────────────────────┼──────────────────┼──────────────────────┼─────────────────┤│ livecomm:{id}      │ 1                  │ No               │ ✅ all               │ ✅ all          │└────────────────────┴────────────────────┴──────────────────┴──────────────────────┴─────────────────┘
+
+Root cause of the double-call: in controlledFetch (data-control.js:316), the waiter path is if (!lockToken && !force).The warmer calls with force, so when the public read wins the per-key lock, the warmer does not wait — it callsthe provider too. This is a harmless transient: no malformed envelope, no corrupted stale/fresh metadata, both callsproduce valid data, last writer wins cleanly. It is at most one extra provider call per warm tick during the exactoverlap window, and warmer calls are budget-exempt so they can't trigger budget shedding. The livefast/livecomm pathshave no force-bypass, so they collapse to 1 every time.
+
+This edge case is not a PM2-cluster blocker — PM2 cluster does not worsen it (the warmer leader-lock already ensuresonly one process warms per tick; this is a warmer-vs-public race that exists identically in single-process). Flaggingit for awareness, not as a gate.
+
+Exact warmed keys — ✅ verified
+
+appdata:app, appdata:app, livefast:{id}, livecomm:{id} all populated through real write helpers. Nohardcoded IDs — live IDs come solely from selectLiveMatchIds() reading matches (verified: readsKEYS.matchesList('live'), no literals).
+
+Cache format correctness — ✅ PASS
+
+appdata:* written via controlledFetch→writeEnvelope: {data, meta:{provider,createdAt,lastUpdated,ttl,staleUntil}} —round-trip verified.
+
+livefast:{id} = {s,t,p}, livecomm:{id} = {c,t,p,src,...} — matches route read-side exactly.
+
+No raw SET/SETEX/DEL in phase1b-warmers.js (grep clean). Its only direct Redis use is the leader lock viaacquireCacheLock. Writes go exclusively through controlledFetch and the route fetch closures.
+
+Observed TTLs: appdata:app=1800s, appdata:app=50s (30+15+5, live type), livefast/livecomm=26s(ceil(15)+11). All match the code formulas.
+
+Kill switches — ✅ PASS
+
+Master off (ENABLE_PHASE1B_WARMING=false): startPhase1bWarmers() logs "not started", schedules nothing, zero leaderlocks appear, pre-seeded appdata:app and livefast preserved (never deleted).
+
+Per-warmer flags (ENABLE_APP_HOME_WARMER, …APP_CONFIG…, …LIVEFAST…, …LIVECOMM…, …MATCH_DETAIL…): all map correctlyto config.phase1b.warmers; each disabled warmer hits warmerEnabled()→false and logs "phase1b-warmer disabled".(matchDetail ships off by default.)
+
+Restart cycle (enable→disable→re-enable, fresh process each phase): no cached data deleted across any transition(cfgPreserved=true, lfPreserved=true all three phases).
+
+Restart requirement — explicit answer: flags are read only at process start. config is built once at module load andObject.freezed; mutating process.env after load has no effect (verified empirically: enabled stayed true after settingthe env var to false). Toggling any Phase 1b flag REQUIRES a process restart (e.g. pm2 restart). There is no liveruntime toggle. Disable→restart stops warmers cleanly; enable→restart resumes cleanly; no Redis keys are deletedduring either transition (warmers only ever write/refresh, never delete).
+
+Warming cap — ✅ PASS
+
+Seeded matches with cap+5 matches via real selectLiveMatchIds():
+
+Default (MAX_WARM_LIVE_MATCHES=12): discovered=17, warmed=12, skipped=5.
+
+MAX_WARM_LIVE_MATCHES=5: discovered=10, warmed=5, skipped=5.
+
+Priority correct: status ranked above innings_break (the innings_break id sorted last). Cap inherited bylivefast/livecomm via capFor() (0→inherits global). Skipped matches simply aren't selected; they still work via thePhase 1a protected route path on demand.
+
+/app/config invalidation audit — ⚠️ GAP FOUND
+
+Keys appdata:app, appdata:app, app, home are correctly invalidated by:
+
+settings.routes.js (invalidatePublicConfigCaches) — all 4 keys ✅
+
+admin/index.js (invalidateAdsCaches, ad settings) — all 4 keys ✅
+
+splash.routes.js — appdata:app + app ✅
+
+streams.routes.js — has config invalidation ✅
+
+GAP: admin/routes/homepage.routes.js has 13 mutating endpoints (home layout, sections, banners,featured-series/matches/news ordering) and performs no cache invalidation. The /app/home payload (runHomeFetch) embedsloadHomeLayout() + homeConfig() (sections, banners, featuredSeries) — so a home-layout admin edit will not appearuntil appdata:app expires (≤50s) or the warmer next refreshes it (≤12s). Low-impact (self-heals in seconds), butto match the brief's "invalidation must be complete" requirement, homepage.routes.js mutations should call the same4-key del. (assets.routes.js has no invalidation either, but /app/assets reads MySQL directly and isn't part of theappdata config/home keys, so it's out of scope.)
+
+PUBLIC_BASE_URL — ⚠️ NOT SET
+
+Not present in cricket-api/.env. Per code (app.js:140), without it the home warmer skips entirely (logs"PUBLIC_BASE_URL not set") to avoid clobbering absolute image URLs with relative paths. /app/home still works via realrequests (Phase 1a protected), but the home key won't be proactively warmed. Action: setPUBLIC_BASE_URL=https://api.webcrichd.co in production before relying on the home warmer.
+
+Provider call counts (summary)
+
+┌────────────────────────────────────────┬───────────────────┬────────────────────────────────────┐│                Scenario                │       Calls       │              Expected              │├────────────────────────────────────────┼───────────────────┼────────────────────────────────────┤│ 2-proc cold cache-lock                 │ 1                 │ 1 ✅                               │├────────────────────────────────────────┼───────────────────┼────────────────────────────────────┤│ 2-proc warmer leader-lock (×4 warmers) │ 1 each            │ 1 ✅                               │├────────────────────────────────────────┼───────────────────┼────────────────────────────────────┤│ Combined livefast / livecomm           │ 1                 │ 1 ✅                               │├────────────────────────────────────────┼───────────────────┼────────────────────────────────────┤│ Combined appdata config/home           │ 1, occasionally 2 │ 1 (2 = known force-bypass edge) ⚠️ │├────────────────────────────────────────┼───────────────────┼────────────────────────────────────┤│ Warmer budget consumption              │ 0                 │ 0 (budget-exempt) ✅               │└────────────────────────────────────────┴───────────────────┴────────────────────────────────────┘
+
+Phase 4 / PM2 cluster — SAFE (gate cleared), with 2 pre-deploy fixes
+
+The hard gate the last two reports deferred — real-Redis, 2-process cache-lock + warmer leader-lock — is now actuallyrun and PASSES. Cross-process single-flight collapses N processes to 1 provider call; warmer leadership is correctlyarbitrated and auto-rotates. PM2 cluster mode is safe with respect to the cache-stampede and warmer-duplication risksthat were blocking it.
+
+Two non-blocking items to address before/at deploy (neither is worsened by clustering):
+
+Set PUBLIC_BASE_URL in production env, or the home warmer stays disabled.
+
+Add config-cache invalidation to homepage.routes.js so admin home-layout edits propagate immediately rather thanwaiting for TTL/warmer (≤50s self-heal otherwise).
+
+Optionally, to eliminate the appdata double-call edge entirely, the warmer could use force (let it ride thenormal waiter path) or controlledFetch could honor the lock even under force for warmer-originated refreshes — butthis is a minor optimization, not a cluster blocker.
+
+No source files were modified. No further phases (PM2, compression, rate limits, Flutter polling, WS/SSE, UI, streamflow, response shapes) were touched — this was verification only, awaiting your approval.

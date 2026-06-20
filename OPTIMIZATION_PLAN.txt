@@ -1,0 +1,203 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — OPTIMIZATION PLAN
+File: OPTIMIZATION_PLAN.txt
+Generated: 2026-06-11
+Scope: Local repo only. Server-only items = checklist/docs, NOT code changes.
+================================================================================
+
+GROUND RULES (from user)
+  - Backend deployed on real VPS. Prod .env / PM2 / Nginx / Redis / MySQL / SSL
+    live on server, not fully local. Do NOT mark missing server files broken.
+  - Server-only items -> checklist/commands/docs only.
+  - No deletion of important code without confirming unused.
+  - Prefer archive-move over permanent delete.
+  - Do NOT touch real .env secrets.
+  - No commits unless user asks.
+
+RISK LEGEND:  LOW = reversible/local, MED = build-affecting, HIGH = needs care
+
+================================================================================
+A. CONFIRMED REPO-SIZE REDUCTIONS  (tracked files inflating .git, ~132MB)
+================================================================================
+
+A1. [LOW] Root debug/QA screenshot PNGs — 53 files, ~22MB tracked.
+    Examples: home_final.png, prod-*.png, rank-*.png, ranking-*.png,
+    local-*-after-fix.png, prod-cdp-*.png, scorecard-155398.html.
+    These are dev-time QA captures, NOT app/runtime assets. Not referenced by
+    build, Flutter, backend, or admin.
+    ACTION: git rm (untrack) + move to docs/archive/qa-screenshots/.
+    Files changed: 53 root *.png + scorecard-155398.html (untracked + moved).
+    RISK: LOW (pure dev artifacts).
+
+A2. [LOW] Stray backend screenshot in source tree.
+    cricket-api/src/ChatGPT Image Jun 10, 2026, 03_28_51 AM.png
+    Ships in server bundle for no reason.
+    ACTION: git rm + move to docs/archive/.
+    RISK: LOW.
+
+A3. [LOW] target-design/ stray screenshot already deleted in working tree
+    (git status shows D). Confirm + keep deletion.
+    RISK: LOW.
+
+A4. [LOW] Root status/patch markdown clutter — ~50 *.md/*.txt at repo root.
+    Many are historical fix logs (COMPREHENSIVE_FIX_PLAN.md, SCORECARD_FIX_*.md).
+    *.patch and *.rar already gitignored (local-only, leave alone).
+    ACTION: move clearly-historical *.md status docs to docs/archive/.
+    KEEP at root: README, AI_PROJECT_INDEX.md, AI_TASK_LOG.md, the new
+    OPTIMIZATION/PLAN/REPORT/GUIDE files, PROJECT_REVIEW_ISSUES.txt.
+    RISK: LOW. Will list each file in PROJECT_SIZE_REPORT.txt before moving.
+
+================================================================================
+B. CONFIRMED FLUTTER APP-SIZE REDUCTIONS  (assets = 46MB, biggest = home 22MB)
+================================================================================
+
+B1. [MED] Unused home assets — 22 of 25 files in assets/images/home/ NOT
+    referenced anywhere in lib/ (verified by grep; no dynamic path construction
+    exists, so grep is reliable). ~18MB.
+    USED (keep): futuristic_stadium_ui_backdrop.png, home_top_featured_card.png,
+                 list_match_card_bg_live_clean.png.
+    UNUSED (archive): cinematic_stadium_at_night.png,
+      empty_stadium_at_dusk_with_floodlights.png, futuristic_capsule_ui_element,
+      futuristic_glowing_capsule_button, futuristic_neon_ui_panel_design,
+      futuristic_rounded_button_with_glow, futuristic_stadium_with_glowing_trophy,
+      home_active_tab_pill, home_carousel_indicator_active, home_cyan_capsule_source,
+      home_fullscreen_stadium_bg, home_glass_capsule_source, home_glass_card_overlay,
+      home_glowing_orb_source, home_header_stadium_bg, home_inactive_tab_pill,
+      home_live_match_card_bg, home_notification_button_bg, home_wide_glass_panel_bg,
+      neon_blue_glassy_button_design, sleek_futuristic_glossy_button_design,
+      pubspec_assets_snippet.txt.
+    ACTION: move unused -> archived/unused-assets/home/ (reversible). Re-run
+    flutter analyze + visual check before considering permanent delete.
+    RISK: MED (asset bundle). Mitigation: archive not delete; grep-verified.
+
+B2. [LOW] Other asset dirs to audit same way (series 9.3M, match_details 3.1M,
+    schedule 2M, matches 1.6M, live_stream 1.6M). Will run same grep audit in
+    Phase 3 and list unused in PROJECT_SIZE_REPORT.txt. Only archive grep-confirmed
+    unused. RISK: LOW-MED.
+
+B3. [LOW] pubspec.yaml declares whole directories (assets/images/home/ etc), so
+    Flutter bundles EVERY file in them regardless of code use. After B1/B2 archive,
+    bundle shrinks automatically. Optionally narrow pubspec to explicit file list
+    later (deferred — higher maintenance).
+    RISK: LOW.
+
+B4. [LOW] Oversized PNGs (stadium_live 1.9M, stadium_light 1.9M,
+    stadium_score_header_bg 2.3M). Candidates for WebP conversion (50-70% smaller)
+    — documented as recommendation in FLUTTER_RELEASE_SIZE_GUIDE.md, NOT auto-done
+    (needs visual QA + asset path updates). RISK: MED (deferred to manual).
+
+================================================================================
+C. CONFIRMED DART CODE CLEANUP
+================================================================================
+
+C1. [LOW] Duplicate model file lib/models/api_models.dart (1234 lines) is
+    ORPHANED. Verified: ZERO imports of 'models/api_models.dart' anywhere; all
+    code imports root lib/api_models.dart (package:cricpro_flutter/api_models.dart).
+    No export re-routes to it. Safe to remove.
+    ACTION (Phase 4): git rm lib/models/api_models.dart, run flutter analyze + test.
+    Files changed: delete lib/models/api_models.dart.
+    RISK: LOW (grep-confirmed unused; analyze/test will catch any miss).
+
+C2. [LOW] Mojibake comments "19.6 â†’ 20.0" in lib/api_models.dart. Cosmetic
+    encoding fix. RISK: LOW (deferred / optional).
+
+================================================================================
+D. BACKEND HIGH-TRAFFIC (local code/config only)
+================================================================================
+
+D1. [MED] No HTTP response compression registered. server.js registers cors,
+    cookie, helmet, rate-limit, jwt, websocket, swagger — but NO @fastify/compress.
+    Provider/scrape payloads can be large; gzip cuts bandwidth 60-80%.
+    ACTION: add @fastify/compress (devDep present? -> must add to package.json
+    deps + register in server.js). SAFE: opt-in, gzip only, threshold guard.
+    Files changed: cricket-api/package.json, cricket-api/src/server.js.
+    RISK: MED (new dep + plugin). Will verify npm install + server boot.
+    NOTE: if Nginx already gzips at edge, this is redundant but harmless. Flag in
+    plan; let user/VPS decide. Will NOT enable if it risks double-compression
+    issues — documented as recommendation + minimal safe patch.
+
+D2. [LOW] Swagger UI registered with no prod gate (server.js:122,143). Exposes
+    API map publicly. ACTION: document env-gated registration recommendation in
+    BACKEND_HIGH_TRAFFIC_PLAN.txt; optionally wrap register in
+    `if (config.env !== 'production')`. RISK: LOW but behavior change -> propose,
+    confirm before patching.
+
+D3. [DOC] Redis TTLs already defined (src/lib/redis.js TTL constants) and cache is
+    non-fatal when Redis down. Good. Document recommended TTLs per endpoint in plan.
+
+D4. [DOC] Rate limit configured (config.rateLimit.max). Document suggested values
+    + per-endpoint tightening in plan.
+
+D5. [DOC] DB indexes — review migrate.js for missing indexes on hot lookup columns;
+    document suggested CREATE INDEX as VPS-manual + migration suggestion.
+
+================================================================================
+E. ADMIN PANEL (Next.js)
+================================================================================
+
+E1. [DOC] Deps lean (next15, react19, rhf, zod, lucide, date-fns, sonner). No
+    obvious bloat. Document bundle-analyze command + client/server component review
+    in ADMIN_OPTIMIZATION_PLAN.txt.
+E2. [DOC] Review polling/refetch intervals, table pagination, image upload
+    compression. Document recommendations; no risky auto-changes.
+
+================================================================================
+F. SERVER-ONLY ITEMS — VPS MANUAL ACTION (docs only, NO local code change)
+================================================================================
+  - PM2 cluster mode, startup-on-reboot, log rotation, safe restart.
+  - Nginx reverse proxy, gzip/brotli, websocket upgrade headers, timeouts, SSL renew.
+  - Redis running + memory policy + hit rate.
+  - MySQL migrations applied + indexes + slow query + connection limits.
+  - API security: JWT_SECRET strong, apiSecurityMode=enforce, CORS not wildcard,
+    admin seed password changed, Swagger disabled/protected.
+  - Load testing (k6/autocannon) — start small.
+  => All captured in SERVER_HIGH_TRAFFIC_CHECKLIST.txt. Marked "VPS manual action".
+  => Missing local server files (ecosystem.config.js, prod .env, nginx.conf) are
+     EXPECTED absent locally — NOT flagged as broken.
+
+================================================================================
+G. EXACT FILES THAT WILL BE CHANGED (local patches)
+================================================================================
+  MOVED/UNTRACKED (reversible):
+    - 53 root *.png + scorecard-155398.html        -> docs/archive/qa-screenshots/
+    - cricket-api/src/ChatGPT Image ....png         -> docs/archive/
+    - historical root *.md status docs (listed P2)  -> docs/archive/
+    - 22 unused assets/images/home/* + snippet.txt  -> archived/unused-assets/home/
+  DELETED (grep-confirmed unused):
+    - lib/models/api_models.dart
+  EDITED:
+    - cricket-api/package.json        (+@fastify/compress, if approved)
+    - cricket-api/src/server.js       (register compress; optional swagger gate)
+    - .gitignore                      (only if new archive dirs need ignoring — TBD)
+  CREATED (docs):
+    - OPTIMIZATION_PLAN.txt (this), PROJECT_SIZE_REPORT.txt,
+      FLUTTER_RELEASE_SIZE_GUIDE.md, BACKEND_HIGH_TRAFFIC_PLAN.txt,
+      ADMIN_OPTIMIZATION_PLAN.txt, SERVER_HIGH_TRAFFIC_CHECKLIST.txt
+
+================================================================================
+H. TEST COMMANDS AFTER CHANGES
+================================================================================
+  FLUTTER:
+    flutter pub get
+    flutter analyze
+    flutter test
+    flutter build apk --release --target-platform android-arm64 --analyze-size
+  BACKEND:
+    cd cricket-api && npm install && npm test   (node --test if no test script)
+    node -e "require('./src/server.js')"  (boot smoke, if env allows)
+  ADMIN:
+    cd admin-panel && npm install && npm run build && npm run lint
+
+================================================================================
+I. EXECUTION ORDER
+================================================================================
+  Phase 2: A1-A4 size cleanup + PROJECT_SIZE_REPORT.txt
+  Phase 3: B1-B4 asset audit + FLUTTER_RELEASE_SIZE_GUIDE.md
+  Phase 4: C1 model delete + analyze/test
+  Phase 5: D1-D5 backend + BACKEND_HIGH_TRAFFIC_PLAN.txt
+  Phase 6: E admin + ADMIN_OPTIMIZATION_PLAN.txt
+  Phase 7: F SERVER_HIGH_TRAFFIC_CHECKLIST.txt
+  Phase 8: run safe tests, document failures (no guessing)
+================================================================================
+END OF PLAN
+================================================================================

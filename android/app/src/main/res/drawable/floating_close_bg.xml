@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small circular dark-glass close button with a faint cyan edge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#4D14233D" />
+    <stroke
+        android:width="0.8dp"
+        android:color="#4022D3EE" />
+</shape>

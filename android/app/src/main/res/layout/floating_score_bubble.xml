@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CricPro floating live-score bubble. Premium dark-glass card, compact enough
+     to fit 360dp phones. The content column is tappable (opens Match Details);
+     the circular close button dismisses. LIVE/FINAL pill is set in code. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floating_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="top"
+    android:background="@drawable/floating_score_bg"
+    android:paddingStart="14dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="11dp"
+    android:paddingBottom="12dp"
+    android:elevation="10dp">
+
+    <LinearLayout
+        android:id="@+id/floating_content"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:minWidth="196dp"
+        android:maxWidth="340dp">
+
+        <TextView
+            android:id="@+id/floating_live"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LIVE"
+            android:textColor="#EF4444"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.10"
+            android:paddingStart="9dp"
+            android:paddingEnd="9dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:background="@drawable/floating_live_pill" />
+
+        <TextView
+            android:id="@+id/floating_team_a"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:letterSpacing="-0.01"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/floating_team_b"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:letterSpacing="-0.01"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/floating_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="#FF22D3EE"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/floating_close"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginStart="8dp"
+        android:gravity="center"
+        android:text="✕"
+        android:textColor="#FFE2E8F0"
+        android:textSize="14sp"
+        android:background="@drawable/floating_close_bg"
+        android:contentDescription="Close floating score" />
+</LinearLayout>

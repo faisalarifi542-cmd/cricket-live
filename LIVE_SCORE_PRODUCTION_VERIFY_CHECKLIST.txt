@@ -1,0 +1,158 @@
+================================================================================
+LIVE SCORE PRODUCTION VERIFY CHECKLIST
+Generated: 2026-06-12
+Base URL: https://api.webcrichd.co   (X-API-Key required on /matches + /match)
+================================================================================
+
+PURPOSE: prove real Cricbuzz live scores are fresh + fast, and that the TTL 8s
+patch + in-flight dedupe are working WITHOUT spiking the provider. Use only
+during an ACTUAL live Cricbuzz match (manual test match cannot prove freshness).
+
+--------------------------------------------------------------------------------
+0. AUTH HEADER (needed for /matches, /match — NOT for /health, /app/assets)
+--------------------------------------------------------------------------------
+   KEY="csk_live_cricpro_app_8f3a2b1c9d"     # or production key
+   H=(-H "X-API-Key: $KEY" -H "X-Client-Type: android" -H "X-App-Version: 1.0.0" -H "X-Package-Name: com.cricpro.app")
+
+--------------------------------------------------------------------------------
+1. VERIFY REAL CRICBUZZ LIVE MATCHES ARE RETURNED
+--------------------------------------------------------------------------------
+   curl -s "${H[@]}" https://api.webcrichd.co/matches/live | jq '.data[] | {match_id, source, isTest, status, score}'
+
+   REAL provider match looks like:
+     - source != "manual"   (provider/cricbuzz, or no source flag)
+     - isTest != true
+     - score is NOT null while in play (has runs/wickets/overs)
+   Only judge freshness on these rows. Run during a known live match (cross-check
+   cricbuzz.com that a match is actually live right now).
+
+--------------------------------------------------------------------------------
+2. SEPARATE MANUAL TEST MATCHES FROM PROVIDER MATCHES
+--------------------------------------------------------------------------------
+   Manual matches come from MySQL table `manual_matches` (is_enabled=1) and are
+   PREPENDED to the provider list (manual-matches.js: mergeManualMatches →
+   [...manualItems, ...providerMatches]). They carry:
+     source = "manual",  isTest = <is_test column>
+
+   Filter them OUT for speed testing:
+     curl -s "${H[@]}" https://api.webcrichd.co/matches/live | jq '[.data[] | select(.source != "manual")]'
+   List ONLY manual:
+     curl -s "${H[@]}" https://api.webcrichd.co/matches/live | jq '[.data[] | select(.source == "manual")]'
+
+   Inspect DB directly:
+     mysql -u <user> -p <db> -e "SELECT match_external_id, is_enabled, is_test, status FROM manual_matches;"
+
+--------------------------------------------------------------------------------
+3. TEMPORARILY DISABLE / IGNORE MANUAL TEST MATCHES (speed testing)
+--------------------------------------------------------------------------------
+   Preferred (non-destructive, reversible) — disable via flag, NOT delete:
+     mysql -u <user> -p <db> -e "UPDATE manual_matches SET is_enabled = 0 WHERE is_test = 1;"
+   Re-enable after testing:
+     mysql -u <user> -p <db> -e "UPDATE manual_matches SET is_enabled = 1 WHERE is_test = 1;"
+
+   mergeManualMatches only pulls is_enabled=1 rows, so disabled = not merged.
+   NO redeploy needed; effect is immediate on next cache miss (≤8s). Or just
+   ignore them client-side with the jq `select(.source != "manual")` filter
+   above — zero DB change. Prefer the jq filter if unsure.
+
+   WARNING: do NOT DELETE manual matches — they may be intentional demo content.
+   Toggle is_enabled only.
+
+--------------------------------------------------------------------------------
+4. COMPARE APP RESPONSE TIME vs CRICBUZZ (real live match)
+--------------------------------------------------------------------------------
+   - Pick a real live provider match_id (from step 1).
+   - Open cricbuzz.com on that match. Note when score changes (e.g. a boundary).
+   - Poll our API and measure lag between cricbuzz score update and our update:
+       watch -n2 'curl -s "${H[@]}" https://api.webcrichd.co/match/<ID>/live-line | jq "{runs,wkts,overs,ts:now}"'
+   - Expected worst-case staleness = TTL window (list 8s, live-line/scorecard/
+     commentary 5s) + provider fetch time. If our update trails cricbuzz by ≈ TTL
+     + provider latency, that is CORRECT (not a bug). SWR (next phase) shrinks the
+     perceived lag by serving instantly + refreshing in background.
+
+--------------------------------------------------------------------------------
+5. ENDPOINTS TO TEST (real provider match_id, not the manual one)
+--------------------------------------------------------------------------------
+   /matches/live                 (list, TTL 8s)
+   /match/:id                    (detail, TTL 15s)
+   /match/:id/scorecard          (TTL 5s)
+   /match/:id/commentary         (TTL 5s)
+   /match/:id/live-line          (TTL 5s)
+   Confirm each returns 200 + non-null live data for a real in-play match.
+
+--------------------------------------------------------------------------------
+6. MEASURE API RESPONSE TIME (curl)
+--------------------------------------------------------------------------------
+   Single timed call (TTFB + total):
+     curl -s -o /dev/null -w "code=%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s\n" "${H[@]}" https://api.webcrichd.co/matches/live
+
+   Per endpoint loop (real ID):
+     ID=<provider_match_id>
+     for p in "/matches/live" "/match/$ID" "/match/$ID/scorecard" "/match/$ID/commentary" "/match/$ID/live-line"; do
+       printf "%-32s " "$p"
+       curl -s -o /dev/null -w "code=%{http_code} total=%{time_total}s\n" "${H[@]}" "https://api.webcrichd.co$p"
+     done
+
+   Cache HIT vs MISS proof: call twice fast. 1st (miss) slower (provider fetch),
+   2nd (hit, within TTL) should be much faster (Redis only). e.g.:
+     curl -s -o /dev/null -w "miss total=%{time_total}s\n" "${H[@]}" https://api.webcrichd.co/match/$ID/live-line
+     curl -s -o /dev/null -w "hit  total=%{time_total}s\n" "${H[@]}" https://api.webcrichd.co/match/$ID/live-line
+
+--------------------------------------------------------------------------------
+7. WATCH PM2 LOGS
+--------------------------------------------------------------------------------
+   pm2 list                         # process names + status
+   pm2 logs cricket-api --lines 100
+   pm2 logs cricket-api | grep -iE "redis|provider|error|timeout|cooldown"
+   pm2 logs cricket-workers --lines 100      # if workers run separately
+   Confirm NO repeated "using in-memory cache fallback" (means Redis dropped).
+   Confirm NO provider timeout/cooldown storms.
+
+--------------------------------------------------------------------------------
+8. CHECK REDIS HIT/MISS
+--------------------------------------------------------------------------------
+   App exposes Prometheus counters cache_hits_total / cache_misses_total
+   (middleware/cache.js, labeled by key_type = first segment of key):
+     curl -s https://api.webcrichd.co/metrics | grep -E "cache_(hits|misses)_total"
+   Watch the "matches" and "match" key_type lines. Under steady polling, hits
+   should FAR outnumber misses. Sample twice 30s apart and diff.
+
+   Redis-side sanity:
+     redis-cli PING                 # PONG
+     redis-cli INFO stats | grep -E "keyspace_hits|keyspace_misses"
+     redis-cli --scan --pattern 'matches:*'
+     redis-cli TTL matches:live     # should be <= 8 right after a refresh
+
+--------------------------------------------------------------------------------
+9. CONFIRM TTL 8s WORKS WITHOUT PROVIDER SPIKES
+--------------------------------------------------------------------------------
+   - redis-cli TTL matches:live → value in 0..8 (never near 15). Proves 8s live.
+   - Provider call rate: watch provider request metric over 1-2 min:
+       curl -s https://api.webcrichd.co/metrics | grep -E "provider_request"
+     Sample twice 60s apart, compute calls/min delta. With dedupe, even many
+     concurrent users → ~1 provider fetch per key per TTL window. Expect a MODEST
+     rise vs 15s (roughly list-refreshes ≈ 60/8 ≈ 7.5/min for matches:live under
+     continuous traffic), NOT a linear-with-users spike.
+   - Generate light concurrency and confirm dedupe collapses it:
+       for i in $(seq 1 50); do curl -s -o /dev/null "${H[@]}" https://api.webcrichd.co/matches/live & done; wait
+     Provider call count should rise by ~1 for that burst, not ~50.
+
+--------------------------------------------------------------------------------
+10. WARNING SIGNS → ROLLBACK NEEDED
+--------------------------------------------------------------------------------
+   Rollback TTL (set LIVE_LIST back to 15 in redis.js, redeploy) if ANY:
+   - Provider call rate spikes linearly with traffic (dedupe not collapsing) —
+     e.g. the 50-burst test above adds ~50 provider calls, not ~1.
+   - PM2 logs show provider timeout / cooldown storms or rate-limit/ban from
+     Cricbuzz after the 8s deploy.
+   - Redis logs flip to "in-memory cache fallback" (shared cache lost → each
+     worker hammers provider). Fix Redis FIRST, do not push TTL lower.
+   - cache_misses_total climbing while hits flat (cache not serving).
+   - Response total time WORSE than before 8s under load.
+   - matches:live TTL reading > 8 (patch not actually deployed).
+
+   Rollback is trivial + safe: one constant, redeploy. Data unaffected.
+
+================================================================================
+END
+================================================================================

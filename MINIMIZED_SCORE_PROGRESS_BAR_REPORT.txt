@@ -1,0 +1,211 @@
+================================================================================
+MINIMIZED LIVE SCORE PROGRESS BAR — INVESTIGATION REPORT (PHASE 1)
+================================================================================
+App: CricPro (Flutter, package cricpro_flutter)
+Date: 2026-06-15
+Branch: phase4-remote-assets-archiving
+All paths relative to cricket-live/
+
+--------------------------------------------------------------------------------
+1. EXISTING MINIMIZED SCORE IMPLEMENTATION
+--------------------------------------------------------------------------------
+RESULT: NONE FOUND. No minimize / floating / overlay / persistent score bar
+exists today. No global overlay system at all. The only sticky bottom element
+is the ad banner (StickyBannerBar in main.dart bottomNavigationBar Column).
+
+"Mini" matches in the code are UNRELATED card widgets (not our feature):
+  - lib/components/home_components.dart:266  UpcomingSeriesMiniCard
+  - lib/components/home_components.dart:352  RecentResultMiniCard
+  - lib/screens/home/widgets/home_featured.dart:188  _FeaturedMatchMini
+  - lib/screens/player/widgets/player_cards.dart:250  _MiniChip
+  - "miniscore" in live_match_tab.dart = API payload field name, not UI.
+
+=> We BUILD this feature fresh. No old UI to replace.
+
+--------------------------------------------------------------------------------
+2. FILES INVOLVED (build + wire)
+--------------------------------------------------------------------------------
+NEW:
+  - lib/widgets/minimized_score_bar.dart   (the widget + ChangeNotifier state)
+
+EDIT:
+  - lib/main.dart        (RootShell: mount bar, hold state, set on open match)
+  - lib/screens/match_details/match_details_screen.dart
+                         (add a "minimize" affordance + feed live data to state)
+
+REUSE (no edit):
+  - lib/components.dart          TeamLogoWidget (logo+fallback render)
+  - lib/app_theme.dart           CricColors / context.cric theming
+  - lib/models/cricket_match.dart CricketMatch data model
+  - lib/repositories/cricket_repository.dart  liveScores() / matchDetail()
+
+--------------------------------------------------------------------------------
+3. DATA MODEL AVAILABLE
+--------------------------------------------------------------------------------
+Central model: lib/models/cricket_match.dart -> class CricketMatch (:14)
+Fields (final, :47-75):
+  id, title, series, matchDesc
+  status (:51 raw lowercased), statusText (:52 short), resultText (:53)
+  teamA / teamB (:57-58 full names)
+  teamAShort / teamBShort (:59-60 codes  e.g. IND/AFG)
+  teamALogo / teamBLogo (:61-62  String? URL)
+  teamAScoreText / teamBScoreText (:63-64  e.g. "145/3 (16.2 OV)")
+  isLive (:65), isUpcoming (:66), isFinished (:67)
+Getters:
+  statusLabel (:288) -> LIVE/Finished/Upcoming
+  versusTitle (:297) -> "IND vs AFG"
+  scoreLine (:307)
+  mergeLiveScore(fresh) (:84) -> overlays mutable score fields, keeps metadata
+
+** CRITICAL GAP **
+There is NO structured target / runs-needed / balls-remaining / chase field.
+- "Need X from Y" only exists as FREE TEXT in statusText / resultText.
+- Live-center payload has current_run_rate + required_run_rate as STRINGS only
+  (md_info.dart:49-50). No numeric target, no runs-needed, no balls-left.
+- No explicit batting-team boolean (inferred from batTeam/bowlTeam JSON keys,
+  cricket_match.dart:120-121).
+
+IMPLICATION for the reference design ("Need 26 from 22", "171 Target",
+progress = 145/171): these NUMBERS are not directly in the model. We must
+PARSE them from statusText with a regex, with safe fallback. See section 4.
+
+--------------------------------------------------------------------------------
+4. PROGRESS CALCULATION — HOW IT WILL WORK
+--------------------------------------------------------------------------------
+Because there is no numeric target field, derive via layered parsing:
+
+A) Parse chase line from statusText (regex, case-insensitive):
+     "need (\d+) (?:runs? )?(?:from|in|off) (\d+)"  -> needRuns, needBalls
+   If matched AND match isLive -> show "Need {needRuns} from {needBalls}".
+
+B) Parse current runs from the batting team's score text:
+     teamXScoreText "145/3 (16.2 OV)" -> currentRuns=145
+   (regex ^(\d+))
+
+C) Target:
+   target = currentRuns + needRuns   (when chase line parsed)
+   progress = (currentRuns / target).clamp(0.0, 1.0)
+   left label  = "{battingShort} {runs}/{wkts}"
+   right label = "{target} Target"
+
+D) Fallbacks (per spec rules):
+   - statusText has no "need ..." -> hide chase equation + hide target labels.
+   - isFinished -> show resultText/statusText instead of "Need X from Y";
+     progress bar full or hidden.
+   - Not a chase / no target -> hide progress bar (do NOT invent a target).
+   - Missing score numbers -> hide progress, keep team scores as raw text.
+
+Which team is batting (for left progress label): pick the team whose score
+text contains the higher/most-recent overs, OR the team referenced in the
+parsed chase line; default to teamA if ambiguous. Kept defensive — label only,
+never blocks render.
+
+--------------------------------------------------------------------------------
+5. WHERE MINIMIZED SCORE STATE IS STORED
+--------------------------------------------------------------------------------
+App uses NO state-mgmt package (pubspec: http, flutter_svg, video_player,
+google_mobile_ads, onesignal, shared_preferences, wakelock_plus). Pattern in
+codebase = StatefulWidget + setState + ValueNotifier (main.dart:280
+_homeReentrySignal).
+
+PLAN: a global ChangeNotifier `MinimizedScoreController` (singleton, .instance
+convention matching RemoteAssetsService.instance / AdsManager.instance).
+Holds: CricketMatch? activeMatch  (null = bar hidden).
+Methods: show(match), update(match), clear().
+Lives in lib/widgets/minimized_score_bar.dart.
+
+RootShell (_RootShellState, main.dart:269) listens and rebuilds the bar.
+This survives match-detail route pops, so the bar persists app-wide. Good fit.
+
+--------------------------------------------------------------------------------
+6. BEST WIDGET LOCATION / MOUNT POINT
+--------------------------------------------------------------------------------
+Widget file: lib/widgets/minimized_score_bar.dart
+  (generic reusable widgets dir convention; lib/widgets/ already holds
+   remote_or_local_image.dart, responsive.dart, etc.)
+
+Mount in RootShell.build (main.dart:552). Two options; chosen = bottom Column:
+  bottomNavigationBar: Column (main.dart:561) currently stacks
+    [ StickyBannerBar (:566), BottomNav (:567) ]
+  -> insert MinimizedScoreBar ABOVE StickyBannerBar so it floats just over the
+     ad banner + nav, never covering nav, never blocking taps. Compact card,
+     12-16 horizontal margin, animated show/hide.
+
+Live data while minimized: reuse CricketRepository.liveScores([id]) or
+matchDetail(id) on the existing 5s Timer.periodic pattern
+(match_details_screen.dart:302). Controller.update(freshMatch) on each poll;
+mergeLiveScore() keeps it smooth, no aggressive rebuild/blink.
+
+Tap bar -> RootShell._openMatch(activeMatch.id) (main.dart:291) reopens detail.
+Tap X -> controller.clear().
+
+--------------------------------------------------------------------------------
+7. DARK / LIGHT MODE STYLING PLAN
+--------------------------------------------------------------------------------
+Theme: lib/app_theme.dart -> CricColors (ThemeExtension). Access context.cric
+(:298). Branch context.cric.isDark (:34). NO hardcoded colors.
+
+Tokens to use:
+  card / card2 / cardGradient (:45)  background
+  border (:..)                        stroke
+  cardShadow (:57) / heroShadow (:80) shadow (already light/dark aware)
+  text (:25)                          main score / team code
+  muted (:26)                         overs / labels
+  live (:29 = 0xffff2d45)             LIVE pill + red dot
+  primary / cyan (:27-28)             progress fill (primaryGradient :35)
+
+Dark: navy glass card, cyan/blue subtle border + glow, white text, red LIVE
+pill, grey track + blue fill.
+Light: white card, soft blue shadow (no glow), navy text, grey-blue muted,
+light red/pink LIVE pill, grey track + blue fill.
+All driven by existing tokens -> auto-switch with app theme.
+
+--------------------------------------------------------------------------------
+8. RESPONSIVE PLAN (360dp safe)
+--------------------------------------------------------------------------------
+Use context.w / context.sp (app_theme.dart:302,:328). Layout: Row with
+Flexible left team, Expanded center (LIVE + equation + bar + labels),
+Flexible right team, fixed divider + X. All text maxLines:1 + ellipsis.
+Logo size ~26-30. Card height ~84-92. Progress height 6. Border radius 20.
+Margin 14. No fixed widths that overflow at 360dp.
+
+--------------------------------------------------------------------------------
+9. RISK LEVEL
+--------------------------------------------------------------------------------
+LOW-MEDIUM.
+  LOW: new isolated widget + reuse of existing render/data/poll infra.
+  MEDIUM: (a) target/chase numbers must be PARSED from text — accuracy depends
+          on backend statusText format; mitigated by hide-on-no-match fallback.
+          (b) editing main.dart RootShell build tree (shared shell) — small,
+          additive, behind null check (bar hidden when no active match).
+No destructive changes. No data/auth/infra impact.
+
+--------------------------------------------------------------------------------
+10. EXACT FILES TO CHANGE
+--------------------------------------------------------------------------------
+CREATE:
+  lib/widgets/minimized_score_bar.dart
+    - MinimizedScoreController (ChangeNotifier singleton)
+    - MinimizedScoreBar (StatelessWidget, themed, responsive)
+    - chase/target parsing helpers (regex, with fallbacks)
+
+EDIT:
+  lib/main.dart
+    - import widget
+    - RootShell listens to controller; mount MinimizedScoreBar in
+      bottomNavigationBar Column above StickyBannerBar (:561-568)
+    - on _openMatch, optionally clear bar when that match opened
+  lib/screens/match_details/match_details_screen.dart
+    - add minimize button (e.g. on hero score card / app bar)
+    - on minimize: MinimizedScoreController.instance.show(currentMatch) + pop
+    - feed live updates: controller.update(fresh) inside existing poll tick
+      when this match is the active minimized one
+
+VERIFY (Phase 4):
+  flutter analyze lib/
+  flutter test
+  flutter build apk --release --target-platform android-arm64 --analyze-size
+
+================================================================================
+END REPORT — awaiting go-ahead for PHASE 2 (implement widget).
+================================================================================

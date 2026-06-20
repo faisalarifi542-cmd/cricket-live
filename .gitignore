@@ -1,0 +1,88 @@
+# Flutter generated/build files
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+
+# Flutter platform folders - ignore if you do NOT want to upload them
+ios/
+web/
+windows/
+linux/
+macos/
+
+# Android: track source config (build.gradle.kts, proguard-rules.pro,
+# AndroidManifest, src/) but ignore generated build output + secrets.
+android/build/
+android/app/build/
+android/.gradle/
+android/.cxx/
+android/captures/
+android/app/release/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Android generated files
+.gradle/
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+*.jks
+*.keystore
+
+# Node / Next.js / Admin Panel
+node_modules/
+.next/
+out/
+dist/
+admin-panel/.next/
+admin-panel/out/
+admin-panel/dist/
+admin-panel/node_modules/
+*.tsbuildinfo
+admin-panel/tsconfig.tsbuildinfo
+
+# Backend
+cricket-api/node_modules/
+cricket-api/logs/
+cricket-api/*.log
+
+# Environment / secrets
+.env
+.env.*
+*.env
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Archives / build artifacts / backups / debug output
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.apk
+*.aab
+*.log
+*.out
+*.err
+*.backup
+qa_*.png
+debug/
+debug*.html
+screens_remaining.txt
+build/
+.dart_tool/
+node_modules/
+.next/
+
+*.patch
+
+*.patch

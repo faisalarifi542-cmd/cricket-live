@@ -1,0 +1,155 @@
+================================================================================
+CRICPRO APP CHANGES LOG
+Last updated: 2026-06-12
+================================================================================
+
+SESSION 1 — Offline/Error State + Live Player Light Mode (Phase 2 prev)
+------------------------------------------------------------------------
+
+FILES CHANGED:
+  lib/components.dart
+  lib/screens/home/home_screen.dart
+  lib/screens/home/widgets/home_match_cards.dart
+  lib/screens/home/widgets/home_hero.dart
+  lib/repositories/cricket_repository.dart
+  lib/screens/match_details/match_details_screen.dart
+  lib/screens/live/live_player_screen.dart
+  lib/screens/live/widgets/live_player_streams.dart
+  lib/screens/live/widgets/live_player_sheets.dart
+  lib/screens/live/widgets/live_player_info.dart
+
+BUGS FIXED:
+  BUG-A  Offline shows "No live matches" instead of offline state
+    Root cause: _loadTabMatches() caught all errors → returned [] empty list.
+                _HomeMatchList FutureBuilder never checked snapshot.hasError.
+    Fix:        _loadTabMatches() now propagates network errors (no outer catch).
+                _loadHero() throws when ALL sources fail + items empty.
+                _refresh() assigns _tabFuture directly (not Future.value(await)).
+                FutureBuilder checks snapshot.hasError → shows CricOfflineCard.
+                New CricOfflineCard widget: wifi_off icon, Retry button, premium theme-aware.
+
+  BUG-B  Pull refresh after reconnect stuck on old state
+    Root cause: _refresh() awaited loadTabMatches then wrapped in Future.value —
+                error lost before reaching FutureBuilder.
+    Fix:        _refresh() assigns Future directly to _tabFuture in setState.
+
+  BUG-C  Live Player page background still dark in light mode
+    Root cause: live_screen_dark_background.png rendered unconditionally as
+                Positioned.fill behind entire screen.
+    Fix:        Wrapped in if (c.isDark) — hidden in light mode.
+                Cyan radial glow wrapped in Opacity(isDark ? 1.0 : 0.3).
+
+  BUG-D  Team names/scores invisible on result card in light mode
+    Root cause: Colors.white hardcoded for team name + score text.
+    Fix:        c.isDark ? Colors.white : c.text for both.
+
+  BUG-E  Selected quality card dark navy in light mode
+    Root cause: Gradient end stop hardcoded 0xff0b2b4a.
+    Fix:        c.isDark ? Color(0xff0b2b4a) : c.card2.
+
+  BUG-F  Repository cache returning stale/empty on network error
+    Root cause: _cached() returned [] on non-forced read if no cache + error.
+    Fix:        forceRefresh=true removes stale entry before fetch, rethrows
+                on error. Non-forced reads still serve stale (resilient).
+
+  BUG-G  Duplicate in-flight requests
+    Root cause: No dedup for concurrent same-key callers.
+    Fix:        _inflight map added. Concurrent callers join existing Future.
+
+  BUG-H  Match Details tab reverts to previous tab after 5s poll
+    Root cause: _restoreScrollAndTab() forced setState(tab = oldTab) post-frame.
+    Fix:        Renamed to _restoreScroll(). Tab restore removed. Scroll only.
+
+  BUG-I  Stream defaults to FHD not SD
+    Root cause: Default quality selection priority was highest first.
+    Fix:        SD → HD → FHD priority. Falls back to qualities.first.
+
+  BUG-J  Quality card labels inconsistent (FHD showed real height e.g. 1080p)
+    Root cause: _createQualityFromResolution stored real parsed height.
+    Fix:        Fixed display labels: FHD=720p, HD=480p, SD=288p per spec.
+
+SESSION 2 — Live Player Light Mode Remaining + Quality Sheet + Plans
+---------------------------------------------------------------------
+
+FILES CHANGED:
+  lib/screens/live/live_player_screen.dart
+  lib/screens/live/widgets/live_player_streams.dart
+  lib/screens/live/widgets/live_player_sheets.dart
+
+BUGS FIXED:
+  BUG-K  Feature strip still dark in light mode
+    Root cause: feature_strip_glass.png overlay always rendered (dark PNG).
+    Fix:        if (c.isDark) guard — overlay hidden in light mode.
+                Container color: isDark ? card2.4 : card.9 (opaque light bg).
+
+  BUG-L  Secure info card still dark in light mode
+    Root cause: secure_info_card_glass.png overlay always rendered (dark PNG).
+    Fix:        Same if (c.isDark) guard. Container uses c.card.95 in light.
+
+  BUG-M  Quality bottom sheet FHD shows 1080p, cards show 720p
+    Root cause: _createQualityFromResolution stored real height ('${height}p').
+                Previous label fix only capped cards, not sheet (used same field).
+    Fix:        _createQualityFromResolution now stores fixed display labels:
+                FHD=720p, HD=480p, SD=288p in resolution field used by sheet.
+                Sheet and cards now consistent.
+
+  BUG-N  Modal dim too heavy in light mode
+    Root cause: No barrierColor set → Flutter default Colors.black54.
+    Fix:        barrierColor: isDark ? Colors.black54 : Colors.black.25.
+
+  BUG-O  Inline quality sheet shows only Auto/FHD/HD/SD buckets
+    Root cause: _qualityOptionsFor() returned deduped 3-bucket list only.
+    Fix:        New _hlsAllVariants list stores all raw HLS variants (pre-dedup)
+                with real heights (240p/360p/480p/540p/720p/1080p etc).
+                _showQualitySelector uses _hlsAllVariants when available.
+                Fullscreen player sheet also uses _hlsAllVariants.
+                Card highlight fixed: URL-only match (not URL+code) so card
+                highlights correctly when raw variant selected from sheet.
+                Sheet selected highlight also URL-only match.
+
+FILES CREATED (plans — not implemented yet):
+  REMOTE_ASSETS_ADMIN_PLAN.txt   — Phase 3: CDN asset system
+  ANALYTICS_IMPLEMENTATION_PLAN.txt — Phase 4: analytics backend+admin+flutter
+  LIVE_SCORE_PERFORMANCE_PLAN.txt — Phase 5: live score polling improvements
+
+BEHAVIOR INTENTIONALLY UNCHANGED:
+  - Video surface + fullscreen video chrome: stays dark (over video)
+  - Dark mode: ALL dark mode styles completely unchanged
+  - Non-forced cache reads: still serve stale on network error (resilient)
+  - Empty state (genuine API empty list): still shows "No live matches"
+  - Matches screen + Schedule screen: already had offline error cards, not touched
+  - Quality cards (FHD/HD/SD): layout unchanged, only contrast + selected state
+  - Badge text (LIVE/RESULT): white on colored badge = correct both modes
+
+BUILD RESULTS (latest):
+  flutter analyze lib/: 0 issues
+  flutter test:         34/34 pass
+  APK release:          52M, exit 0
+
+================================================================================
+PENDING (requires approval before implementation)
+================================================================================
+
+PHASE 3 — Remote Assets CDN System
+  Plan: REMOTE_ASSETS_ADMIN_PLAN.txt
+  Risk: MED (backend migration + admin page + flutter resolver)
+  Action needed: Review plan → approve → implement in batches
+
+PHASE 4 — Analytics
+  Plan: ANALYTICS_IMPLEMENTATION_PLAN.txt
+  Risk: MED (new DB tables + endpoints + flutter service + admin page)
+  Action needed: Privacy review → approve → implement in batches
+
+PHASE 5 — Live Score Performance
+  Plan: LIVE_SCORE_PERFORMANCE_PLAN.txt
+  Risk: LOW→MED (backend TTL audit + small Flutter poll interval change)
+  Action needed: Audit current backend TTLs manually → approve small changes first
+
+VPS SETTINGS TO VERIFY MANUALLY:
+  1. nginx proxy_read_timeout (should be >= 5s)
+  2. Cricbuzz provider rate limit (check if < 3s polling causes throttle)
+  3. Node.js memory usage after any TTL reductions
+  4. Redis TTL config (if Redis used)
+  5. PM2 restart policy
+
+================================================================================

@@ -1,0 +1,219 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — FLUTTER REFACTOR REPORT
+File: FLUTTER_REFACTOR_REPORT.txt
+Generated: 2026-06-12
+Scope: lib/ structure refactor. UI must stay visually identical. No redesign.
+================================================================================
+
+GOAL: smaller, safer screen files + shared widgets, easier for AI agents to edit.
+CONSTRAINT: zero visual change. Same colors/spacing/layout/behavior.
+
+--------------------------------------------------------------------------------
+EXISTING SHARED INFRA (already good — reuse, do NOT recreate)
+--------------------------------------------------------------------------------
+  lib/components.dart : StadiumImage, PremiumCard, TeamLogoWidget,
+      PlayerAvatarWidget, PlayerAvatar, RankingAvatar, SegmentedTabs, PillChip,
+      SectionHeader, GradientButton, StatusBadge, EmptyOrErrorImage, AppHeader,
+      BottomNav, CricLogo, GlowIconButton, TeamBadge.
+  lib/widgets/ : responsive.dart (TapScale, FadeUp, PulseDot, ScrollableSegmentedTabs,
+      InfoListTile, ResponsiveStatTile), squad.dart, home_hero_card.dart,
+      live_match_mini_card.dart.
+  lib/components/*.dart : per-feature component groups.
+  lib/screens/series/series_premium.dart : ALREADY a pure-UI component library
+      (PremiumGlassPanel, PremiumVsBadge, SeriesStatusPill, etc). Model to follow.
+
+--------------------------------------------------------------------------------
+BIG FILES (>1000 lines) — line counts
+--------------------------------------------------------------------------------
+  4250  lib/screens/live/live_player_screen.dart
+  3463  lib/screens/series/series_detail_screen.dart
+  3367  lib/screens/home/home_screen.dart
+  2570  lib/screens/match_details/match_details_screen.dart
+  2336  lib/screens/match_details/widgets/live_match_tab.dart
+  2025  lib/screens/matches/matches_screen.dart
+  2022  lib/screens/schedule/schedule_screen.dart
+  1833  lib/components/series_components.dart
+  1474  lib/screens/match_details/widgets/match_details_ui.dart
+  1459  lib/api_models.dart            (model layer; leave — not a screen)
+  1336  lib/screens/player/player_detail_screen.dart
+  1282  lib/screens/series/series_premium.dart   (already pure-UI lib; OK)
+  1224  lib/components.dart            (shared lib; OK as barrel)
+  1174  lib/screens/series/series_components.dart
+
+--------------------------------------------------------------------------------
+SPLIT STRATEGY — SAFEST MECHANISM: Dart `part` files
+--------------------------------------------------------------------------------
+  Many extractable widgets are PRIVATE (_Foo) and reference each other +
+  screen-private helpers. Moving them to a normal sibling file would force
+  renaming _Foo -> Foo (privacy break) + new imports = churn + regression risk.
+
+  SAFEST: use `part` / `part of`. The screen file declares
+      part 'widgets/<screen>_cards.dart';
+  and the extracted file starts with
+      part of '<screen>_screen.dart';
+  -> private classes stay private, share the same library, ZERO behavior change,
+     ZERO import churn elsewhere. Pure physical code move. Lowest regression risk.
+
+  Rule: extract only PURE StatelessWidget chunks (and self-contained Stateful UI
+  like _Countdown). Keep the screen State class + polling/data/nav in the main file.
+
+--------------------------------------------------------------------------------
+PER-FILE PLAN
+--------------------------------------------------------------------------------
+
+F1. live_player_screen.dart (4250)  RISK: MEDIUM
+    WHY BIG: screen State (~1100L) + 20+ presentational widgets + 4 bottom sheets.
+    EXTRACT (part files under screens/live/widgets/):
+      - live_player_header.part   : _LivePlayerHeader, _HeaderActionButton,
+                                     _FullscreenIconButton
+      - live_player_info.part     : _MatchInfoCard, _MatchInfoSkeleton,
+                                     _MatchInfoUnavailable
+      - live_player_surface.part  : _PlayerSurface, _PlayerPill, _VideoContent,
+                                     _PlayerErrorOverlay, _PortraitPlayerControls
+      - live_player_streams.part  : _StreamsSection, _StreamFeatureChip,
+                                     _StreamsSkeleton, _StreamsUnavailable,
+                                     _QualitySelectorPanel
+      - live_player_sheets.part   : _InfoSheet, _StatsSheet, _MoreOptionsSheet
+    KEEP: _LivePlayerScreenState, _VsMedallion, _LiveBadge, _FullscreenVideoPage*.
+    TARGET main file: ~1300L.
+
+F2. series_detail_screen.dart (3463)  RISK: MEDIUM
+    WHY BIG: State + tab panels + ~20 cards/tiles.
+    EXTRACT (screens/series/widgets/):
+      - series_detail_hero.part   : _DetailAppBar, _BellWithBadge,
+                                     SeriesDetailHero, _HeroTeam, _SeriesContext
+      - series_detail_cards.part  : _InfoTile, _StatusSummaryCard, _NextMatchCard,
+                                     _VenueTile, _SeriesInsightCard, _SeriesMatchCard,
+                                     _MatchRightNote
+      - series_detail_squad.part  : _SquadToggle, _SquadPlayerCard, _PlayerGrid
+      - series_detail_stats.part  : _PointsRow, _StatRow, _StatGridTile
+    KEEP: State + tab containers (_OverviewTab/_MatchesTab/_SquadsTab/_StatsTab).
+    TARGET: ~1400L.
+
+F3. home_screen.dart (3367)  RISK: MEDIUM  (FIRST BATCH — most card widgets, clean)
+    EXTRACT (screens/home/widgets/):
+      - home_header.part      : _HomeHeader, _NotificationButton
+      - home_hero.part        : _HeroMatchCarousel, _CarouselDots, _HeroMatchCard,
+                                _HeroSkeleton, _HeroEmpty
+      - home_match_cards.part : _HomeMatchCard, _HomeCardShell, _TopCyanHighlight,
+                                _GlowOrb, _CardTopRow, _CenterPill, _CardDivider,
+                                _CardMetaRow, _CardTeamRow, _HomeLiveMatchCard,
+                                _LiveActionBar, _HomeUpcomingMatchCard,
+                                _HomeFinishedMatchCard, _HomeTeamBlock, _HomeVsBadge
+      - home_actions.part     : _HomeActionBar, _FilledActionButton,
+                                _OutlinedActionButton, _StatusBadge
+      - home_states.part      : _HomeEmptyState, _CardSkeleton, _HomeStatusTabs,
+                                _StatusTab, _HomeMatchList
+    KEEP: _HomeScreenState.
+    TARGET: ~900L.
+
+F4. match_details_screen.dart (2570)  RISK: MEDIUM-HIGH (live polling + stateful panels)
+    EXTRACT (screens/match_details/widgets/ — dir already exists):
+      - md_scorecard.part   : _ScorecardSummaryCard, _FallOfWicketsCard,
+                              _PartnershipsCard, _YetToBatCard
+      - md_overs.part       : _OversPanel, _LastTenOversCard, _OverCard,
+                              _BallBubble, _EventBadge, _TimelineRail
+      - md_info.part        : _InfoPanel, _InfoGridCard, _OfficialsCard
+      - md_stats.part       : _SectionCard, _StatTable
+      - md_states.part      : _RefreshStatusRow, _InlineEmpty, _MatchDataStateCard,
+                              _ApiMatchTabFutureContent, _ApiMatchTabDataContent
+    KEEP: State, _ScorecardPanel, _CommentaryPanel, _SquadsPanel,
+          _CommentaryTimelineItem (all stateful w/ expand/poll).
+    TARGET: ~1200L.
+
+F5. matches_screen.dart (2025)  RISK: LOW-MEDIUM
+    EXTRACT (screens/matches/widgets/):
+      - matches_header.part : _MatchesHeader, _BellButton, _SectionTitleRow,
+                              _StatusTab, _CategoryChip
+      - matches_cards.part  : _MatchCardShell, _CardTopRow, _StatusBadge, _TeamBlock,
+                              _VsCenterpiece, _VenueRow, _ActionButton, _DualActionBar,
+                              _StreamAwareLiveCard, _LiveCard, _UpcomingCard,
+                              _Countdown, _FinishedCard, _MatchesSkeletonList
+    KEEP: _MatchesScreenState.
+    TARGET: ~700L.
+
+F6. schedule_screen.dart (2022)  RISK: LOW-MEDIUM
+    EXTRACT (screens/schedule/widgets/):
+      - schedule_header.part : _ScheduleHeader, _GlassIconButton, _DateSelector,
+                               _DateCard, _CategoryChips, _CategoryChip, _SummaryRow
+      - schedule_cards.part  : _ScheduleMatchCard, _SeriesBadge, _MatchStatusPill,
+                               _CardTeam, _VsBadge, _TimeVenuePanel, _InfoBlock,
+                               _ScheduleSkeletonList
+    KEEP: _ScheduleScreenState.
+    TARGET: ~700L.
+
+F7. player_detail_screen.dart (1336)  RISK: LOW
+    EXTRACT pure cards/stat rows to screens/player/widgets/. TARGET: ~700L.
+
+--------------------------------------------------------------------------------
+CROSS-SCREEN DUPLICATION (consolidate AFTER splits; MEDIUM risk — variants differ)
+--------------------------------------------------------------------------------
+  NOTE: these are visually similar but have per-screen variants (sizes, alignment,
+  animation). Consolidating risks subtle visual drift. Do ONLY with careful diff +
+  visual QA. Listed for a LATER batch, NOT the first pass.
+  - Status pill: matches:1026, home:2458, schedule:1288  -> StatusBadge already in
+    components.dart; migrate each to it IF visually identical.
+  - Team block: matches:1077, home:1856, schedule:1343.
+  - VS badge: matches:1171, schedule:1415, home:2000, live_player:1604.
+  - Venue row: matches:1273, series_detail venues.
+  - Action button: matches:1312, home:2324/2388.
+  - Countdown: matches:1741 (only one; just extract).
+  - Skeleton/empty/unavailable: many — could share base templates.
+
+--------------------------------------------------------------------------------
+EXECUTION ORDER (small safe batches; analyze+test after EACH)
+--------------------------------------------------------------------------------
+  Batch 1: F3 home_screen (cleanest, most self-contained cards) -> verify.
+  Batch 2: F5 matches_screen -> verify.
+  Batch 3: F6 schedule_screen -> verify.
+  Batch 4: F1 live_player_screen -> verify.
+  Batch 5: F2 series_detail_screen -> verify.
+  Batch 6: F4 match_details_screen (highest risk: live panels) -> verify.
+  Batch 7: F7 player_detail_screen -> verify.
+  Batch 8 (optional): cross-screen dedup, one pattern at a time + visual QA.
+  After all: flutter pub get + analyze + test + release APK --analyze-size.
+
+  REVERT TRIGGER: if analyze/test fails or any visual diff, revert that batch's
+  part split (pure physical move, easy to undo) before continuing.
+================================================================================
+
+================================================================================
+BATCH 7 — RESULTS (2026-06-12)
+================================================================================
+
+DONE: player_detail_screen.dart split (part files, same method as batches 1-6).
+  BEFORE: 1336 lines (1 file).
+  AFTER : main 117 + widgets/player_hero.dart 391 + widgets/player_tabs.dart 354
+          + widgets/player_cards.dart 484.
+  Main file now orchestration/state only. analyze: 0 issues. test: 34/34.
+  Boundaries (pure physical move, no rename, no logic change):
+    hero  = _ApiPlayerProfile.._HeroStatStrip/_StatTile (orig 114-502)
+    tabs  = _PlayerTabs.._AchievementsTab (orig 503-854)
+    cards = _SectionCard..end incl _InfoRow/_StatItem/_valueForColumn (orig 855-)
+
+SKIPPED: lib/components/series_components.dart (1833 lines) — NOT split.
+  REASON: DEAD CODE. Confirmed:
+    - lib/screens.dart comment: this file "only contained hardcoded
+      India-vs-Australia / fake top-moments storyboards that are not reachable
+      from the production app, so they are intentionally not exported here."
+    - grep: ZERO imports of components/series_components.dart anywhere in lib/+test/.
+    - A LIVE twin exists at lib/screens/series/series_components.dart (the real,
+      used one). The components/ copy is a stale duplicate.
+  Splitting dead code = pointless (keeps 1833 dead lines, no maintainability gain).
+  RECOMMENDATION: archive it (git mv -> archived/dead-code/) like prior asset
+  cleanup. NOT deleted this pass — deletion needs explicit user ok (out of
+  split-scope). highlights_components.dart was checked too: it IS imported
+  (highlights_player_screen.dart) -> NOT dead, leave it.
+
+CUMULATIVE BIG-FILE STATUS (main file line counts):
+  live_player_screen     4250 -> 1140
+  series_detail_screen   3463 -> 337
+  home_screen            3367 -> 466
+  match_details_screen   2570 -> 478
+  matches_screen         2025 -> 477
+  schedule_screen        2022 -> 493
+  player_detail_screen   1336 -> 117   (Batch 7)
+  series_components(dead) 1833 -> unchanged (flagged for archive, not split)
+================================================================================
+END
+================================================================================

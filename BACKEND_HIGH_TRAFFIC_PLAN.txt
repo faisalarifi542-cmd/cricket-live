@@ -1,0 +1,169 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — BACKEND HIGH-TRAFFIC PLAN
+File: BACKEND_HIGH_TRAFFIC_PLAN.txt
+Generated: 2026-06-11
+Scope: Local backend code (cricket-api/) only. Server runtime = VPS manual.
+================================================================================
+
+LEGEND:  [CODE] local change/done   [DOC] recommendation only   [VPS] manual on server
+
+================================================================================
+1. CURRENT CACHING STRATEGY  (confirmed from code)
+================================================================================
+  - Redis via src/lib/redis.js: cacheGet / cacheSet / cacheGetOrFetch + KEYS + TTL.
+  - In-memory fallback when Redis down (local showed ECONNREFUSED but still served)
+    — cache is NON-FATAL, good for resilience.
+  - TTL constants already defined and well-tuned (src/lib/redis.js):
+      LIVE_SCORE 15s, COMMENTARY 5s, SCORECARD 5s, MATCH_INFO 10s, MATCH_LIST 20s,
+      MATCH_OVERS 5s, HOME_MATCHES 20s, SERIES 300s, PLAYER 3600s, TEAM 3600s,
+      POINTS_TABLE 300s, UPCOMING 300s, RECENT 120s, NEWS_LIST 300s,
+      NEWS_DETAIL 3600s, SCHEDULE 1200s, *_DONE (finished matches) 21600s.
+  - Cache invalidation hooks exist for admin edits (team logos, player images,
+    streams) — confirm live effect on VPS.
+  VERDICT: caching design is already strong. No TTL changes needed.
+
+================================================================================
+2. ENDPOINTS NEEDING STRONGEST CACHING  (already covered; tuning notes)
+================================================================================
+  HOT / high-fanout (keep short TTL, must stay cached):
+    - GET /matches (list)            MATCH_LIST 20s   — highest traffic, good.
+    - GET /app/home or home-matches  HOME_MATCHES 20s — app landing, good.
+    - live score / commentary / overs  5-15s          — correct for live feel.
+  EXPENSIVE-to-build / low-change (long TTL, good):
+    - rankings, series, player, team, news-detail, finished-match *_DONE 21600s.
+  RECOMMENDATION [DOC]: for finished matches, the *_DONE 6h TTLs are ideal — make
+  sure live->done transition flips the cache key so old live TTL doesn't linger.
+
+================================================================================
+3. SUGGESTED REDIS TTLs  (current values already good — keep)
+================================================================================
+  No change recommended. Current values balance freshness vs provider load well.
+  If provider rate-limits bite under high traffic, raise MATCH_LIST/HOME_MATCHES
+  20s -> 30s (small freshness cost, ~33% fewer provider hits). [DOC]
+
+================================================================================
+4. RESPONSE COMPRESSION  (gap found)
+================================================================================
+  CONFIRMED: NO @fastify/compress registered in server.js. Provider/scrape JSON
+  payloads (scorecards, commentary, match lists) can be large.
+  DECISION: NOT auto-added in code because:
+    (a) @fastify/compress is not in node_modules — adding a hard dependency risks
+        server boot if `npm install` is skipped on the VPS.
+    (b) Nginx very likely already gzips at the edge (standard reverse-proxy setup).
+        App-level gzip would then be redundant / double-work.
+  RECOMMENDATION (pick ONE):
+    [VPS-PREFERRED] Enable gzip (or brotli) in Nginx — see
+        SERVER_HIGH_TRAFFIC_CHECKLIST.txt §2. Zero app risk, compresses everything.
+    [CODE-OPTIONAL] If NOT terminating behind Nginx, add app gzip:
+        cd cricket-api && npm install @fastify/compress
+        // server.js, after helmet:
+        import compress from '@fastify/compress';
+        await fastify.register(compress, { global: true, threshold: 1024,
+                                            encodings: ['gzip'] });
+      threshold:1024 skips tiny bodies. Test boot after. Do NOT enable both
+      Nginx and app gzip (double compression waste).
+
+================================================================================
+5. DATABASE INDEXES  (already comprehensive — confirmed in migrate.js)
+================================================================================
+  Present indexes (good coverage on hot lookup paths):
+    teams(external_id,name), players(external_id,team_id,name),
+    series(external_id,dates), matches(external_id,status,series_id,start_time,
+    team1+team2), innings(match_id), batting(innings_id,player_id),
+    bowling(innings_id,player_id), commentary(match_id, match+innings,
+    match+timestamp).
+  RECOMMENDATION [DOC/VPS]: only add more if slow-query log shows a specific
+  unindexed scan. Candidate IF needed: app_settings(key) lookups, audit_log(created_at)
+  for time-range queries. Add via a new idempotent migration, never ad-hoc on prod.
+
+================================================================================
+6. API RATE LIMITS  (configured; tuning notes)
+================================================================================
+  CONFIRMED: @fastify/rate-limit, keyed by X-API-Key header else IP.
+    Defaults: RATE_LIMIT_MAX=100 / RATE_LIMIT_WINDOW_MS=60000 (100 req/min).
+  RECOMMENDATION [DOC/VPS via env]:
+    - Public app (shared key) under real load: 100/min/key may throttle bursts at
+      app launch (home + matches + rankings fire together). Consider 180-240/min.
+    - Keep a TIGHTER limit on admin/auth login routes (already has
+      recordFailedLogin/clearLoginAttempts brute-force guard — good).
+    - Tune via env only; no code change needed.
+
+================================================================================
+7. PROVIDER TIMEOUT / RETRY POLICY  (review)
+================================================================================
+  Provider abstraction: providers/ base-provider + provider-manager (execute()),
+  multi-provider failover (cricbuzz/cricinfo/cricketdata). Cricbuzz parses JSON
+  from HTML — FRAGILE by nature.
+  RECOMMENDATION [DOC]:
+    - Per-provider HTTP timeout 4-6s; fail fast to next provider rather than
+      hanging a request under load.
+    - Retry: at most 1 retry on a provider before failover (avoid retry storms
+      amplifying load when a provider is down).
+    - Cache last-good payload; on total provider failure serve stale + flag
+      isStale:true (rankings already returns clean-empty on failure — extend the
+      stale-serve pattern to match list/live where safe).
+    - Add parser regression tests (M6 in review) so provider HTML changes are
+      caught in CI, not in prod.
+
+================================================================================
+8. PM2 CLUSTER MODE  [VPS manual — no ecosystem.config.js in repo]
+================================================================================
+  SUGGESTED ecosystem.config.js (create on server, do NOT commit secrets):
+    module.exports = { apps: [{
+      name: 'cricket-api',
+      script: 'src/server.js',
+      instances: 'max',        // or a fixed number = CPU cores
+      exec_mode: 'cluster',    // load-balance across cores
+      max_memory_restart: '500M',
+      env: { NODE_ENV: 'production' },
+    }]};
+  CAUTION: cluster mode requires the app be stateless across instances. This app's
+  Redis cache is shared (good), but the in-memory fallback cache is PER-INSTANCE —
+  under cluster mode, ensure Redis is UP so all workers share cache (otherwise each
+  worker caches separately = more provider hits). Verify before enabling 'max'.
+  See SERVER_HIGH_TRAFFIC_CHECKLIST.txt §1.
+
+================================================================================
+9. NGINX REVERSE PROXY  [VPS manual]
+================================================================================
+  See SERVER_HIGH_TRAFFIC_CHECKLIST.txt §2 — gzip/brotli, websocket upgrade
+  headers for /ws, proxy timeouts, SSL. (App sets trustProxy:true already, so
+  X-Forwarded-* from Nginx is honored — good for rate-limit-by-IP correctness.)
+
+================================================================================
+10. REDIS / MYSQL MONITORING  [VPS manual]
+================================================================================
+  - Redis: confirm running, maxmemory + eviction policy (allkeys-lru suits a pure
+    cache), watch hit rate (`redis-cli INFO stats` -> keyspace_hits/misses).
+  - MySQL: enable slow_query_log, check connection limit vs PM2 instances ×
+    pool size, confirm migrate.js applied (all tables/indexes present).
+  See SERVER_HIGH_TRAFFIC_CHECKLIST.txt §3-4.
+
+================================================================================
+11. LOGGING NOISE / ERROR HANDLING UNDER LOAD
+================================================================================
+  - Local run logged ECONNREFUSED 6379 repeatedly with Redis down. On VPS with
+    Redis UP this is silent. [DOC] Add a single warn + backoff on Redis connect
+    failure instead of per-call error spam, so logs stay readable under load.
+  - Routes already return clean success envelopes + no 5xx leak on provider fail
+    (rankings returns success:true empty). Good. Extend to all provider-backed
+    routes.
+
+================================================================================
+12. LOAD TESTING  [run against staging or carefully against prod]
+================================================================================
+  See SERVER_HIGH_TRAFFIC_CHECKLIST.txt §6 for k6/autocannon examples.
+  WARNING: start small (10-50 VUs), ramp gradually, watch CPU/Redis/MySQL. Do NOT
+  blast the live server.
+
+================================================================================
+13. LOCAL CHANGES DONE THIS PASS
+================================================================================
+  [CODE] cricket-api/src/server.js — Swagger/docs UI now gated:
+         disabled when NODE_ENV=production, override SWAGGER_ENABLED=true.
+         Verified: node --check OK + prod-env boot OK (BOOT OK).
+  Everything else above = [DOC]/[VPS] recommendation, no risky auto-change.
+
+================================================================================
+END
+================================================================================

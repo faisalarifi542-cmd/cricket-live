@@ -1,0 +1,152 @@
+================================================================================
+LIVE SCORE STALE-FIX + ELLIPSIS — FINAL SUMMARY
+Date: 2026-06-13   Branch: phase4-remote-assets-archiving
+================================================================================
+
+1. FILES CHANGED (this task only)
+---------------------------------
+Backend (cricket-api/) — MUST DEPLOY TO VPS:
+  src/lib/data-control.js   — short live stale window; live-type physical TTL;
+                              cache-age/stale response headers (X-Cache-Age-Ms,
+                              X-Stale); pass dataType into writeEnvelope.
+  src/server.js             — central no-store Cache-Control on all live
+                              endpoints; dedicated "live-fetch" structured log
+                              (endpoint, matchId, cache, cacheAgeMs, stale,
+                              duration).
+
+Flutter (lib/) — ship in app build:
+  models/cricket_match.dart                 — isLive now includes innings_break
+                                              + stoppages (rain/tea/drinks/stumps).
+  screens/match_details/match_details_screen.dart
+        — self-healing poll watchdog; stop ONLY on terminal state; auto-refresh
+          commentary(4)/overs(5) tabs while live; recovery after transient error.
+  screens/home/home_screen.dart             — poll recovery watchdog.
+  screens/matches/matches_screen.dart       — poll recovery watchdog.
+
+Flutter ellipsis (12 widgets):
+  widgets/squad.dart (player chip name, +ConstrainedBox)
+  components/highlights_components.dart (video title + match)
+  components/match_components.dart (venue)
+  components/home_components.dart (result venue)
+  screens/teams/team_detail_screen.dart (team.name, match title)
+  screens/rankings/rankings_screen.dart (player name + country)
+  screens/highlights/highlights_player_screen.dart (title + match)
+  screens/highlights/highlight_detail_screen.dart (title)
+  screens/player/widgets/player_cards.dart (achievement title)
+  screens/live/widgets/live_player_streams.dart (stream title)
+
+Docs: LIVE_SCORE_SWR_FIX_REPORT.txt (Phase 1 investigation).
+
+
+2. ROOT CAUSE OF STALE SCORE
+----------------------------
+PRIMARY (Flutter): backend emits status 'innings_break' between innings (and
+rain/tea/drinks/stumps). Flutter isLive / _isLiveMatchData only counted 'live'/
+'in_progress', so the match-detail poll timer was cancelled at the first innings
+break and NEVER re-armed. When play resumed the app was no longer polling →
+score stuck until pull-to-refresh (which restarts the timer). Matched the report
+exactly.
+SECONDARY (Flutter): a single transient network error in any poll loop cancelled
+the timer permanently (no watchdog) — only foreground/pull restarted it.
+MINOR (backend): /app/home via controlledFetch served up to 120s stale
+(max(ttl*4,60)); featured/hero block only. SWR live routes were already fine
+(8-20s physical cap). The SWR helper itself was NOT the cause.
+
+
+3. BACKEND SWR/CACHE FIXES
+--------------------------
+- Live data types (homeData, liveMatches, matchDetail, liveLine, scorecard,
+  commentary, overs) now use a short stale window min(max(ttl,5),15)s instead of
+  max(ttl*4,60). Non-live keeps long stale (blip protection).
+- Live envelopes get a tight physical Redis TTL (ttl+window+5s) so a dead live
+  key cannot be served via the error-fallback for minutes.
+- no-store/no-cache Cache-Control forced on every live endpoint (/app/home,
+  /matches/live, /match/:id and its live sub-paths, /app/match/:id) — protects
+  against Dio/OkHttp/CDN caching.
+- Response headers added: X-Cache-Age-Ms, X-Stale (no Flutter model change —
+  headers + meta only).
+- Structured live-fetch log per live request for production visibility.
+- SWR helper (redis.js) left UNCHANGED — it was already correct (background
+  refresh writes back, if(fresh) guard prevents error-clobber, dedupe clean).
+
+
+4. FLUTTER POLLING/REPOSITORY FIXES
+-----------------------------------
+- isLive treats innings breaks/stoppages as live → polling no longer stops mid
+  match.
+- Match-details: stop polling ONLY on terminal state (completed/abandoned/
+  no_result/cancelled). Transient non-live reads keep polling.
+- Self-healing recovery timer on home, matches, match-details: after a transient
+  failure or a not-yet-live read, polling re-arms automatically with small
+  backoff (no manual pull needed).
+- Commentary + Overs tabs now auto-refresh during live polling (were frozen).
+- Repository force path unchanged (already correct): forceRefresh drops memory
+  cache and always hits network; auto-poll and pull-to-refresh use the same path.
+- Tab selection + scroll offset preservation unchanged (already correct). No
+  TabController recreation. setState only fires when payload actually changed.
+
+
+5. LONG-NAME ELLIPSIS FIXES
+---------------------------
+12 name/title/venue Text widgets given maxLines + TextOverflow.ellipsis (and a
+ConstrainedBox for the squad chip name that sat unconstrained in a Row). Font
+sizes and layout unchanged; only truncation behaviour added. Widgets that
+already had ellipsis were left as-is.
+
+
+6. ANALYZE / TEST / BUILD RESULTS
+---------------------------------
+- Backend: node --check OK (data-control, server, matches, app). eslint 0 errors
+  (only pre-existing unused-arg warnings on untouched lines). node --test:
+  69/69 pass (redis SWR 28 + others 41).
+- Flutter: `flutter analyze lib/` → No issues found. `flutter test` → 38/38 pass.
+- Release build: `flutter build apk --release --target-platform android-arm64
+  --analyze-size` → SUCCESS, exit 0. "√ Built app-release.apk (33.1MB)".
+  Icon font tree-shaken 98.7%. Size analysis: .flutter-devtools/
+  apk-code-size-analysis_11.json. Log: phase5_build.log.
+
+
+7. VPS DEPLOYMENT STEPS (BACKEND)
+---------------------------------
+Deploy ONLY these two files to the server:
+  cricket-api/src/lib/data-control.js
+  cricket-api/src/server.js
+Then on the VPS:
+  cd <api-dir>
+  git pull         (or copy the two files)
+  npm ci           (no dep changes, optional)
+  pm2 restart <api-process>      # restart the Fastify API
+  pm2 restart <workers-process>  # only if workers share the same code; they do
+                                 # not need it for these changes but a restart is
+                                 # harmless.
+No DB migration required. No Redis flush required (new envelopes supersede old;
+old keys evict by TTL). If you want instant effect, optionally:
+  redis-cli --scan --pattern 'appdata:app:home*' | xargs redis-cli del
+WHEN: deploy anytime; effect is immediate after pm2 restart. Verify with:
+  curl -sI https://<domain>/matches/live | grep -i cache-control   # no-store
+  curl -sI https://<domain>/app/home | grep -i x-cache-age-ms
+
+
+8. MANUAL TEST NOTES
+--------------------
+- Home: open with a live match, leave untouched 2-5 min → cards update (8s poll).
+- Match Details Live tab: leave untouched → batters/bowler/recent over update
+  (5s). Crucially, let an innings break happen → polling now KEEPS running and
+  resumes scoring automatically (previous bug: froze here).
+- Switch to Score tab → scorecard updates, tab/scroll preserved, no jump.
+- Commentary/Overs tabs now refresh live too.
+- Turn internet off → offline/Retry state, polling pauses. Turn internet on →
+  polling self-heals within ~5-40s WITHOUT pull-to-refresh (new watchdog), and
+  pull-to-refresh still works immediately.
+- Long player/team/series/venue names show "..." with no overflow.
+
+
+9. INTENTIONALLY LEFT UNCHANGED
+-------------------------------
+- SWR helper redis.js (already correct).
+- Flutter repository cache logic (forceRefresh path already correct).
+- Tab/scroll preservation (already implemented).
+- /match/:id/overs plain cacheMiddleware path (5s TTL is fine; overs change
+  slowly). Auto-refresh added on the Flutter side for the Overs tab instead.
+- No new large refactor (per the explicit instruction).
+================================================================================

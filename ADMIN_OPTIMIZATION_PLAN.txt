@@ -1,0 +1,100 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — ADMIN PANEL OPTIMIZATION PLAN
+File: ADMIN_OPTIMIZATION_PLAN.txt
+Generated: 2026-06-11
+Scope: admin-panel/ (Next.js 15 / React 19). Local code only.
+================================================================================
+
+LEGEND:  [OK] confirmed good   [DOC] recommendation   [VERIFY] needs build/run
+
+================================================================================
+1. DEPENDENCIES  (lean — no bloat found)
+================================================================================
+  deps: next15, react19, react-dom19, react-hook-form, @hookform/resolvers, zod,
+        lucide-react, date-fns, clsx, tailwind-merge, sonner.
+  [OK] All actively-used, standard, lightweight. No moment.js / lodash / heavy
+       chart libs / duplicate utilities. Nothing to remove.
+  [OK] lucide-react imported as NAMED icons (import { Plus, Trash2 } ...) =
+       tree-shakes to only used icons. Keep this style; never `import * as`.
+  [OK] date-fns not imported directly in pages (tree-shake-friendly anyway).
+
+================================================================================
+2. BUNDLE / PERFORMANCE
+================================================================================
+  FINDING: 63 of 67 components carry 'use client'. Expected for an admin CRUD
+    panel (forms, state, event handlers everywhere). Not a defect.
+  [DOC] Opportunity: pages that are mostly static shells could keep the page a
+    Server Component and push 'use client' down to only the interactive child
+    (table/form). Marginal JS savings; do only if a specific page bundle is large.
+  [DOC] next.config.mjs is minimal (just reactStrictMode). Optional adds:
+      - `compress: true` (gzip from Next's own server — skip if behind Nginx).
+      - `productionBrowserSourceMaps: false` (default; keep off to shrink deploy).
+      - `experimental: { optimizePackageImports: ['lucide-react'] }` for even
+        tighter icon tree-shaking on Next 15.
+  [VERIFY] Run the analyzer to find the heaviest route before optimizing:
+      cd admin-panel
+      ANALYZE=true npm run build      # after adding @next/bundle-analyzer (devDep)
+    or simply read the per-route "First Load JS" table printed by `npm run build`.
+
+================================================================================
+3. DATA FETCHING / API CALLS
+================================================================================
+  [OK] No setInterval polling anywhere — admin does not hammer the API on a timer.
+  [OK] Only ~10 useEffect-driven fetches total; data loads on demand per page.
+  [OK] lib/api.ts: single-flight token refresh (refreshPromise) prevents refresh
+       stampedes on 401; bearer in memory/storage; ApiError typed. Solid.
+  [DOC] For list pages that refetch on every mount, consider caching last result
+    in memory (or SWR/react-query) to avoid refetch on back-navigation. Optional;
+    current load is low (human admin, not high-fanout).
+
+================================================================================
+4. TABLES / PAGINATION
+================================================================================
+  [DOC/VERIFY] Confirm large list pages (matches, players, teams, audit-logs)
+    paginate server-side or virtualize. If a page pulls ALL rows and renders them,
+    that's the main UX-perf risk as data grows. Audit each list endpoint:
+      - audit-logs: likely grows unbounded -> MUST paginate / date-filter.
+      - players / teams / matches: paginate or lazy-load.
+    Not auto-changed (needs per-page review of API contract).
+
+================================================================================
+5. IMAGE UPLOAD / COMPRESSION
+================================================================================
+  Upload pages: homepage, manual-matches, players, teams.
+  [DOC] Compress images client-side BEFORE upload (canvas resize -> WebP/JPEG q80)
+    so admins don't push multi-MB originals that then ship to the app/CDN. Add a
+    small helper (e.g. browser-image-compression) used in those 4 forms. Enforce a
+    max dimension (e.g. 1024px for logos/headers) + size cap. Reduces storage +
+    app download size at the source.
+  [DOC] Validate file type + size on the form (zod/react-hook-form already present)
+    and reject > N MB before upload.
+
+================================================================================
+6. UX PERFORMANCE
+================================================================================
+  [OK] sonner for toasts (tiny). tailwind-merge + clsx for class merging (tiny).
+  [DOC] Ensure forms show pending/disabled state on submit (rhf isSubmitting) to
+    prevent double-submit under slow network — quick win on stream/match forms.
+
+================================================================================
+7. RECOMMENDED BUILD / DEPLOY COMMANDS
+================================================================================
+  Install:        cd admin-panel && npm install
+  Lint:           npm run lint
+  Production build:  npm run build      # read the First Load JS table per route
+  Start (prod):   npm run start         # or deploy to host
+  Bundle analyze (after adding analyzer devDep):
+                  ANALYZE=true npm run build
+  Env at build:   NEXT_PUBLIC_API_BASE_URL must be set (defaults to
+                  https://api.webcrichd.co per lib/constants.ts). [VERIFY on deploy]
+
+================================================================================
+8. VERDICT
+================================================================================
+  Admin panel is already lean and well-structured. No risky changes auto-applied.
+  Highest-value follow-ups (manual): (a) server-side pagination on audit-logs +
+  large lists, (b) client-side image compression on the 4 upload forms,
+  (c) read the build's First Load JS table and trim only the heaviest route.
+================================================================================
+END
+================================================================================

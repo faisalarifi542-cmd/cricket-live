@@ -1,0 +1,16 @@
+archived/remote-assets-replaced/match_details/backgrounds/stadium_score_header_bg.png|assets/images/match_details/backgrounds/stadium_score_header_bg.png
+archived/remote-assets-replaced/stadium_live.png|assets/images/stadium_live.png
+archived/remote-assets-replaced/home/home_top_featured_card.png|assets/images/home/home_top_featured_card.png
+archived/remote-assets-replaced/home/futuristic_stadium_ui_backdrop.png|assets/images/home/futuristic_stadium_ui_backdrop.png
+archived/remote-assets-replaced/series/backgrounds/series_squad_section_bg.png|assets/images/series/backgrounds/series_squad_section_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_stats_table_bg.png|assets/images/series/backgrounds/series_stats_table_bg.png
+archived/remote-assets-replaced/schedule/stadium_top_bg.png|assets/images/schedule/stadium_top_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_overview_panel_bg.png|assets/images/series/backgrounds/series_overview_panel_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_detail_hero_bg.png|assets/images/series/backgrounds/series_detail_hero_bg.png
+archived/remote-assets-replaced/live_stream/backgrounds/stadium_player_background_clean_16x9.png|assets/images/live_stream/backgrounds/stadium_player_background_clean_16x9.png
+archived/remote-assets-replaced/series/backgrounds/series_match_card_bg.png|assets/images/series/backgrounds/series_match_card_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_page_top_backdrop.png|assets/images/series/backgrounds/series_page_top_backdrop.png
+archived/remote-assets-replaced/schedule/match_card_bg.png|assets/images/schedule/match_card_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_empty_state_bg.png|assets/images/series/backgrounds/series_empty_state_bg.png
+archived/remote-assets-replaced/series/backgrounds/series_list_card_bg.png|assets/images/series/backgrounds/series_list_card_bg.png
+archived/remote-assets-replaced/matches/matches_top_bg.png|assets/images/matches/matches_top_bg.png

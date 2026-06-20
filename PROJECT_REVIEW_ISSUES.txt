@@ -1,0 +1,562 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — FULL LOCAL CODE REVIEW
+File: PROJECT_REVIEW_ISSUES.txt
+Generated: 2026-06-11
+Scope: Local repository only (Flutter app + Node/Fastify backend + Next.js admin)
+Reviewer note: No code was changed. This is a read-only review report.
+Generated/vendor folders ignored: node_modules, build, .dart_tool, .next, dist,
+coverage, logs, android/build, ios/Pods, web/build.
+================================================================================
+
+LEGEND
+  [CONFIRMED]  proven from local code in this repo
+  [VERIFY]     cannot be confirmed locally; needs server/runtime verification
+  Severity: CRITICAL > HIGH > MEDIUM > LOW
+
+
+================================================================================
+1. EXECUTIVE SUMMARY
+================================================================================
+
+OVERALL LOCAL PROJECT HEALTH: GOOD / PRODUCTION-LEANING.
+The repository is a mature, well-structured three-part product:
+  - Flutter app (lib/)            — clean theme system, repository layer, polling.
+  - Node/Fastify backend (cricket-api/) — provider abstraction, API-security,
+                                    RBAC admin, Redis cache, MySQL migrations.
+  - Next.js admin panel (admin-panel/) — token+refresh auth, broad feature set.
+
+The app compiles, tests pass (34 Flutter tests in prior runs), and core cricket
+logic (overs normalization, stream gating, image fallbacks) is implemented
+centrally rather than ad-hoc.
+
+BIGGEST CONFIRMED LOCAL ISSUES
+  1. A DUPLICATE/LEGACY Flutter source tree exists at `cricket-api/lib/` (a whole
+     second Flutter app: dio/google_fonts/intl imports) that is NOT part of the
+     real app and pollutes analysis. [CONFIRMED]
+  2. TWO parallel model definitions in the real app: `lib/api_models.dart` and
+     `lib/models/api_models.dart` both define RankingEntry, normalizeOversText,
+     team-suffix logic, etc. Divergence risk. [CONFIRMED]
+  3. Hardcoded default secrets/keys committed as fallbacks: JWT secret
+     'dev-secret-change-in-production', default public API key
+     'csk_live_cricpro_app_8f3a2b1c9d' (in app + backend + migrate). Safe ONLY if
+     overridden by server env. [CONFIRMED in code / VERIFY on server]
+  4. Default API-security mode is 'monitor' (allows unkeyed traffic). Intentional
+     for rollout, but means the public API is effectively open until flipped to
+     'enforce' on the server. [CONFIRMED in code / VERIFY on server]
+  5. CORS_ORIGIN default '*' in .env.example + permissive dynamic CORS with
+     credentials:true. Needs confirmation the live origin allowlist is locked
+     down. [CONFIRMED template / VERIFY on server]
+
+BIGGEST THINGS NEEDING SERVER VERIFICATION
+  - Real backend .env (secrets, provider keys, OneSignal REST key).
+  - PM2 process/restart config (no ecosystem.config.js in repo).
+  - Nginx reverse proxy, SSL on api.webcrichd.co + admin.webcrichd.co.
+  - Redis running in prod (local run showed ECONNREFUSED 6379 — expected locally).
+  - MySQL connection + migrations applied.
+  - API-security mode actually set to 'enforce' in app_settings.
+  - CORS allowlist populated (api_allowed_origins) and not '*'.
+
+
+================================================================================
+2. CONFIRMED CRITICAL ISSUES (proven from local code)
+================================================================================
+
+C1. [CONFIRMED] Committed fallback secrets in source.
+    - cricket-api/src/config/index.js:35
+        jwtSecret: env('JWT_SECRET', 'dev-secret-change-in-production')
+      If JWT_SECRET is unset on the server, admin auth tokens are signed with a
+      publicly known secret → full admin impersonation. Server env MUST override.
+    - cricket-api/src/db/migrate.js:10
+        DEFAULT_APP_API_KEY = 'csk_live_cricpro_app_8f3a2b1c9d'
+      Same key is hardcoded in the Flutter app (lib/core/api/api_config.dart:apiKey
+      default). A public app key is acceptable by design, but it is committed and
+      shared, so it provides NO real gate unless paired with enforce-mode + other
+      client checks.
+    Risk if server does not override: CRITICAL. If server overrides: downgraded
+    to LOW (cleanup). -> VERIFY on server.
+
+C2. [CONFIRMED] Public API runs in 'monitor' mode by default.
+    - cricket-api/src/lib/api-security.js:DEFAULT_MODE = 'monitor'
+      In monitor mode, requests that would be blocked are logged but ALLOWED.
+      Until the live app_settings.apiSecurityMode = 'enforce', the public API is
+      open to any client. Intentional rollout choice, but must be flipped.
+    -> VERIFY the live mode value.
+
+
+================================================================================
+3. CONFIRMED HIGH PRIORITY ISSUES
+================================================================================
+
+H1. [CONFIRMED] Duplicate legacy Flutter tree inside backend folder.
+    Path: cricket-api/lib/  (e.g. core/network/api_client.dart imports dio,
+    widgets/app_logo.dart + core/theme/app_theme.dart import google_fonts,
+    core/utils/cricket_helpers.dart imports intl).
+    - This is a SEPARATE, older Flutter app embedded under the Node backend.
+    - It is not referenced by the real app (lib/) and its packages (dio,
+      google_fonts, intl) are NOT in the real pubspec.yaml.
+    - It inflates `flutter analyze` with hundreds of false errors and confuses
+      tooling/reviewers.
+    Recommendation: move/delete from the backend folder (do NOT do as part of
+    this review — flagged only).
+
+H2. [CONFIRMED] Two competing model layers in the real app.
+    - lib/api_models.dart           (RankingEntry, normalizeOversText, team flag
+                                      suffix logic, AppConfig, etc.)
+    - lib/models/api_models.dart    (duplicate RankingEntry, normalizeOversText,
+                                      same comments/logic)
+    Both are imported in different places (e.g. rankings_screen.dart imports
+    api_models.dart; api_response.dart lives under models/). Divergence is a real
+    maintenance hazard — a fix applied to one will silently miss the other.
+    Recommendation: consolidate to a single source of truth.
+
+H3. [CONFIRMED] App ships a real-looking default API key + package name.
+    - lib/core/api/api_config.dart: packageName default
+      'com.example.cricpro_flutter' (placeholder bundle id) and apiKey default
+      'csk_live_...'. If a production build forgets the --dart-define overrides,
+      the app identifies as the example package with the shared key. -> VERIFY
+      the release build injects real --dart-define values.
+
+H4. [VERIFY/CONFIRMED-template] CORS default is wide open.
+    - .env.example: CORS_ORIGIN=*
+    - server.js registers dynamic CORS via corsOriginDelegate with
+      credentials:true. With credentials:true a literal '*' origin is unsafe.
+      The dynamic delegate reads api_allowed_origins from DB, so prod safety
+      depends entirely on that table being populated and CORS_ORIGIN not being
+      '*'. -> VERIFY live origin allowlist.
+
+
+================================================================================
+4. CONFIRMED MEDIUM PRIORITY ISSUES
+================================================================================
+
+M1. [CONFIRMED] Stray binary asset committed in source tree.
+    - cricket-api/src/ChatGPT Image Jun 10, 2026, 03_28_51 AM.png
+      A screenshot image sits in the backend src/ directory. Cleanup item; should
+      not ship in a server bundle.
+
+M2. [CONFIRMED] Loose root clutter — many ad-hoc docs/patches in repo root.
+    Dozens of *.md status docs and *.patch files (e.g. cricpro-*.patch,
+    COMPREHENSIVE_FIX_PLAN.md, SCORECARD_FIX_*.md, scorecard-155398.html). Not
+    harmful, but obscures the real project structure and bloats the repo.
+
+M3. [CONFIRMED] Default OneSignal / provider keys are placeholders in template.
+    - .env.example: ONESIGNAL_REST_API_KEY, CRICKETDATA_API_KEY placeholders.
+      Notification REST sends + the cricketdata provider will silently no-op if
+      not set on the server. Flutter NotificationService already guards on empty
+      appId (good). -> VERIFY server has real keys.
+
+M4. [CONFIRMED] Admin seed password default is a placeholder.
+    - .env.example ADMIN_SEED_PASSWORD=change-this-admin-password.
+      If the server used the template value, the first admin account is guessable.
+      -> VERIFY the seeded admin password was changed.
+
+M5. [CONFIRMED] Swagger UI is registered (server.js imports swagger + swaggerUi).
+    Exposing API docs publicly can aid attackers mapping endpoints. Confirm it is
+    disabled or auth-gated in production. -> VERIFY.
+
+M6. [CONFIRMED] No automated backend test coverage beyond a couple of unit tests.
+    - Only a few *.test.js (e.g. api-security.test.js). Routes, provider parsing,
+      and normalizers are largely untested. Risk on provider HTML changes.
+
+
+================================================================================
+5. CONFIRMED LOW PRIORITY / CLEANUP ISSUES
+================================================================================
+
+L1. [CONFIRMED] Duplicate top-level Dart aggregators: lib/models.dart and
+    lib/api_models.dart re-export overlapping symbols alongside lib/models/*.
+    Tidy into one barrel.
+
+L2. [CONFIRMED] Mojibake in comments: lib/api_models.dart and
+    lib/models/api_models.dart contain "19.6 â†’ 20.0" (UTF-8 arrow mangled).
+    Cosmetic; fix encoding.
+
+L3. [CONFIRMED] Many "coming soon" placeholders remain in Flutter (Highlights,
+    live commentary, cast, report issue). Acceptable, but track as unfinished.
+
+L4. [CONFIRMED] .gitignore correctly ignores .env, node_modules, build, .next,
+    platform folders, keystores. Good. Note it also ignores android/ios/web/etc
+    entirely — confirm that is intended (platform configs not version-controlled).
+
+
+================================================================================
+6. FLUTTER APP REVIEW (lib/)
+================================================================================
+
+ARCHITECTURE — STRONG.
+  - Clear separation: services/ (CricketApiService, AdService, NotificationService),
+    repositories/ (CricketRepository with in-memory cache + TTL), models/, screens/,
+    components.dart (shared widgets), app_theme.dart (CricColors ThemeExtension).
+  - State management is StatefulWidget + FutureBuilder (no Provider/Riverpod/Bloc).
+    Works for this app size; the central CricketRepository acts as a lightweight
+    cache/service locator.
+
+API SERVICE / REPOSITORY LAYER — GOOD.
+  - lib/core/api/api_client.dart is the single HTTP client (http package), with
+    security headers (X-API-Key, X-Client-Type, X-App-Version, X-Package-Name).
+  - CricketApiService maps every endpoint; CricketRepository wraps with _cached()
+    TTL helper + forceRefresh. allowFailure used for optional endpoints
+    (series-hero, live-center) — good graceful degradation.
+  - CONCERN [CONFIRMED]: there are TWO api model files (see H2). The service uses
+    models/api_response.dart; some screens import lib/api_models.dart. Keep unified.
+
+SCREENS — COMPREHENSIVE.
+  - Home, Matches, Schedule, Series (list+detail), Match Details (Info/Live/Score/
+    Squad/Commentary/Overs tabs), Live Player, Rankings (men+women, real API),
+    Teams, News, Highlights, Player detail, More — all present and wired.
+  - Match Details tabs are split into widgets/ (match_details_ui.dart,
+    live_match_tab.dart) keeping the screen file manageable.
+
+LIGHT / DARK CONSISTENCY — STRONG (recently hardened).
+  - CricColors ThemeExtension drives all colors via context.cric; widgets branch
+    on c.isDark. Documented rules in AI_PROJECT_INDEX.md (glass surfaces opaque in
+    light, cyan-glow gated to dark, StadiumImage swaps to clean light assets).
+  - Prior review rounds fixed the "light looks dark" scrim and flat-white issues.
+
+MATCH CARD UI / IMAGES / STATES — GOOD.
+  - Image priority Admin -> Provider (Cricbuzz) -> initials fallback is centralized
+    (TeamLogoWidget, PlayerAvatarWidget/MDPlayerAvatar). Fallbacks present.
+  - Empty/loading/error states exist on rankings, match details, schedule, series.
+
+POLLING / REFRESH / SCROLL — GOOD WITH CARE.
+  - Match Details implements silent polling with scroll-offset + tab restoration
+    (_restoreScrollAndTab) and jsonEncode diff to avoid needless rebuilds.
+  - WATCH-OUT [CONFIRMED]: polling uses jsonEncode(oldData) != jsonEncode(next) on
+    full payloads each tick — fine for small payloads, but O(payload) per poll.
+    Acceptable now; revisit if payloads grow.
+
+ADS / REWARDED UNLOCK — PRESENT.
+  - services/ads/ (AdsManager waterfall) + ad_service.dart facade + ad_config.dart
+    model. google_mobile_ads in pubspec. Rewarded-unlock logic lives in the live
+    flow. -> Confirm unlock gating + frequency caps behave with real unit ids.
+
+ONESIGNAL / DEEP LINK — IMPLEMENTED, GUARDED.
+  - NotificationService initializes only when enabled + appId present + !kIsWeb;
+    registers click listener -> deep-link handler; registerDevice posts to backend.
+    Good null/empty guards. -> VERIFY real ONESIGNAL_APP_ID on server + app build.
+
+SECURITY (APP) — MOSTLY OK.
+  - Security headers sent on every request. No secrets beyond the shared public
+    API key default (H3). No private keys in app code observed.
+
+
+================================================================================
+7. BACKEND CODE REVIEW (cricket-api/src/)
+================================================================================
+
+ROUTE STRUCTURE — CLEAN.
+  - routes/: matches.js, series.js, players.js, rankings.js, schedule.js, news.js,
+    app.js, health.js, admin.js + admin/index.js (admin panel routes).
+  - server.js registers plugins (cors, cookie, helmet, rate-limit, jwt, websocket,
+    swagger), security middleware, then route modules. Good ordering.
+
+PROVIDER / CRICBUZZ INTEGRATION — ROBUST.
+  - providers/ has base-provider.js + provider-manager.js (execute() abstraction)
+    + cricbuzz/, cricinfo/, cricketdata/ adapters. Multi-provider failover.
+  - Cricbuzz client parses embedded JSON from HTML (parseRankingsHtml,
+    extractRankingsData). FRAGILE BY NATURE [CONFIRMED]: HTML/JSON scraping breaks
+    when the source page structure changes. Mitigated by normalization + empty
+    fallbacks, but should have monitoring + tests.
+
+MATCH / SCORECARD / COMMENTARY / OVERS / SQUADS / SERIES / TEAMS / PLAYERS — PRESENT.
+  - matches.js includes payload-validity guards (isInvalidSquadsPayload,
+    isInvalidLiveLinePayload), live-line cleaning (cleanLiveLinePayload), manual
+    match merge (mergeManualMatches), and commentary feed builder. Strong
+    normalization + defensive coding.
+
+STREAM ENDPOINTS / GATING — PRESENT.
+  - lib/public-app-state.js: enrichMatchListWithStreams, fetchActiveStreamsForMatch,
+    isLiveStreamingFeatureEnabled, publicStreamDto. Streams gated by a feature flag
+    + active-stream presence. Flutter mirrors this (shouldShowWatchLiveForMatch /
+    hasPlayableStreams). Good end-to-end gating.
+
+ADMIN ENDPOINTS / AUTH — STRONG.
+  - admin/auth.js: bcrypt password hashing, short-lived access JWT (30m) +
+    long-lived hashed refresh token (30d) in httpOnly cookie, login rate limiting
+    (recordFailedLogin/clearLoginAttempts), RBAC (rbac.js getPermissionsForRoles +
+    requirePermissions preHandler). audit.js for action logging.
+  - This is well above typical hobby-project quality.
+
+REDIS CACHE — PRESENT (local-graceful).
+  - lib/redis.js: cacheGet/cacheSet/cacheGetOrFetch + KEYS + TTL. Routes cache via
+    these. NOTE [CONFIRMED locally]: with Redis down locally the server logs
+    ECONNREFUSED 6379 repeatedly but the rankings endpoint STILL served data —
+    confirms cache is non-fatal/optional. -> VERIFY Redis is up in prod for perf.
+
+MYSQL SCHEMA / MIGRATIONS — PRESENT.
+  - db/migrate.js builds tables (admin_users, admin_roles, api_endpoint_rules,
+    api_allowed_origins, players, app_settings, etc.) with idempotent
+    addColumnIfMissing/columnExists helpers. Seeds default app API key + endpoint
+    rules. Good migration discipline. -> VERIFY migrations were run on prod DB.
+
+ERROR HANDLING / NORMALIZATION — GOOD.
+  - Routes return clean success envelopes; rankings returns success:true with
+    empty data + message on provider failure (no 500 leak). Match routes validate
+    and re-shape provider payloads.
+
+SECURITY (BACKEND) — STRONG IN CODE.
+  - middleware/security.js: sqlInjectionProtection, xssProtection,
+    blockSuspiciousIPs, requestSizeLimit, securityHeaders, validateContentType,
+    logSuspiciousActivity. helmet + HSTS + x-powered-by stripped. rate-limit by
+    api-key/ip. bodyLimit 1MB.
+  - Residual concerns: C1 (fallback secrets), C2 (monitor mode), H4 (CORS).
+
+
+================================================================================
+8. ADMIN PANEL REVIEW (admin-panel/)
+================================================================================
+
+AUTH FLOW — SOLID.
+  - lib/api.ts: bearer token in memory/storage + automatic /admin/refresh on 401
+    (single-flight refreshPromise), redirectToLogin guard, ApiError type. silent +
+    noRefresh options for /admin/me. Matches backend cookie-refresh design.
+
+NAVIGATION / FEATURES — BROAD.
+  - app/ routes: dashboard, providers, streams, ads, notifications, manual-matches,
+    matches, players, teams, series, schedule, news, homepage, users, roles,
+    api-keys, api-security, audit-logs, cache, data-control, health, settings,
+    login. This covers essentially all requested admin features.
+
+API CONNECTION — CENTRALIZED.
+  - lib/constants.ts: API_BASE_URL = NEXT_PUBLIC_API_BASE_URL || https://api.webcrichd.co.
+    Single source. Good. -> VERIFY NEXT_PUBLIC_API_BASE_URL set at build in prod.
+
+OBSERVATIONS [CONFIRMED]
+  - Feature folders exist for Providers, Streams, Ads, Notifications, Manual
+    matches, Players, Teams — matching the requested feature set; no major missing
+    admin area detected from the route map.
+  - FORM VALIDATION: not deeply audited line-by-line here; client-side validation
+    quality varies by page. Recommend a focused validation pass (required fields,
+    URL/format checks on stream URLs, image uploads). [PARTIALLY VERIFIED]
+  - The admin panel builds successfully (prior `npm run build` exit 0 in terminal
+    history). [CONFIRMED]
+
+MISSING / TO CONFIRM
+  - 2FA / MFA for admin login not observed in code. Consider for an admin that
+    controls streams + push to all users. [CONFIRMED absence in local code]
+
+
+================================================================================
+9. UI / UX REVIEW
+================================================================================
+
+STRENGTHS [CONFIRMED]
+  - Single design language via CricColors; premium light + dark themes with
+    documented rules (AI_PROJECT_INDEX.md). Stadium-texture handling, glass cards,
+    cyan accents, VS chips, segmented tabs are consistent across screens.
+  - Loading (CircularProgressIndicator/skeletons), empty, and error/retry states
+    exist on the main data screens.
+  - Responsive helpers (context.bp breakpoints, context.sp text scaling,
+    horizontalPadding) handle compact phones up to tablets.
+
+WATCH-OUTS [CONFIRMED]
+  - Light-mode tuning is sensitive (overlay alphas + StadiumImage opacities are
+    finely balanced). Future asset/color changes can regress to "flat white" or
+    "grey scrim" — keep the documented alpha values as the contract.
+  - "Coming soon" placeholders (Highlights list, live commentary, cast, report)
+    are user-visible dead-ends. Track for completion or hide entry points.
+
+NOT VERIFIABLE LOCALLY
+  - Real-device rendering at 360dp, dynamic text scaling, RTL, and actual image
+    loading from the live CDN. -> Visual QA on device.
+
+
+================================================================================
+10. API / DATA REVIEW (cricket-specific logic)
+================================================================================
+
+OVERS FORMATTING — CORRECT [CONFIRMED].
+  - normalizeOversText() documented to convert 19.6 -> 20.0 (6 balls = 1 over);
+    used widely in match_details_screen.dart, live_match_tab.dart, cricket_match.dart.
+  - formatOverLabel() strips trailing ball/sequence ids (tested in
+    test/live_match_tab_layout_test.dart).
+
+COMMENTARY / KEY EVENTS — PRESENT [CONFIRMED].
+  - Backend buildCommentaryFeed (cricbuzz/normalizer.js). Flutter commentary tab
+    renders ball type tones (wicket/six/four/dot/extra), event badges, timeline
+    rail. Recent-balls colors: dot grey, 4 cyan, 6 green, wicket red (correct).
+  - Server trusts normalized isBall/type flags (does not re-guess) — good.
+
+BALL-BY-BALL / SCORECARD — PRESENT.
+  - Scorecard panel with innings selector, batting/bowling tables, expandable
+    sections; SR/Econ formatted to one decimal (tested).
+
+TEAM LOGO / PLAYER IMAGE — CENTRALIZED FALLBACKS [CONFIRMED].
+  - Priority Admin -> Provider -> initials. Backend enrichTeamLogos +
+    enrichPlayerImages preSerialization hooks; Flutter TeamLogoWidget /
+    PlayerAvatarWidget mirror it. resolveCricbuzzImageUrl builds provider URLs.
+
+RANKINGS / SERIES / POINTS TABLE / PROFILES — PRESENT.
+  - Rankings: men + women, teams/batting/bowling/allrounder, test/odi/t20, real
+    API (verified live: women teams ODI=14, T20=79, Test=0 clean-empty).
+  - Series detail (overview/matches/squads/stats), player + team profiles wired.
+
+DATA RISKS [CONFIRMED]
+  - Provider scraping fragility (Cricbuzz HTML/JSON) is the single biggest data
+    risk. Add parser regression tests + alerting.
+  - Dual model files (H2) could cause one screen to parse a field differently
+    than another. Consolidate.
+
+
+================================================================================
+11. SECURITY REVIEW
+================================================================================
+
+CONFIRMED FROM CODE
+  - GOOD: bcrypt, JWT access+refresh, httpOnly refresh cookie, login rate limit,
+    RBAC permissions, helmet/HSTS, SQLi/XSS/IP/size middleware, x-powered-by
+    stripped, 1MB body limit, API-security layer with per-endpoint rules +
+    origin allowlist + client-type checks.
+  - RISK C1: fallback jwtSecret 'dev-secret-change-in-production' and committed
+    default public API key. Critical IF server doesn't override.
+  - RISK C2: api-security DEFAULT_MODE='monitor' allows unkeyed traffic until
+    flipped to 'enforce'.
+  - RISK H4: CORS_ORIGIN '*' template + credentials:true dynamic CORS.
+  - RISK M4/M5: default admin seed password placeholder; Swagger UI registered.
+  - app exposes a shared public API key by design (acceptable, low value as a gate).
+
+NO EVIDENCE OF
+  - Hardcoded private provider keys, DB creds, or OneSignal REST key in committed
+    code (they live in .env, which is correctly gitignored). GOOD.
+
+ACTIONS
+  - Treat C1/C2/H4/M4/M5 as a server-config checklist (section 13).
+
+
+================================================================================
+12. PERFORMANCE REVIEW
+================================================================================
+
+CONFIRMED FROM CODE
+  - Backend: Redis cache (cacheGetOrFetch) with TTLs; match-index in-memory
+    summaries; rate limiting; bodyLimit. Sound caching strategy.
+  - Flutter: CricketRepository in-memory TTL cache reduces refetches; FutureBuilder
+    keyed rebuilds; AnimatedSwitcher for tab transitions; scroll/tab restoration
+    after polling.
+
+WATCH-OUTS [CONFIRMED]
+  - Polling diff uses jsonEncode on full payloads each tick (O(payload)). Fine now;
+    revisit for large live payloads or many concurrent timers.
+  - Provider scraping responses can be large; ensure server-side caching TTLs are
+    tuned (visible in code; live values -> VERIFY).
+  - Legacy cricket-api/lib Flutter tree (H1) is dead weight in the repo.
+
+NOT VERIFIABLE LOCALLY
+  - Real p95 latency, Redis hit-rate, MySQL query plans, concurrent WS load
+    (WS_MAX_CONNECTIONS=50000 in template). -> Load test on server.
+
+
+================================================================================
+13. SERVER-SIDE ITEMS TO VERIFY MANUALLY (NOT confirmed bugs)
+================================================================================
+These cannot be proven from local code. Do NOT treat as confirmed failures.
+
+V1.  Real backend .env present on server with strong values:
+       - JWT_SECRET set to a long random value (NOT 'dev-secret-change-in-production').
+       - APP_PUBLIC_API_KEY rotated (NOT the committed 'csk_live_...').
+       - DB creds, REDIS_PASSWORD, CRICKETDATA_API_KEY, ONESIGNAL_REST_API_KEY set.
+V2.  API_SECURITY_MODE / app_settings.apiSecurityMode = 'enforce' in production
+     (code default is 'monitor' = open).
+V3.  CORS: CORS_ORIGIN not '*'; api_allowed_origins table populated with only the
+     real app/admin origins; credentials:true paired with explicit origins.
+V4.  PM2: process name(s), startup/restart on reboot, log rotation. (No
+     ecosystem.config.js in repo — confirm one exists on server or PM2 is
+     configured manually.)
+V5.  Nginx reverse proxy: api.webcrichd.co + admin.webcrichd.co routing, gzip,
+     timeouts, websocket upgrade headers for /ws.
+V6.  SSL: valid certs + auto-renew (Let's Encrypt) on both domains.
+V7.  Redis: running + reachable in prod (local showed ECONNREFUSED 6379, expected).
+V8.  MySQL: reachable + migrate.js applied (all tables/seeds present).
+V9.  Admin panel deployment: NEXT_PUBLIC_API_BASE_URL set at build; served/SSL'd.
+V10. Admin seed password changed from template default.
+V11. Swagger UI disabled or auth-gated in production.
+V12. Server logs reviewed for repeated provider-parse failures / 5xx.
+V13. Production health endpoints (/health) green; metrics (:9090) firewalled.
+V14. Cache invalidation working in prod (admin edits to teams/players/streams
+     invalidate the right keys; code has invalidate hooks — confirm live effect).
+V15. OneSignal: real ONESIGNAL_APP_ID in the release app build (--dart-define) and
+     REST key on server; deep links open correct screens.
+V16. Release Flutter build injects --dart-define for CRICKET_API_KEY,
+     CRICKET_PACKAGE_NAME (real bundle id, not com.example.*), CRICKET_APP_VERSION.
+
+
+================================================================================
+14. RECOMMENDED FIX ORDER
+================================================================================
+
+PHASE 1 — Confirmed local critical/high (code hygiene + security defaults)
+  - C1: Remove/rotate committed fallback secrets; make JWT_SECRET fail-fast if
+        unset in production rather than defaulting.
+  - H1: Remove the legacy cricket-api/lib Flutter tree from the backend folder.
+  - H2/L1: Consolidate the duplicate model layers (api_models.dart vs
+        models/api_models.dart) into one source of truth.
+  - H3: Ensure release builds inject real --dart-define values.
+
+PHASE 2 — Data / API correctness
+  - Add parser regression tests for Cricbuzz rankings/scorecard/commentary.
+  - Add provider-failure alerting/monitoring.
+  - Confirm overs/commentary/key-event filters against a few live matches.
+
+PHASE 3 — Flutter UI/UX polish
+  - Replace or hide "coming soon" entry points (Highlights, cast, report).
+  - On-device visual QA (light/dark, 360dp, image loading).
+  - Fix mojibake comments (L2).
+
+PHASE 4 — Admin / backend improvements
+  - Add focused form validation pass (stream URLs, uploads, required fields).
+  - Consider admin 2FA/MFA.
+  - Gate or disable Swagger UI in prod (M5).
+  - Expand backend test coverage (M6).
+
+PHASE 5 — Server verification checklist
+  - Work through section 13 (V1–V16) on the live server.
+
+PHASE 6 — Cleanup / testing
+  - Remove stray asset (M1) + prune root *.patch/*.md clutter (M2).
+  - Add CI running flutter analyze (scoped to lib/) + flutter test + backend
+    node --test + admin tsc build.
+
+
+================================================================================
+15. FILES / DIRECTORIES THAT NEED MOST ATTENTION
+================================================================================
+  1. cricket-api/lib/                      legacy duplicate Flutter app (remove).
+  2. lib/api_models.dart  +  lib/models/api_models.dart   duplicate models (merge).
+  3. cricket-api/src/config/index.js       fallback jwtSecret default (harden).
+  4. cricket-api/src/db/migrate.js         committed default public API key.
+  5. cricket-api/src/lib/api-security.js   default 'monitor' mode (flip in prod).
+  6. cricket-api/src/providers/cricbuzz/   scraping fragility (test + monitor).
+  7. lib/core/api/api_config.dart          example package name + default key.
+  8. cricket-api/.env.example              CORS '*', placeholder secrets (template only).
+  9. Repo root                              *.patch/*.md/.html clutter; stray PNG in src.
+
+
+================================================================================
+16. FINAL RECOMMENDATION
+================================================================================
+The local codebase is in GOOD shape and clearly built to a production standard:
+strong theming, a clean provider/repository architecture, RBAC admin auth, an
+API-security layer, Redis caching, and correct cricket-domain logic (overs
+normalization, image fallbacks, stream gating, real men/women rankings).
+
+No confirmed runtime-breaking bug was found purely in local code. The most
+important CONFIRMED items are hygiene/safety-default risks that are only
+dangerous if the production server does not override them: committed fallback
+secrets (C1), default 'monitor' API-security mode (C2), and wide CORS template
+(H4). The clearest pure-code cleanups are the duplicate legacy Flutter tree (H1)
+and the duplicated model files (H2).
+
+Recommended path: do Phase 1 code hygiene, then walk the section-13 server
+checklist to confirm the production overrides are in place. If C1/C2/H4 are
+already overridden on the server (very likely, given the live deployment), the
+project's effective risk drops to MEDIUM/LOW and it is in solid release shape.
+
+NOTE: No code was modified during this review. This file is the only artifact
+created.
+================================================================================
+END OF REPORT
+================================================================================
+
+
+
+

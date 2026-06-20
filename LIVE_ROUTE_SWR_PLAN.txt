@@ -1,0 +1,110 @@
+================================================================================
+LIVE ROUTE STALE-WHILE-REVALIDATE (SWR) PLAN  —  PLAN ONLY, DO NOT IMPLEMENT YET
+Generated: 2026-06-12
+Prereq: TTL 8s patch proven stable in production (see
+        LIVE_SCORE_PRODUCTION_VERIFY_CHECKLIST.txt). This is Step 3 of the order
+        in LIVE_SCORE_PERFORMANCE_AUDIT.txt. Steps done: 1 dedupe, 2 TTL 8s.
+================================================================================
+
+GOAL
+   Serve cached live data INSTANTLY, refresh in background → user never waits on
+   provider latency = the "Cricbuzz instant" feel. Without serving stale data
+   that is too old to be correct for a live match.
+
+CORE IDEA
+   Today cacheGetOrFetch: cache hit → return; miss → block on provider fetch.
+   SWR adds a middle state: cache is EXPIRED but within a tight STALE WINDOW →
+   return the stale value NOW + trigger ONE background refresh (deduped). Past
+   the stale window → behave exactly as today (block + fetch fresh).
+
+   Two timestamps per entry: fresh-until (ttl) and stale-until (ttl + window).
+     age < ttl                 → fresh hit (as today)
+     ttl <= age < ttl+window   → STALE hit: return stale, refresh in background
+     age >= ttl+window         → MISS: block + fetch (as today)
+
+--------------------------------------------------------------------------------
+DESIGN (no code yet — shape of the change)
+--------------------------------------------------------------------------------
+1. NEW HELPER in redis.js, additive, does NOT change cacheGetOrFetch:
+     cacheGetOrFetchSWR(key, ttl, staleWindow, fetchFn)
+   - Store value with a longer physical Redis TTL = ttl + staleWindow, plus an
+     embedded "freshUntil" timestamp inside the cached envelope (or a sibling
+     key `<key>:meta`). Logical freshness checked in app, physical expiry is the
+     hard stale ceiling so truly-old data auto-evicts.
+   - On read:
+       * no value (physically expired past stale window) → block fetch (today's
+         path), store, return { data, fromCache:false }.
+       * value present + age < ttl → return { data, fromCache:true }.
+       * value present + ttl <= age < ttl+staleWindow → return
+         { data, fromCache:true, stale:true } immediately AND fire background
+         refresh via runDeduped(key, fetchFn) — NOT awaited.
+   - Background refresh uses EXISTING runDeduped so 100 stale hits → 1 refresh.
+   - Errors in background refresh: swallow + log, keep serving stale until
+     physical expiry. Foreground (hard miss) errors propagate as today.
+
+2. RESPONSE SHAPE UNCHANGED:
+   Routes destructure `{ data }` only. SWR returns same { data, fromCache } —
+   add optional `stale` flag but routes ignore it. NO route signature change,
+   NO client/Flutter change. (Optional: expose stale in meta later, not now.)
+
+3. TIGHT STALE WINDOW FOR LIVE DATA (the safety knob):
+   Live data must never be served very old. Recommended windows (conservative):
+     - matches:live (ttl 8s)         → staleWindow 4s   (max served age 12s)
+     - live-line     (ttl 5s)        → staleWindow 3s   (max age 8s)
+     - scorecard     (ttl 5s)        → staleWindow 3s   (max age 8s)
+     - commentary    (ttl 5s)        → staleWindow 3s   (max age 8s)
+     - match detail  (ttl 15s)       → staleWindow 5s   (max age 20s)
+   Rule of thumb: staleWindow <= ttl (NOT ttl*4 like admin data-control, which is
+   for slow data). Cap absolute served age well under what a viewer would notice
+   as "stuck". Make windows constants in redis.js (e.g. SWR_WINDOW.*).
+
+4. WHICH ROUTES GET SWR (live only, opt-in per call site):
+   Apply by switching specific call sites from cacheGetOrFetch →
+   cacheGetOrFetchSWR. Start with ONE (matches:live or live-line), verify, then
+   extend. Do NOT auto-apply globally (slow data like series/players must keep
+   plain behavior or use long windows).
+
+--------------------------------------------------------------------------------
+TESTS (node --test, no live Redis needed — same style as redis.test.js)
+--------------------------------------------------------------------------------
+   Unit-test the SWR decision logic (extract pure age→state fn if helpful):
+   1. age < ttl → returns cached, NO background fetch fired.
+   2. ttl <= age < ttl+window → returns STALE cached immediately AND fires exactly
+      ONE background fetch (assert fetch called once, return latency ~0).
+   3. age >= ttl+window → blocks, fetch called, fresh returned.
+   4. concurrent stale hits → background fetch runs ONCE (via runDeduped).
+   5. background fetch error → still serves stale, no throw to caller; next call
+      after physical expiry re-fetches.
+   6. response shape identical: `{ data }` present in all paths.
+   Keep cacheGetOrFetch's existing 4 tests green (must be untouched).
+
+--------------------------------------------------------------------------------
+ROLLBACK PLAN
+--------------------------------------------------------------------------------
+   - SWR is a SEPARATE helper + per-call-site opt-in. Rollback = switch the
+     affected call sites back to cacheGetOrFetch (revert the route line). No data
+     migration, no schema change.
+   - If only one route was switched, revert is one line.
+   - Physical Redis TTL change (ttl+window) is harmless on rollback — keys just
+     expire normally.
+   - Trigger rollback if: stale data visibly wrong/old to users, background
+     refreshes still spike provider (dedupe misconfig), or error rate rises.
+
+--------------------------------------------------------------------------------
+ORDER OF EXECUTION (when approved)
+--------------------------------------------------------------------------------
+   1. Add cacheGetOrFetchSWR + SWR_WINDOW constants (additive, no behavior change
+      until used). Ship with tests. Verify suite green.
+   2. Switch ONE live route (suggest live-line: highest poll rate, smallest
+      payload, clearest win). Deploy. Verify with checklist (provider calls/min,
+      staleness vs cricbuzz, no spike).
+   3. If stable, extend to scorecard, commentary, matches:live one at a time.
+   4. Match detail (15s) last, only if needed.
+   NEVER: skip the per-route verify between steps. NEVER widen stale window past
+   ttl for live data. NEVER add SWR to TTL reduction in the same deploy.
+
+   STILL DEFERRED AFTER SWR: TTL 8s→5s, PM2 cluster, WebSocket/SSE.
+
+================================================================================
+END
+================================================================================

@@ -1,0 +1,149 @@
+================================================================================
+CRICPRO / CRICKET-LIVE — APP BEHAVIOR FIX REPORT
+File: APP_BEHAVIOR_FIX_REPORT.txt
+Generated: 2026-06-12
+Scope: behavior/data/perf bugs. No redesign. UI preserved except bug fixes.
+================================================================================
+LEGEND: FE=Flutter-only fix, BE=backend change, ADMIN=admin change.
+RISK: LOW/MED/HIGH.
+
+================================================================================
+BUG 1 — Player/ranking pics show initials too early
+================================================================================
+ROOT CAUSE:
+  - Rankings endpoint does NOT enrich entries w/ admin/provider player images.
+    cricket-api/src/routes/rankings.js returns provider rows raw. Cricbuzz
+    rankings HTML parse usually has NO image -> RankingEntry.imageUrl empty.
+  - Flutter rankings_screen.dart:558 shows _Initial when image null/empty.
+    Logic is correct (network-first, initials on null/error) — the DATA is missing.
+  - server.js:251 enrichPlayerImages runs in preSerialization, but matches
+    players by image-key/id; ranking rows lack a usable id->admin-image match.
+FILES: cricket-api/src/routes/rankings.js, src/lib/player-images.js,
+  lib/screens/rankings/rankings_screen.dart:558, lib/components.dart RankingAvatar,
+  lib/api_models.dart RankingEntry (imageUrl exists ~1139/1182).
+PROPOSED FIX (BE): in rankings route, enrich each entry — if entry has playerId,
+  look up admin player image (player-images index) and provider headshot; set
+  imageUrl with priority admin > provider > none. Keep initials fallback in FE.
+RISK: MED (backend, provider-shape dependent). FE-only NOT enough.
+NOTE: player stats in player_detail come from API (no hardcoded sample found).
+
+================================================================================
+BUG 2 — Pull-to-refresh / retry serves stale cache
+================================================================================
+ROOT CAUSE: cricket_repository.dart:_cached() — on forceRefresh=true it skips
+  TTL check (good) but if the fresh fetch THROWS, catch returns old cached value
+  (line 321) even on a forced refresh. Also stale entry not cleared. After
+  offline->online, a failed first attempt re-serves stale data, feels stuck.
+  Screens already pass forceRefresh=true on pull/retry (verified home/matches/
+  schedule/rankings/match_details) — so fix is at repo layer.
+FILES: lib/repositories/cricket_repository.dart:305-324.
+PROPOSED FIX (FE): on forceRefresh, remove stale entry first; on fetch error
+  during forceRefresh, do NOT serve stale — rethrow so retry UI shows + next
+  retry hits network. Non-forced reads keep stale-on-error (resilient).
+RISK: LOW.
+
+================================================================================
+BUG 3 — Live Player light mode still dark
+================================================================================
+ROOT CAUSE: hardcoded dark colors not branching on c.isDark.
+FILES:line:
+  live_player_sheets.dart:335-336,443-444,558-559,791-792 — dark navy gradients
+    (0xff0a1929 / 0xff0f2744) for quality panel + bottom sheets, ignore light.
+  live_player_sheets.dart:230,303,357,592,610 — Colors.white text/icon uncond.
+  live_player_sheets.dart:141,170-172 — fullscreen scaffold black + black
+    control scrim (fullscreen video chrome — KEEP dark, acceptable).
+  live_player_info.dart:281,283 — match info card dark navy gradient (0xff071528/
+    0xff0b2b4a) ignores light.
+  live_player_surface.dart:70,89-91 — video placeholder/vignette black (KEEP —
+    video surface allowed dark).
+ALREADY CORRECT: live_player_streams.dart quality cards use c.card/c.text/c.muted.
+PROPOSED FIX (FE): wrap dark gradients + white text in c.isDark ? darkValue :
+  lightValue (use c.card/c.surface for panels, c.text for text). Leave the VIDEO
+  surface + fullscreen video chrome dark (correct). Dark mode unchanged.
+RISK: MED (visual; needs light+dark QA).
+
+================================================================================
+BUG 4 — Stream should default to SD, not FHD
+================================================================================
+ROOT CAUSE: live_player_screen.dart:644-650 defaultQuality picks FHD>HD>SD
+  (highest first).
+FILES: lib/screens/live/live_player_screen.dart:637-658.
+PROPOSED FIX (FE): reverse priority — SD>HD>FHD (lowest first); fall back to
+  lowest-rank concrete variant else qualities.first. Inline+fullscreen already
+  share _selectedQuality state (verified). User can still switch up manually.
+RISK: LOW.
+
+================================================================================
+BUG 5 — Quality card labels wrong (want SD 288p / HD 480p / FHD 720p)
+================================================================================
+ROOT CAUSE: live_player_streams.dart:194-216 tier resolution fallbacks =
+  720p/480p/360p; FHD card can show real parsed height (e.g. 1080p) from HLS.
+  Spec wants fixed display labels SD 288p / HD 480p / FHD 720p.
+FILES: lib/screens/live/widgets/live_player_streams.dart:186-217;
+  display at :362/:373; sheets.dart:918/927 (inline menu label/resolution).
+PROPOSED FIX (FE): set tier resolution display to fixed SD=288p, HD=480p,
+  FHD=720p (display-only). Keep actual stream URL/height internal for playback.
+  Inline selector continues listing all backend qualities (no URL filtering
+  change). Cards only render when matching variant exists (already disabled-on-null).
+RISK: LOW (display label only, no playback change).
+
+================================================================================
+BUG 6 — Match Details tab jumps / reverts
+================================================================================
+ROOT CAUSE A (Info->Live jump): _maybeApplyInitialTab (match_details_screen.dart
+  :113-144) defers initial Live-tab switch to post-frame -> user sees Info first,
+  then jump. Guarded by _userPickedTab/_initialTabApplied (runs once) — acceptable
+  but jump is visible.
+ROOT CAUSE B (tab reverts on tap): _restoreScrollAndTab:311-328 forces
+  setState(tab=oldTab) where oldTab captured at poll/refresh START (line 271/204).
+  If user taps a new tab while a 5s poll is mid-flight, post-frame restore reverts
+  to the old tab. `tab` is a plain field NOT reset by rebuild, so forcing it back
+  is unnecessary AND harmful.
+FILES: match_details_screen.dart:113-144,200-238,261-309,311-328.
+PROPOSED FIX (FE):
+  B (primary): in _restoreScrollAndTab, only restore SCROLL offset, NOT tab. Drop
+    the forced tab=oldTab (or guard with _userPickedTab). Tab persists naturally.
+  A: set initial tab synchronously when first summary known (before first paint)
+    if feasible; else accept minor. Lower priority than B.
+RISK: LOW-MED (B is the real bug; isolate to scroll-only restore).
+
+================================================================================
+BUG 7 — Perf / dup requests / poll cost
+================================================================================
+ROOT CAUSE:
+  1. No in-flight dedup in _cached() -> concurrent same-key calls double-fetch.
+  2. Polling uses jsonEncode(full payload) diff every 5s (match_details:330-333,
+     home/matches/live similar) -> O(n) serialize of big payloads.
+  3. match_details poll always _restoreScrollAndTab even when only scroll matters.
+FILES: cricket_repository.dart:305-324; *_screen.dart poll methods;
+  match_details_screen.dart:330-333.
+PROPOSED FIX (FE):
+  - Add _inflight map in _cached(): non-forced concurrent same-key share Future.
+  - Keep jsonEncode diff for now (correctness) BUT note; optional lightweight
+    field compare later. Low risk to leave.
+  - Tie scroll-only restore from BUG 6 fix.
+RISK: LOW (dedup), defer heavy poll-diff rewrite.
+
+================================================================================
+BUG 8 — Hardcoded data audit
+================================================================================
+FINDING: NO hardcoded production data in lib/.
+  - lib/data/mock_*.dart marked MOCK, NOT imported by production screens/repos.
+  - api_models.dart Cricbuzz image URL TEMPLATE + known team-id/flag maps =
+    safe provider/asset mappings, not data.
+  - featured matches/series come from /app/home API (home_feed.dart config), not literals.
+  - admob test ad-unit ids = documented test fallback.
+VERDICT: CLEAN. Keep as safe fallbacks. No move needed.
+RISK: none.
+
+================================================================================
+EXECUTION ORDER (analyze+test after each batch)
+================================================================================
+  Batch A (FE, LOW): BUG 2 repo refresh, BUG 6 tab restore, BUG 4 SD default,
+    BUG 5 labels, BUG 7 in-flight dedup.
+  Batch B (FE, MED): BUG 3 light mode (light+dark QA).
+  Batch C (BE, MED): BUG 1 rankings image enrichment.
+  BUG 8: no action (clean).
+================================================================================
+END
+================================================================================

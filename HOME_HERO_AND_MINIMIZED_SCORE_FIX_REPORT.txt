@@ -1,0 +1,190 @@
+================================================================================
+HOME HERO + MINIMIZED SCORE — STATE/UPDATE BUG FIX REPORT (PHASE 1)
+================================================================================
+App: CricPro (Flutter, package cricpro_flutter)
+Date: 2026-06-15
+Scope: state/update behavior only. NO redesign, NO color/spacing/layout change.
+
+--------------------------------------------------------------------------------
+1. HOW HOME HERO CAROUSEL IS CURRENTLY BUILT
+--------------------------------------------------------------------------------
+- Widget: _HeroMatchCarousel (StatefulWidget) in lib/screens/home/widgets/home_hero.dart:3
+- PageController: State field `_controller` (home_hero.dart:25), created ONCE lazily
+  via `_controller ??= PageController(...)` (home_hero.dart:58). Never recreated.
+  Disposed at :30. -> Controller itself is STABLE. Good.
+- Current page var `_current` (home_hero.dart:26), updated only in onPageChanged
+  (home_hero.dart:72). -> Preserved across rebuilds. Good.
+- NO auto-play timer. NO animateToPage/jumpToPage anywhere. Paging = user swipe only.
+- Body is a FutureBuilder on `widget.future` (home_hero.dart:39). Items = snapshot
+  data .take(5) (home_hero.dart:53). Looping uses modulo: realIndex = index %
+  items.length (home_hero.dart:75).
+- Items have NO Key (home_hero.dart:74-98). Positional only.
+- Parent HomeScreen reassigns `_heroFuture` (= new Future.value(freshHero)) at:
+  initState :143, _refresh :591, _refreshHeroSilently :790, _overlayFastLiveScores :888.
+
+--------------------------------------------------------------------------------
+2. WHY CAROUSEL SLIDES/JUMPS ON SCORE UPDATE  (BUG 1 — ROOT CAUSE)
+--------------------------------------------------------------------------------
+The carousel controller/index are stable. The jump comes from the DATA changing
+ORDER/IDENTITY beneath a position-based (modulo) PageView:
+
+ROOT CAUSE A (primary): _refreshHeroSilently (home_screen.dart:758) calls
+  _resolveHero(forceRefresh:true) on every membership tick. _resolveHero re-runs
+  _prioritiseHero (:311) + (on fallback) _loadHero aggregation (:488). This can
+  REORDER the hero list (favourite float, live-first sort, dedup order). The
+  PageView maps the CURRENT page number through `index % items.length`; if the
+  list order changes, the SAME page number now points to a DIFFERENT match — the
+  visible card appears to slide/jump even though _controller never moved.
+
+ROOT CAUSE B: even when content is identical, _refreshHeroSilently swaps in a brand
+  new `Future.value(freshHero)` (:790). FutureBuilder rebuilds; because items carry
+  NO id-based Key, Flutter reuses element slots positionally. With looping
+  (itemCount = items.length*2000, initialPage = length*1000) any change in
+  items.length shifts every realIndex -> jump.
+
+ROOT CAUSE C: _overlayFastLiveScores (:808) also reassigns _heroFuture every tick
+  when score changed (:888). It preserves ORDER (maps over existing _heroData), so
+  it is safe for order, but still rebuilds FutureBuilder; combined with no keys it
+  can still cause the AnimatedBuilder scale/opacity transform to re-fire a frame.
+
+Net: score updates funnel through full hero-list reassignment + reorder, and the
+modulo PageView has no stable per-match key to hold position by identity.
+
+--------------------------------------------------------------------------------
+3. WHY HERO MATCH APPEARS IN BELOW LIST FIRST  (BUG 2 — ROOT CAUSE)
+--------------------------------------------------------------------------------
+- Below list excludes hero by `_heroIds` set (home_screen.dart:115, passed to
+  _HomeMatchList.excludeIds :400 and _UpcomingMatchesSection :417; filtered at
+  home_match_cards.dart:195).
+- `_heroIds` starts EMPTY (`const <String>{}` :115). It is populated ONLY when the
+  `_heroFuture` resolves, inside _captureHeroIds (:173-186).
+- The list future (_tabFuture / _tabData via _loadTabMatches :144) resolves on a
+  SEPARATE, faster path. Hero resolution is chained behind the slower enriched
+  `/app/home` feed: _resolveHero (:231) awaits _loadFeed THEN _overlayLiveScores
+  which awaits up to 3 matchesForTab calls (:274-276).
+- WINDOW: list paints with excludeIds STILL EMPTY -> hero match shows as a list
+  card. A few seconds later _heroFuture resolves, _heroIds fills, setState repaints,
+  card disappears from list (it "moves" into hero). That is the reported bug.
+- Also note: only the PRIMARY hero id is excluded (:183), by design (so other
+  carousel matches still list). Keep that behavior.
+
+--------------------------------------------------------------------------------
+4. HOW MINIMIZED SCORE STATE IS CURRENTLY STORED
+--------------------------------------------------------------------------------
+- MinimizedScoreController (ChangeNotifier singleton) in
+  lib/widgets/minimized_score_bar.dart:16. Holds CricketMatch? _activeMatch (:20).
+- show(match) :27, update(match) :36 (no-op unless same id), clear() :44.
+- Mounted in RootShell bottom Column via AnimatedBuilder (main.dart:568-581).
+- Fed ONLY from match_details_screen.dart:370 (`update()` inside its poll loop) and
+  shown from match_details_screen.dart:459 (minimize button).
+
+--------------------------------------------------------------------------------
+5. WHY MINIMIZED SCORE DOES NOT UPDATE  (BUG 3 — ROOT CAUSE)
+--------------------------------------------------------------------------------
+- `update()` is called from ONE place: the MatchDetails silent poll
+  (match_details_screen.dart:370). That poll's Timer is owned by
+  _MatchDetailsScreenState and is CANCELLED on dispose (when the user leaves match
+  details / minimizes + pops).
+- So once minimized, NOTHING polls fresh data for the bar. The Home poll
+  (_silentPoll / _overlayFastLiveScores) NEVER touches MinimizedScoreController.
+- Result: bar shows the frozen snapshot captured at show() time.
+- RootShell (_RootShellState main.dart:270) is a plain State with NO lifecycle
+  observer and NO timer — there is no existing app-shell polling to piggyback on.
+- CricProApp (main.dart:64) HAS WidgetsBindingObserver — usable reference, but the
+  cleanest fix is a small self-contained poller inside the controller.
+
+--------------------------------------------------------------------------------
+6. EXACT FILES INVOLVED
+--------------------------------------------------------------------------------
+BUG 1 (carousel jump):
+  - lib/screens/home/widgets/home_hero.dart  (add id-based PageStorageKey/keys;
+    track visible match by id; do not depend on positional modulo when list changes)
+  - lib/screens/home/home_screen.dart (_refreshHeroSilently: preserve order; only
+    overlay scores onto existing hero order, never reorder on silent poll)
+BUG 2 (first-load duplication):
+  - lib/screens/home/home_screen.dart (compute hero id snapshot synchronously /
+    gate list rendering until hero ids known, or derive both from one snapshot)
+BUG 3 (minimized stale):
+  - lib/widgets/minimized_score_bar.dart (add a dedicated poll controller using
+    CricketRepository.liveScores([id]) every ~5s; lifecycle pause/resume; stop on
+    clear / non-live)
+  - lib/main.dart (RootShell: drive controller lifecycle, or controller self-manages)
+
+REUSE (no edit): cricket_repository.dart (liveScores :37, matchDetail :54),
+  cricket_match.dart (mergeLiveScore :84), home_featured.dart (homeVisibleScoreKey :789).
+
+--------------------------------------------------------------------------------
+7. SAFE FIX PLAN
+--------------------------------------------------------------------------------
+PHASE 2 — Carousel stability (BUG 1):
+  a) Give each PageView item a STABLE id-based key (ValueKey(match.id)) so Flutter
+     holds element identity by match, not slot position.
+  b) Track the currently-visible match BY ID in _HeroMatchCarousel. On didUpdateWidget
+     (new items), if the previously-visible matchId still exists, KEEP showing it:
+     if its index changed, silently re-seat the controller to that match's page
+     WITHOUT animation (jumpTo via controller, no animateToPage). If the matchId is
+     gone, clamp to nearest valid index.
+  c) Stop _refreshHeroSilently from REORDERING on silent polls: preserve previous
+     hero order, overlay only score/status by id (same approach already used by
+     _overlayFastLiveScores). Do NOT re-run _prioritiseHero on silent refresh —
+     only on user refresh / initial load / membership change.
+  d) Gate hero Future reassignment: only swap _heroFuture when the hero MEMBERSHIP
+     (id set/order) changes; for pure score change, mutate the existing items in
+     place keyed by id so the visible card updates text without list reset.
+
+PHASE 3 — First-load split (BUG 2):
+  a) Derive heroIds from the SAME data the list uses, as early as possible. Either:
+     (i) hold list rendering behind a combined "first snapshot ready" gate showing
+     skeletons, OR (ii) compute a provisional primary hero id synchronously from the
+     first available match data so excludeIds is non-empty on first list paint.
+  b) Ensure list filter always excludes the resolved primary hero id; never render a
+     hero-selected match in the list. Keep skeletons during initial load (already
+     present, home_match_cards.dart:181, home_hero.dart:45).
+  c) Do not block hero/list placement on logo/feed enrichment — decide placement from
+     match ids immediately, enrich visuals after.
+
+PHASE 4 — Minimized live update (BUG 3):
+  a) Add a private poller to MinimizedScoreController: when show(match) and match
+     isLive, start Timer.periodic(~5s) -> repository.liveScores([id]) -> if fresh
+     score key differs, update() (merge) + notify. Reuses in-flight backend cache;
+     liveScores already de-duped server-side (~4s).
+  b) Stop the timer on: clear(), match no longer live (isFinished/terminal), and app
+     background. Resume on foreground if still live. Hook lifecycle via a lightweight
+     WidgetsBindingObserver inside the controller (registered on first show, removed
+     when idle) OR via CricProApp's existing observer (main.dart:108).
+  c) On fetch failure: keep last good score, no error UI in the compact bar.
+  d) Rebuild ONLY the bar (already isolated via AnimatedBuilder main.dart:568).
+  e) If MatchDetails is open for the same match, its poll still calls update() — the
+     controller's own poll and that path both funnel through update() (same-id guard),
+     no duplication of visible state. To avoid double network calls, the controller
+     poll can skip a tick if a recent update() arrived (track lastUpdate time).
+
+--------------------------------------------------------------------------------
+8. RISK LEVEL
+--------------------------------------------------------------------------------
+- BUG 1 fix: MEDIUM. Touches carousel seat logic + hero refresh path. Risk of a
+  one-time re-seat flicker if mis-sequenced. Mitigated by jumpTo (no animation) and
+  keying by id. Must verify looping math (initialPage = length*1000) still centers.
+- BUG 2 fix: LOW-MEDIUM. Changing when excludeIds becomes known. Risk: over-hiding if
+  a provisional id is wrong; mitigated by using the same resolved primary id rule.
+- BUG 3 fix: LOW. New isolated poller in controller; bar already isolated. Main risk =
+  timer leak; mitigated by stop-on-clear/terminal/background + dispose safety.
+- No design/color/layout/spacing changes. No data model changes.
+
+--------------------------------------------------------------------------------
+9. TEST PLAN
+--------------------------------------------------------------------------------
+Automated (each phase): flutter analyze lib/  ;  flutter test
+Final: flutter build apk --release --target-platform android-arm64 --analyze-size
+Manual:
+  - Home live match: watch hero 2-5 min untouched -> score updates, NO slide/jump.
+  - Swipe hero to a card -> stays on it across score updates.
+  - Cold open Home -> hero match NEVER appears in below list; list excludes it.
+  - Open MatchDetails -> minimize -> stay on Home 2-5 min -> minimized score updates.
+  - Tap minimized bar -> correct match opens. Close (X) -> polling stops.
+  - Background then foreground -> minimized polling resumes if still live.
+  - No blink, no tab reset, no scroll jump.
+
+================================================================================
+END REPORT — awaiting go-ahead for PHASE 2.
+================================================================================
