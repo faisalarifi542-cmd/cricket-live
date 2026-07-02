@@ -8,6 +8,7 @@ import {
   fetchTeamByProviderId,
   fetchMatchByProviderId,
 } from '../../lib/provider-fetch.js';
+import providerManager from '../../providers/provider-manager.js';
 import axios from 'axios';
 
 const TEST_PATHS = [
@@ -70,6 +71,7 @@ export default async function providerRoutes(fastify) {
         ),
     );
     const row = await query(`SELECT * FROM api_providers WHERE id = ?`, [r.insertId]);
+    providerManager.invalidateConfig();
     return reply.code(201).send({ success: true, data: cleanProvider(row[0]) });
   });
  
@@ -92,6 +94,7 @@ export default async function providerRoutes(fastify) {
     );
     const row = await query(`SELECT * FROM api_providers WHERE id = ?`, [id]);
     await clearProviderCache(id);
+    providerManager.invalidateConfig();
     return { success: true, data: cleanProvider(row[0]) };
   });
  
@@ -104,6 +107,7 @@ export default async function providerRoutes(fastify) {
       { action: 'provider.delete', entityType: 'api_provider', entityId: id, oldValue: old[0] },
       async () => query(`DELETE FROM api_providers WHERE id = ?`, [id]),
     );
+    providerManager.invalidateConfig();
     return { success: true };
   });
 
@@ -219,6 +223,7 @@ export default async function providerRoutes(fastify) {
     const next = rows[0].is_active ? 0 : 1;
     await query(`UPDATE api_providers SET is_active = ? WHERE id = ?`, [next, request.params.id]);
     await clearProviderCache(request.params.id);
+    providerManager.invalidateConfig();
     return { success: true, is_active: !!next };
   });
 

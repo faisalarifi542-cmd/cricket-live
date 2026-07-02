@@ -1,5 +1,6 @@
 import { getRedis } from './redis.js';
 import { query } from './db.js';
+import logger from './logger.js';
 import providerManager from '../providers/provider-manager.js';
 import { ensureDefaultProvider } from '../admin/provider-seed.js';
 // Phase 1a — cross-process single-flight lock + provider-fallback budget.
@@ -288,7 +289,18 @@ export async function controlledFetch({
       if (staleEnabled && cached.meta.staleUntil > now) {
         const inflightKey = `${dataType}:${targetId}`;
         if (!inflight.has(inflightKey)) {
-          inflight.set(inflightKey, controlledFetch({ dataType, targetId, fetcher, allowEmpty, requiredId, force: true }).finally(() => inflight.delete(inflightKey)));
+          // Fire-and-forget background revalidation: the caller returns STALE
+          // below and never awaits this promise. A rejection here (provider
+          // failure, or Redis "Connection is closed" during a restart) would
+          // otherwise surface as a process-killing unhandledRejection.
+          const refresh = controlledFetch({ dataType, targetId, fetcher, allowEmpty, requiredId, force: true })
+            .finally(() => inflight.delete(inflightKey));
+          // Keep the raw promise in `inflight` so a concurrent hard-miss caller
+          // (line below) still awaits the real result/error. Attach a separate
+          // no-op rejection handler so the un-awaited fire-and-forget path can
+          // never raise unhandledRejection; serving stale is the intended outcome.
+          refresh.catch((err) => logger.warn({ msg: 'background stale refresh failed', dataType, targetId, error: err.message }));
+          inflight.set(inflightKey, refresh);
         }
         await recordEvent({ cacheKey: key, dataType, action: 'cache.stale', status: 'ok' });
         return { data: cached.data, meta: { cache: 'STALE', provider: cached.meta.provider, lastUpdated: cached.meta.lastUpdated, ttl: 0, isStale: true } };

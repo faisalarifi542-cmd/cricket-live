@@ -12,6 +12,21 @@ export const DEFAULT_PROVIDER = {
   role: 'primary',
 };
 
+// ESPN Cricinfo fallback provider (site.api / site.web.api JSON). Seeded active
+// at priority 2 so the app tries Cricbuzz first, then ESPN for matches the
+// primary lacks. Admin can reorder/disable it from the Providers page.
+export const CRICINFO_PROVIDER = {
+  slug: 'espn-cricinfo',
+  name: 'ESPN Cricinfo',
+  providerType: 'cricinfo',
+  baseUrl: 'https://site.api.espn.com',
+  description: 'Fallback cricket data provider powered by ESPN Cricinfo public site.api endpoints.',
+  priority: 2,
+  timeoutMs: 10000,
+  rateLimitPerMinute: 60,
+  role: 'fallback',
+};
+
 export async function ensureProviderSchema() {
   await query(`
     CREATE TABLE IF NOT EXISTS api_providers (
@@ -77,6 +92,44 @@ export async function ensureDefaultProvider() {
       meta,
     ],
   );
+  await ensureCricinfoProvider();
   const rows = await query(`SELECT * FROM api_providers WHERE slug = ? LIMIT 1`, [DEFAULT_PROVIDER.slug]);
   return rows[0] || null;
+}
+
+/**
+ * Seed the ESPN Cricinfo fallback row. Unlike the primary, this deliberately
+ * does NOT force `is_active` on update — the row is created enabled, but if an
+ * admin later disables it, that choice must survive subsequent seed runs (this
+ * function runs on every admin providers GET).
+ */
+export async function ensureCricinfoProvider() {
+  await ensureProviderSchema();
+  const meta = JSON.stringify({ role: CRICINFO_PROVIDER.role, source: 'cricket-api', appBaseUrl: CRICINFO_PROVIDER.baseUrl });
+  await query(
+    `INSERT INTO api_providers
+       (slug, name, provider_type, base_url, description, priority, timeout_ms,
+        rate_limit_per_minute, is_active, health_status, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name),
+       provider_type = VALUES(provider_type),
+       base_url = VALUES(base_url),
+       description = VALUES(description),
+       priority = VALUES(priority),
+       timeout_ms = VALUES(timeout_ms),
+       rate_limit_per_minute = VALUES(rate_limit_per_minute),
+       metadata = VALUES(metadata)`,
+    [
+      CRICINFO_PROVIDER.slug,
+      CRICINFO_PROVIDER.name,
+      CRICINFO_PROVIDER.providerType,
+      CRICINFO_PROVIDER.baseUrl,
+      CRICINFO_PROVIDER.description,
+      CRICINFO_PROVIDER.priority,
+      CRICINFO_PROVIDER.timeoutMs,
+      CRICINFO_PROVIDER.rateLimitPerMinute,
+      meta,
+    ],
+  );
 }

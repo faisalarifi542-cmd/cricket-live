@@ -200,6 +200,11 @@ export const analyticsApi = {
     adminFetch<{ success: true; data: { dimension: string; items: Array<{ label: string; count: number }> } }>(
       `/admin/analytics/breakdown${analyticsQs({ dimension, from, to })}`,
     ),
+  // Realtime active users/sessions from the Redis presence window (no fake data).
+  realtime: () =>
+    adminFetch<{ success: true; data: { activeUsers: number; activeSessions: number; windowSeconds: number } }>(
+      '/admin/analytics/realtime',
+    ),
 };
 
 export type StreamRow = Record<string, any> & {
@@ -238,9 +243,65 @@ export type StreamRow = Record<string, any> & {
   drm_headers?: Record<string, unknown> | string | null;
   clear_key_key_id?: string | null;
   clear_key_key?: string | null;
+  published?: boolean;
+  publish_notification?: {
+    status: 'sent' | 'failed' | 'skipped' | 'already_sent';
+    error: string | null;
+    sent_at: string | null;
+    created_at: string | null;
+  } | null;
+};
+
+export type StreamNotificationStatus = {
+  status: 'sent' | 'failed' | 'skipped' | 'already_sent';
+  reason?: string;
+};
+
+export type StreamSyncMatch = {
+  match_id: string;
+  match_external_id: string;
+  title: string;
+  matchup: string;
+  team1_name: string;
+  team1_short: string;
+  team1_logo: string | null;
+  team2_name: string;
+  team2_short: string;
+  team2_logo: string | null;
+  series_id: string;
+  series_name: string;
+  venue: string;
+  start_time: string | null;
+  match_format: string;
+  match_type: string;
+  status: string;
+  status_text: string;
+  phase: 'live' | 'upcoming';
+  has_stream: boolean;
+  stream_count: number;
+  published: boolean;
+  stream_status: 'published' | 'draft' | 'none';
+  stream_status_label: 'Published' | 'Stream Added' | 'Add Stream';
+  streams: Array<{ id: number; title: string | null; is_active: boolean; status: string; lifecycle_state: string; priority: number }>;
+};
+
+export type StreamSyncResult = {
+  timezone: string;
+  provider: string;
+  syncedAt: string;
+  window: { from: string; to: string };
+  counts: { total: number; live: number; upcoming: number; withStream: number; published: number };
+  errors: string[];
+  matches: StreamSyncMatch[];
 };
 
 export const streamsApi = {
+  // Sync live + today/tomorrow upcoming matches from the provider. tz is an IANA
+  // zone (defaults to the browser zone) so "today/tomorrow" is computed locally.
+  sync: (tz?: string) =>
+    adminFetch<{ success: true; data: StreamSyncResult }>(
+      `/admin/streams/sync${tz ? `?tz=${encodeURIComponent(tz)}` : ''}`,
+    ),
   list: (params: Record<string, string | undefined> = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v != null && v !== '') as [string, string][],
@@ -252,12 +313,12 @@ export const streamsApi = {
   get: (id: number | string) =>
     adminFetch<{ success: true; data: StreamRow }>(`/admin/streams/${id}`),
   create: (body: Record<string, unknown>) =>
-    adminFetch<{ success: true; data: StreamRow }>('/admin/streams', {
+    adminFetch<{ success: true; data: StreamRow; notification?: StreamNotificationStatus }>('/admin/streams', {
       method: 'POST',
       body: j(body),
     }),
   update: (id: number | string, body: Record<string, unknown>) =>
-    adminFetch<{ success: true; data: StreamRow }>(`/admin/streams/${id}`, {
+    adminFetch<{ success: true; data: StreamRow; notification?: StreamNotificationStatus }>(`/admin/streams/${id}`, {
       method: 'PUT',
       body: j(body),
     }),
@@ -616,6 +677,20 @@ export const playersApi = {
       '/admin/players/fetch-by-provider-id',
       { method: 'POST', body: j({ player_id: playerId }) },
     ),
+  // Sync players from Cricbuzz (squads of live/upcoming/recent matches). Pass
+  // enrich=true to also pull batting/bowling/DOB for a bounded set.
+  syncFromCricbuzz: (enrich = false) =>
+    adminFetch<{
+      success: true;
+      matchesScanned: number;
+      candidates: number;
+      enriched: number;
+      added: number;
+      updated: number;
+      skipped: number;
+      failed: number;
+      syncedAt: string;
+    }>(`/admin/players/sync-from-cricbuzz${enrich ? '?enrich=1' : ''}`, { method: 'POST' }),
   delete: (id: string | number) =>
     adminFetch<{ success: true }>(`/admin/players/${id}`, { method: 'DELETE' }),
   // Upload a player photo as a base64 data URL; returns a public URL.

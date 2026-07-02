@@ -1,5 +1,6 @@
 import providerManager from '../../providers/provider-manager.js';
 import { cacheSet, cacheSetSWR, cacheGet, unwrapSWR, KEYS, TTL, SWR_WINDOW, getRedis } from '../../lib/redis.js';
+import { maybeNotifyNewInnings } from '../../lib/innings-notifier.js';
 import logger from '../../lib/logger.js';
 
 /**
@@ -39,6 +40,12 @@ export async function handleLiveScore(job) {
         matchId,
         data: match,
       }));
+
+      // Fire a "new innings" push for streamed matches (deduped once per
+      // innings). Never let a notification failure break score polling.
+      await maybeNotifyNewInnings(match, prevMatch).catch((err) =>
+        logger.debug({ msg: 'new_innings notify failed', matchId, error: err?.message }),
+      );
     }
   }
 

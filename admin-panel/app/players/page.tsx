@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { RefreshCw, Trash2, Image as ImageIcon, Upload, Wand2, Eraser, Plus, Pencil } from 'lucide-react';
+import { RefreshCw, Trash2, Image as ImageIcon, Upload, Wand2, Eraser, Plus, Pencil, Download } from 'lucide-react';
 import { AdminShell } from '@/components/layout/AdminShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable, type Column } from '@/components/ui/DataTable';
@@ -67,6 +67,26 @@ function PlayersInner() {
   const [globalMode, setGlobalMode] = useState<PlayerImageMode>('admin_first');
   const [savingMode, setSavingMode] = useState(false);
   const [busyTool, setBusyTool] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  async function syncPlayers() {
+    setSyncing(true);
+    const t = toast.loading('Syncing players from Cricbuzz…');
+    try {
+      const res = await playersApi.syncFromCricbuzz(false);
+      toast.dismiss(t);
+      toast.success(
+        `Synced ${res.candidates} players · ${res.added} added, ${res.updated} updated` +
+          (res.failed ? `, ${res.failed} failed` : ''),
+      );
+      reload();
+    } catch (err) {
+      toast.dismiss(t);
+      toast.error(err instanceof Error ? err.message : 'Player sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const { data, loading, error, reload } = useResource(() => playersApi.list(), []);
   const all = (data?.data || []) as Player[];
@@ -226,6 +246,11 @@ function PlayersInner() {
             <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>
               Refresh
             </Button>
+            {canWrite && (
+              <Button variant="secondary" icon={<Download className="h-4 w-4" />} onClick={syncPlayers} loading={syncing}>
+                Sync Players from Cricbuzz
+              </Button>
+            )}
             {canWrite && (
               <Button icon={<Plus className="h-4 w-4" />} onClick={() => setFormPlayer('new')}>
                 Add Player

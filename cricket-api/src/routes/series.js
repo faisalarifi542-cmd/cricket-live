@@ -18,6 +18,53 @@ export function computeSeriesStatus({ isLive, startMs, endMs, now, dayMs = 86400
   return '';
 }
 
+// Builds "1 Test • 3 ODIs • 3 T20Is" from a {FORMAT: count} map. Cricbuzz
+// reports 20-over internationals as "T20"; we show them as T20I for
+// international tours and plain T20 for leagues/domestic competitions.
+export function buildFormatLabel(counts, category) {
+  const plural = (label, n) => (n > 0 ? `${n} ${label}${n > 1 ? 's' : ''}` : '');
+  const cat = String(category || '').toLowerCase();
+  const t20Label = !cat || cat.includes('international') ? 'T20I' : 'T20';
+  const parts = [
+    plural('Test', counts.TEST || 0),
+    plural('ODI', counts.ODI || 0),
+    plural(t20Label, counts.T20 || 0),
+    plural('T10', counts.T10 || 0),
+    plural('Hundred', counts.HUNDRED || counts.THE100 || 0),
+  ].filter(Boolean);
+  return parts.join(' • ');
+}
+
+// Maps a normalized match_format ('test'/'odi'/'t20'/'t10') to the uppercase
+// bucket key buildFormatLabel expects.
+export function formatBucketKey(matchFormat) {
+  const f = String(matchFormat || '').toUpperCase();
+  if (f.includes('TEST')) return 'TEST';
+  if (f.includes('ODI')) return 'ODI';
+  if (f.includes('T20')) return 'T20';
+  if (f.includes('T10')) return 'T10';
+  if (f.includes('HUNDRED') || f.includes('100')) return 'HUNDRED';
+  return '';
+}
+
+/**
+ * AUTHORITATIVE full-series format summary from a series' OWN match list. Counts
+ * each match by format and returns the count-aware label + total. This is the
+ * fix for partial match-window data (e.g. ICC Women's T20 World Cup showing
+ * "8 T20s" instead of the real "33 T20s") — the series detail match list carries
+ * every match, the upcoming-window feeds only a slice. Pure + testable.
+ */
+export function summarizeSeriesFormat(matches, category) {
+  const counts = {};
+  let count = 0;
+  for (const m of matches || []) {
+    count += 1;
+    const key = formatBucketKey(m.match_format || m.matchFormat);
+    if (key) counts[key] = (counts[key] || 0) + 1;
+  }
+  return { format: buildFormatLabel(counts, category), matchCount: count || null, counts };
+}
+
 export default async function seriesRoutes(fastify) {
   function normalizePointsTableResponse(seriesId, raw, seriesName = '') {
     const groups = Array.isArray(raw?.groups)
@@ -333,23 +380,6 @@ export default async function seriesRoutes(fastify) {
     return { data, fromCache };
   }
 
-  // Builds "1 Test • 3 ODIs • 3 T20Is" from a {FORMAT: count} map.
-  function buildFormatLabel(counts, category) {
-    const plural = (label, n) => (n > 0 ? `${n} ${label}${n > 1 ? 's' : ''}` : '');
-    const cat = String(category || '').toLowerCase();
-    // Cricbuzz reports 20-over internationals as "T20"; show them as T20I for
-    // international tours, plain T20 for leagues/domestic competitions.
-    const t20Label = !cat || cat.includes('international') ? 'T20I' : 'T20';
-    const parts = [
-      plural('Test', counts.TEST || 0),
-      plural('ODI', counts.ODI || 0),
-      plural(t20Label, counts.T20 || 0),
-      plural('T10', counts.T10 || 0),
-      plural('Hundred', counts.HUNDRED || counts.THE100 || 0),
-    ].filter(Boolean);
-    return parts.join(' • ');
-  }
-
   /**
    * Enriches the thin Cricbuzz series list (id + name only) with status,
    * date range, format breakdown, match count and the two representative
@@ -368,12 +398,51 @@ export default async function seriesRoutes(fastify) {
     const agg = new Map();
     const liveSeries = new Set();
 
-    const [scheduleRes, liveRes] = await Promise.allSettled([
-      providerManager.execute('getUpcomingSchedule', 'all'),
+    // Cricbuzz exposes the same Series tabs the app needs as separate schedule
+    // feeds. The feed `type` is the AUTHORITATIVE category for every series it
+    // lists, and a typed feed often still carries recently-ended editions the
+    // upcoming-biased `all` feed has dropped — so merging all five both tags
+    // category reliably AND recovers recent completed series (whose dates only
+    // come from schedule matches). Each fetch is best-effort; a failed feed is
+    // skipped and the base list is still returned.
+    const SCHEDULE_TYPES = ['all', 'international', 'domestic', 'league', 'women'];
+    // Stronger (more specific) category wins when a series appears in several
+    // feeds, e.g. a women's league surfaces under both `league` and `women`.
+    const CATEGORY_RANK = { women: 4, league: 3, domestic: 2, international: 1 };
+
+    const FEED_TYPES = SCHEDULE_TYPES;
+
+    // `getFullSchedule` parses the REAL Cricbuzz series schedule LIST
+    // (/cricket-schedule/series/all), returning each series' AUTHORITATIVE
+    // date range. This is the source of truth for status — it must override
+    // any match-window dates derived from the upcoming feeds.
+    const settled = await Promise.allSettled([
+      ...SCHEDULE_TYPES.map((t) => providerManager.execute('getUpcomingSchedule', t)),
+      providerManager.execute('getFullSchedule'),
       providerManager.execute('getLiveMatches'),
     ]);
+    const scheduleResults = settled.slice(0, FEED_TYPES.length);
+    const fullScheduleRes = settled[FEED_TYPES.length];
+    const liveRes = settled[FEED_TYPES.length + 1];
 
-    if (scheduleRes.status === 'fulfilled') {
+    // seriesId -> { start, end } (epoch ms) from the authoritative series list.
+    const seriesDateRange = new Map();
+    if (fullScheduleRes.status === 'fulfilled') {
+      for (const row of fullScheduleRes.value?.data || fullScheduleRes.value || []) {
+        const sid = String(row.series_id || '');
+        if (!sid) continue;
+        const start = row.start_date ? Date.parse(row.start_date) : null;
+        const end = row.end_date ? Date.parse(row.end_date) : null;
+        if (start || end) seriesDateRange.set(sid, { start, end, name: row.name || '' });
+      }
+    }
+
+    scheduleResults.forEach((scheduleRes, feedIndex) => {
+      if (scheduleRes.status !== 'fulfilled') return;
+      const feedType = FEED_TYPES[feedIndex];
+      // `all` is not a category; rely on the per-series seriesCategory there.
+      const feedCategory = feedType === 'all' ? '' : feedType;
+      const feedRank = CATEGORY_RANK[feedCategory] || 0;
       const days = scheduleRes.value?.data?.days || [];
       for (const day of days) {
         for (const s of day.series || []) {
@@ -381,14 +450,22 @@ export default async function seriesRoutes(fastify) {
           if (!sid) continue;
           let a = agg.get(sid);
           if (!a) {
-            a = { name: '', start: null, end: null, counts: {}, teams: null, category: s.category || '', count: 0, seen: new Set() };
+            a = { name: '', start: null, end: null, counts: {}, teams: null, category: '', categoryRank: 0, count: 0, seen: new Set() };
             agg.set(sid, a);
           }
-          if (!a.category && s.category) a.category = s.category;
+          // Authoritative category: a stronger typed feed wins; otherwise fall
+          // back to the per-series seriesCategory carried by the `all` feed.
+          if (feedRank > a.categoryRank) {
+            a.category = feedCategory;
+            a.categoryRank = feedRank;
+          } else if (a.categoryRank === 0 && s.category) {
+            a.category = s.category;
+          }
           if (!a.name && s.seriesName) a.name = s.seriesName;
           for (const mt of s.matches || []) {
-            // A multi-day Test is repeated under every day header — count each
-            // real match (by id) only once so formats/counts stay accurate.
+            // A multi-day Test is repeated under every day header — and the
+            // same match also recurs across feeds — so count each real match
+            // (by id) only once so formats/counts/dates stay accurate.
             const mid = String(mt.matchId || '');
             if (mid && a.seen.has(mid)) continue;
             if (mid) a.seen.add(mid);
@@ -399,6 +476,13 @@ export default async function seriesRoutes(fastify) {
             const en = Number(mt.endTime) || null;
             if (st && (a.start === null || st < a.start)) a.start = st;
             if (en && (a.end === null || en > a.end)) a.end = en;
+            // The full-schedule feed tags each match with a live `state`
+            // ("In Progress", etc.); use it as a genuine ongoing signal so a
+            // series with a match underway right now is Ongoing even before the
+            // separate live-matches feed catches up.
+            if (/progress|innings break|rain|wet|tea|lunch|stumps|delay/i.test(String(mt.state || ''))) {
+              liveSeries.add(sid);
+            }
             if (!a.teams && mt.team1?.name && mt.team2?.name) {
               a.teams = [
                 { name: mt.team1.name, shortName: mt.team1.shortName || '', logoUrl: mt.team1.logoUrl || '' },
@@ -408,7 +492,7 @@ export default async function seriesRoutes(fastify) {
           }
         }
       }
-    }
+    });
 
     if (liveRes.status === 'fulfilled') {
       for (const m of liveRes.value?.data || []) {
@@ -419,9 +503,35 @@ export default async function seriesRoutes(fastify) {
 
     const now = Date.now();
     const dayMs = 24 * 60 * 60 * 1000;
+    // Section-B-only additions are bounded to a window around "now" so the list
+    // stays focused on current cricket: recently-ended tours through the next
+    // few months, never the entire all-time series catalogue.
+    const WIN_PAST = 45 * dayMs;
+    const WIN_FUTURE = 150 * dayMs;
 
-    return baseRaw.map((s) => {
+    // MASTER SET of series ids = thin base list ∪ schedule-feed series ∪ the
+    // authoritative Cricbuzz series LIST (Section B) within the current window.
+    // Unioning Section B is what RECOVERS recently-completed tours (Afghanistan
+    // tour of India, Australia tour of Bangladesh) that the upcoming-biased base
+    // list / feeds drop entirely — previously the code only OVERRODE dates of
+    // series already in the base list, so a dropped series never appeared.
+    const baseById = new Map();
+    for (const s of baseRaw) {
       const sid = String(s.series_id || s.seriesId || s.id || '');
+      if (sid) baseById.set(sid, s);
+    }
+    const ids = new Set(baseById.keys());
+    for (const sid of agg.keys()) ids.add(sid);
+    for (const [sid, r] of seriesDateRange) {
+      const inWindow = (r.end == null || r.end >= now - WIN_PAST)
+        && (r.start == null || r.start <= now + WIN_FUTURE);
+      if (inWindow) ids.add(sid);
+    }
+
+    // First pass: fold the authoritative Cricbuzz series-list dates together
+    // with the min/max of the matches we saw across the schedule feeds.
+    const enriched = [...ids].map((sid) => {
+      const s = baseById.get(sid) || {};
       const a = agg.get(sid);
       let startMs = s.start_date ? Date.parse(s.start_date) : null;
       let endMs = s.end_date ? Date.parse(s.end_date) : null;
@@ -430,32 +540,115 @@ export default async function seriesRoutes(fastify) {
       let matchCount = null;
       let name = s.name || s.seriesName || '';
       if (a) {
-        if (a.start) startMs = a.start;
-        if (a.end) endMs = a.end;
+        // Match-window dates only EXTEND coverage when no authoritative range
+        // exists yet — they never shrink or replace it (see override below).
+        if (a.start && (startMs === null || a.start < startMs)) startMs = a.start;
+        if (a.end && (endMs === null || a.end > endMs)) endMs = a.end;
         format = buildFormatLabel(a.counts, a.category);
         teams = a.teams || [];
         matchCount = a.count || null;
         if (a.name) name = a.name;
       }
 
+      // AUTHORITATIVE OVERRIDE: the real Cricbuzz series schedule list gives the
+      // true series-level date range. It WINS over both the thin base-list dates
+      // and any match-window min/max — this is what fixes "ICC Women's T20 World
+      // Cup 2026" showing Upcoming (its span is Jun 12 – Jul 05, not its next
+      // upcoming match), and gives ended tours (Afghanistan, Australia/Bangladesh)
+      // their real past end dates so they classify Completed.
+      const authRange = seriesDateRange.get(sid);
+      if (authRange) {
+        if (authRange.start) startMs = authRange.start;
+        if (authRange.end) endMs = authRange.end;
+        if (authRange.name && (!name || name.length < authRange.name.length)) {
+          name = authRange.name;
+        }
+      }
+      return { s, sid, a, startMs, endMs, format, teams, matchCount, name, category: a?.category || '' };
+    });
+
+    // AUTHORITATIVE full-series metadata recovery. The match-window aggregation
+    // only sees matches inside the current upcoming window, so a long tournament
+    // shows a PARTIAL count/format (e.g. ICC Women's T20 World Cup as "8 T20s"
+    // instead of the real "33 T20s"). Each series' OWN match list (the cached
+    // series detail page) carries the full set; we re-derive count/format/teams
+    // from it and override the match-window values. We also fill date gaps the
+    // schedule feeds left (never overriding the Section-B authoritative dates).
+    // Bounded to ongoing + undated series (the ones whose data is visible and
+    // must be exact) so we never fan out across the whole catalogue.
+    const needMeta = enriched.filter((e) => {
+      const undated = e.startMs === null && e.endMs === null;
+      const status = computeSeriesStatus({
+        isLive: liveSeries.has(e.sid), startMs: e.startMs, endMs: e.endMs, now, dayMs,
+      });
+      return status === 'ongoing' || undated;
+    });
+    if (needMeta.length > 0) {
+      const RECOVER_LIMIT = 30; // cap extra provider calls per (cached) rebuild
+      const targets = needMeta.slice(0, RECOVER_LIMIT);
+      for (let i = 0; i < targets.length; i += 4) {
+        const batch = targets.slice(i, i + 4);
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.allSettled(batch.map(async (e) => {
+          const meta = await recoverSeriesMeta(e.sid);
+          // Full-series count/format from the series' own match list overrides
+          // the partial match-window aggregation (fixes WWC 8 → 33 T20s). Reuse
+          // the same category so the label style (T20 vs T20I) is unchanged.
+          if (meta.count > 0) {
+            const label = buildFormatLabel(meta.counts, e.category);
+            if (label) e.format = label;
+            e.matchCount = meta.count;
+          }
+          if ((!e.teams || e.teams.length === 0) && meta.teams) e.teams = meta.teams;
+          // Prefer the FULL team list when the series' own match list yields
+          // more teams than the partial schedule-window aggregation (so
+          // multi-team tournaments/leagues show all teams, not just 2).
+          if (meta.teams && meta.teams.length > (e.teams?.length || 0)) {
+            e.teams = meta.teams;
+          }
+          if (meta.teamCount && meta.teamCount > (e.teamCount || 0)) {
+            e.teamCount = meta.teamCount;
+          }
+          // Fill date gaps only — Section B authoritative dates always win.
+          if (e.startMs === null && meta.start) e.startMs = meta.start;
+          if (e.endMs === null && meta.end) e.endMs = meta.end;
+          if (!e.name && meta.seriesName) e.name = meta.seriesName;
+          if (meta.count > 0 || meta.start || meta.end) {
+            logger.info({ msg: 'Recovered authoritative series meta', seriesId: e.sid, count: meta.count, start: meta.start, end: meta.end });
+          }
+        }));
+      }
+    }
+
+    return enriched.map((e) => {
+      const { s, sid, startMs, endMs, format, teams, matchCount, name, category } = e;
+
       // Normalized status precedence (same rules mirrored in the Flutter
       // client): a genuine live match wins; otherwise an end date in the past
       // means Completed (this is what fixes finished editions like IPL 2026
       // being mislabelled Upcoming); a future start means Upcoming; a date
       // window spanning now means Ongoing.
-      const status = computeSeriesStatus({
+      const computedStatus = computeSeriesStatus({
         isLive: liveSeries.has(sid),
         startMs,
         endMs,
         now,
         dayMs,
       });
+      // When no dates are available, fall back to the raw Cricbuzz status
+      // string so the Flutter client has at least a text signal to work with.
+      const rawStatus = String(s.status || '').toLowerCase();
+      const status = computedStatus || rawStatus;
 
       return {
         series_id: sid,
         name,
         season: s.season || '',
         status,
+        // Additive, optional: authoritative Cricbuzz category
+        // (international/domestic/league/women) when known. Existing clients
+        // that ignore it are unaffected.
+        category,
         start_date: startMs ? new Date(startMs).toISOString() : null,
         end_date: endMs ? new Date(endMs).toISOString() : null,
         format,
@@ -465,17 +658,67 @@ export default async function seriesRoutes(fastify) {
     });
   }
 
+  /**
+   * Best-effort recovery of a series' AUTHORITATIVE full-series metadata from
+   * its own (strictly-filtered, cached) match list: real start/end span (epoch
+   * ms), total match count, per-format counts and the two representative teams.
+   * Used to override the partial match-window aggregation for visible series and
+   * to date series the upcoming-biased feeds left undated. Never throws; returns
+   * empty values on any miss.
+   */
+  async function recoverSeriesMeta(seriesId) {
+    try {
+      const res = await fetchSeriesMatches(seriesId);
+      let start = null;
+      let end = null;
+      let count = 0;
+      const counts = {};
+      for (const m of res?.matches || []) {
+        const st = m.start_time ? Date.parse(m.start_time) : null;
+        const en = m.end_time ? Date.parse(m.end_time) : null;
+        if (Number.isFinite(st) && (start === null || st < start)) start = st;
+        // Some completed matches omit end_time; fall back to the start instant.
+        const e = Number.isFinite(en) ? en : st;
+        if (Number.isFinite(e) && (end === null || e > end)) end = e;
+        count += 1;
+        const key = formatBucketKey(m.match_format);
+        if (key) counts[key] = (counts[key] || 0) + 1;
+      }
+      // FULL distinct participating-team list from the series' own match list.
+      // This is what makes multi-team tournaments/leagues (e.g. ICC Women's T20
+      // World Cup) expose all teams instead of a single 2-team match identity.
+      // Genuine bilateral tours naturally yield just their two teams here.
+      const teamList = deriveTeamsFromSeriesMatches(res?.matches || []);
+      const teams = teamList.length ? teamList : null;
+      return {
+        start,
+        end,
+        count,
+        counts,
+        teams,
+        teamCount: teamList.length,
+        seriesName: res?.seriesName || '',
+      };
+    } catch (err) {
+      logger.warn({ msg: 'recoverSeriesMeta failed', seriesId, error: err.message });
+      return { start: null, end: null, count: 0, counts: {}, teams: null, teamCount: 0, seriesName: '' };
+    }
+  }
+
   // GET /series
+  // ?refresh=true bypasses Redis cache and recomputes the enriched list immediately.
+  // Use this after a backend deploy or when the cached status/dates are stale.
   fastify.get('/series', {
     schema: { description: 'Get all series', tags: ['Series'] },
-    preHandler: cacheMiddleware('series:list:enriched:v2', TTL.SERIES),
   }, async (request, reply) => {
-    const { data } = await cacheGetOrFetch(
-      'series:list:enriched:v2',
-      TTL.SERIES,
-      enrichSeriesList,
-    );
-    return { success: true, data: data || [] };
+    const forceRefresh = request.query.refresh === 'true';
+    const CACHE_KEY = 'series:list:enriched:v2';
+    if (forceRefresh) {
+      await cacheSet(CACHE_KEY, null, 1); // expire immediately
+      logger.info({ msg: 'Series list cache busted via ?refresh=true' });
+    }
+    const { data } = await cacheGetOrFetch(CACHE_KEY, TTL.SERIES, enrichSeriesList);
+    return { success: true, data: data || [], fromCache: !forceRefresh };
   });
 
   /**

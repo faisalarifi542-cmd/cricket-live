@@ -74,18 +74,30 @@ function normalizeHomeScore(score, team1Info, team2Info) {
   };
 }
 
-function extractHomeInnings(teamScore) {
+export function extractHomeInnings(teamScore) {
   if (!teamScore) return [];
   const innings = [];
-  for (const key of Object.keys(teamScore).sort()) {
-    if (key.startsWith('inngs')) {
-      const inn = teamScore[key];
-      innings.push({
-        runs: inn.runs || 0,
-        wickets: inn.wickets || 0,
-        overs: inn.overs || 0,
-      });
-    }
+  // Cricbuzz keys a team's innings as `inngs1`, `inngs2`, … where the digit is
+  // that team's CHRONOLOGICAL ordinal (1st innings, 2nd innings). Sort
+  // NUMERICALLY (a plain string sort breaks once a team reaches `inngs10`) and
+  // emit an explicit `innings_number` so the client can order deterministically
+  // and star the true current innings — this is what stops the Home-hero from
+  // ever rendering a Test as `206/7 & 438/10*` (2nd innings first / wrong star).
+  const keys = Object.keys(teamScore)
+    .filter((k) => /^inngs\d+/i.test(k))
+    .sort((a, b) =>
+      (parseInt(a.replace(/\D/g, ''), 10) || 0) -
+      (parseInt(b.replace(/\D/g, ''), 10) || 0));
+  for (const key of keys) {
+    const inn = teamScore[key] || {};
+    const ordinal = parseInt(key.replace(/\D/g, ''), 10);
+    innings.push({
+      runs: inn.runs || 0,
+      wickets: inn.wickets || 0,
+      overs: inn.overs || 0,
+      innings_number:
+        inn.inningsId || inn.inningsNo || (Number.isFinite(ordinal) ? ordinal : undefined),
+    });
   }
   return innings;
 }
@@ -194,12 +206,33 @@ export function normalizeMatchDetail(raw) {
   const team1ScoreData = { inngs: [] };
   const team2ScoreData = { inngs: [] };
   for (const inn of inningsList) {
-    const entry = { runs: inn.score, wickets: inn.wickets, overs: inn.overs, isDeclared: inn.isDeclared, isFollowOn: inn.isFollowOn };
+    // Capture the REAL Cricbuzz `inningsId` (1 = team1 1st, 2 = team2 1st,
+    // 3 = team1 2nd, …) so downstream emits the true chronological ordinal —
+    // NOT a positional index. Cricbuzz's `inningsScoreList` often lists the
+    // CURRENT innings first for a live Test, so a positional number would lie
+    // (the live innings would be numbered #1) and reverse the rendered score.
+    const entry = {
+      runs: inn.score,
+      wickets: inn.wickets,
+      overs: inn.overs,
+      isDeclared: inn.isDeclared,
+      isFollowOn: inn.isFollowOn,
+      inningsId: inn.inningsId,
+    };
     if (inn.batTeamId === t1Id) {
       team1ScoreData.inngs.push(entry);
     } else {
       team2ScoreData.inngs.push(entry);
     }
+  }
+  // Emit each team's innings in CHRONOLOGICAL order (by inningsId) so the array
+  // itself is correct for any consumer, not only those that re-sort.
+  const byInningsId = (a, b) => (Number(a.inningsId) || 0) - (Number(b.inningsId) || 0);
+  if (team1ScoreData.inngs.every((i) => i.inningsId != null)) {
+    team1ScoreData.inngs.sort(byInningsId);
+  }
+  if (team2ScoreData.inngs.every((i) => i.inningsId != null)) {
+    team2ScoreData.inngs.sort(byInningsId);
   }
 
   // Extract current batsmen and bowler from miniscore
@@ -880,13 +913,18 @@ function normalizeTeamFull(team, scoreData) {
 
   if (scoreData) {
     const innsArr = scoreData.inngs || (scoreData.runs !== undefined ? [scoreData] : []);
+    let idx = 0;
     for (const inn of Array.isArray(innsArr) ? innsArr : [innsArr]) {
+      idx += 1;
       innings.push({
         runs: inn.runs || inn.score || 0,
         wickets: inn.wickets || 0,
         overs: inn.overs || 0,
         declared: inn.isDeclared || false,
         follow_on: inn.isFollowOn || false,
+        // inningsScoreList is chronological; expose its ordinal so the client
+        // orders/stars multi-innings scores deterministically.
+        innings_number: inn.inningsId || inn.inningsNo || idx,
       });
     }
   }
@@ -908,10 +946,13 @@ function normalizeQuickScore(m) {
 function extractInningsScore(teamScore) {
   if (!teamScore) return [];
   const inngs = teamScore.inngs || (teamScore.runs !== undefined ? [teamScore] : []);
-  return (Array.isArray(inngs) ? inngs : [inngs]).map((i) => ({
+  return (Array.isArray(inngs) ? inngs : [inngs]).map((i, idx) => ({
     runs: i.runs || i.score || 0,
     wickets: i.wickets || 0,
     overs: i.overs || 0,
+    // Source list is chronological; emit an explicit ordinal so the client
+    // never reorders or mis-stars a multi-innings (Test) score.
+    innings_number: i.inningsId || i.inningsNo || idx + 1,
   }));
 }
 
@@ -1818,6 +1859,78 @@ export function normalizeOverByOver(raw, matchId, inningsId) {
   }
 
   return { overs, nextTimestamp };
+}
+
+// --- Full schedule (series) page parser ------------------------------------
+//
+// Cricbuzz's /cricket-schedule/series/all page has TWO distinct sections:
+//   A) Top "current / upcoming match" blocks grouped International / League /
+//      Domestic / Women — these carry per-MATCH dates only (and are biased to
+//      the recent+upcoming window).
+//   B) The real "cricket schedule" series LIST, where each series is one anchor
+//      `/cricket-series/<id>/<slug>/matches` whose `title` attribute carries the
+//      AUTHORITATIVE series-level date range, e.g.
+//        title="ICC Women's T20 World Cup 2026 Matches 12 Jun 2026 - 5 Jul 2026"
+//
+// We MUST read section B: only its anchors end in `/matches` AND carry a
+// "<d Mon yyyy> - <d Mon yyyy>" range in the title, so the pattern below
+// structurally excludes section A (whose series links have no `/matches`
+// suffix and no date range). This gives the true series start/end — independent
+// of which individual matches happen to fall in the current window.
+//
+// Returns an array of { series_id, name, start_date, end_date, source } with
+// ISO (UTC midnight) dates. Defensive: regex only, never throws, a parse miss
+// just yields fewer entries.
+
+const _SCHED_MONTHS = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+function _decodeHtmlText(s) {
+  return String(s || '')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function _scheduleDateToIso(day, monthName, year) {
+  const month = _SCHED_MONTHS[String(monthName || '').toLowerCase()];
+  const dd = Number(day);
+  const yy = Number(year);
+  if (month == null || !dd || !yy) return null;
+  return new Date(Date.UTC(yy, month, dd)).toISOString();
+}
+
+export function parseScheduleSeriesPage(html) {
+  if (!html || typeof html !== 'string') return [];
+
+  // Section-B series row: a /matches anchor whose title ends in a real
+  // "<d Mon yyyy> - <d Mon yyyy>" series date range.
+  const re = /href="\/cricket-series\/(\d+)\/[^"]*\/matches"\s+title="([^"]*?)\s+Matches\s+(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})\s*-\s*(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})"/g;
+
+  const bySeries = new Map();
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const [, id, rawName, sDay, sMon, sYear, eDay, eMon, eYear] = m;
+    if (!id || bySeries.has(id)) continue;
+    const start = _scheduleDateToIso(sDay, sMon, sYear);
+    const end = _scheduleDateToIso(eDay, eMon, eYear);
+    if (!start || !end) continue;
+    bySeries.set(id, {
+      series_id: String(id),
+      name: _decodeHtmlText(rawName),
+      start_date: start,
+      end_date: end,
+      source: 'cricbuzz_series_schedule_page',
+    });
+  }
+
+  return [...bySeries.values()];
 }
 
 // --- Upcoming Schedule normalizer ---

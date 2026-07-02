@@ -34,6 +34,7 @@ import {
 } from '../../lib/player-images.js';
 import { getPlayerImageUrl } from '../../lib/image-helper.js';
 import { CricbuzzProvider } from '../../providers/cricbuzz/index.js';
+import { normalizeMatchSquads } from '../../providers/cricbuzz/normalizer.js';
 import {
   fetchPlayerByProviderId,
   fetchTeamByProviderId,
@@ -148,6 +149,95 @@ async function upsertTeamCandidate(team) {
     [team.external_id, team.name, team.short_name, team.slug, team.cricbuzz_logo_url, team.country, team.team_type],
   );
   return { inserted: 1, updated: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Cricbuzz player sync helpers
+// ---------------------------------------------------------------------------
+function cleanPlayerText(value) {
+  const text = String(value || '').trim();
+  return text && text !== '-' && text.toLowerCase() !== 'tbd' ? text : '';
+}
+
+// Pull player candidates out of a (normalized or raw) match-squad object,
+// keyed by Cricbuzz player id so the same player across teams/lists dedupes.
+function collectPlayersFromSquad(squad, candidates) {
+  if (!squad) return;
+  for (const teamKey of ['team1', 'team2']) {
+    const team = squad[teamKey];
+    if (!team) continue;
+    const teamName = cleanPlayerText(team.team_name || team.teamName);
+    const lists = [
+      team.playing_xi, team.playingXI, team.bench, team.substitutes,
+      team.impactPlayers, team.impact_player ? [team.impact_player] : [],
+    ];
+    for (const list of lists) {
+      for (const p of Array.isArray(list) ? list : []) {
+        const id = cleanPlayerText(p.player_id || p.playerId || p.id);
+        const name = cleanPlayerText(p.name);
+        if (!id || !name) continue;
+        const existing = candidates.get(id) || {};
+        candidates.set(id, {
+          external_id: id,
+          name,
+          full_name: existing.full_name || name,
+          role: cleanPlayerText(p.role) || existing.role || '',
+          country: cleanPlayerText(p.team_name || p.teamName) || teamName || existing.country || '',
+          image_url: cleanPlayerText(p.image_url || p.imageUrl) || existing.image_url || null,
+        });
+      }
+    }
+  }
+}
+
+// Upsert one synced player by Cricbuzz id. Never overwrites the admin-uploaded
+// image; refreshes provider fields + last_synced_at. Returns a 1-hot tally.
+async function upsertSyncedPlayer(p) {
+  if (!p.external_id || !p.name) return { added: 0, updated: 0, skipped: 1, failed: 0 };
+  try {
+    const existing = await query(`SELECT id FROM players WHERE external_id = ? LIMIT 1`, [p.external_id]).catch(() => []);
+    if (existing.length) {
+      await query(
+        `UPDATE players SET
+            name = COALESCE(?, name),
+            full_name = COALESCE(?, full_name),
+            short_name = COALESCE(?, short_name),
+            role = COALESCE(?, role),
+            batting_style = COALESCE(?, batting_style),
+            bowling_style = COALESCE(?, bowling_style),
+            dob = COALESCE(?, dob),
+            nationality = COALESCE(?, nationality),
+            country = COALESCE(?, country),
+            image_url = COALESCE(?, image_url),
+            provider_image_url = COALESCE(?, provider_image_url),
+            player_external_id = COALESCE(player_external_id, ?),
+            last_synced_at = NOW()
+          WHERE id = ?`,
+        [
+          p.name, p.full_name || null, p.short_name || null, p.role || null,
+          p.batting_style || null, p.bowling_style || null, p.dob || null,
+          p.country || null, p.country || null, p.image_url || null, p.image_url || null,
+          p.external_id, existing[0].id,
+        ],
+      );
+      return { added: 0, updated: 1, skipped: 0, failed: 0 };
+    }
+    await query(
+      `INSERT INTO players
+         (external_id, player_external_id, name, full_name, short_name, role,
+          batting_style, bowling_style, dob, nationality, country, image_url,
+          provider_image_url, last_synced_at, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+      [
+        p.external_id, p.external_id, p.name, p.full_name || null, p.short_name || null,
+        p.role || null, p.batting_style || null, p.bowling_style || null, p.dob || null,
+        p.country || null, p.country || null, p.image_url || null, p.image_url || null,
+      ],
+    );
+    return { added: 1, updated: 0, skipped: 0, failed: 0 };
+  } catch {
+    return { added: 0, updated: 0, skipped: 0, failed: 1 };
+  }
 }
 
 export default async function extraAdminRoutes(fastify) {
@@ -594,6 +684,106 @@ export default async function extraAdminRoutes(fastify) {
       async () => null,
     );
     return { success: true, candidates: candidates.size, inserted, updated };
+  });
+
+  /* =====================================================
+   * PLAYERS — Sync from Cricbuzz
+   * Gathers players from the squads of currently live/upcoming/recent matches
+   * and upserts them by Cricbuzz player id (no duplicates). Optionally enriches
+   * a bounded number of players via the player-detail endpoint (batting/bowling
+   * style, DOB, short name, image). Bounded so it never hangs the admin UI.
+   * ===================================================== */
+  fastify.post('/players/sync-from-cricbuzz', { preHandler: [requirePermissions('players.write')] }, async (request) => {
+    const enrich = ['1', 'true', 'yes'].includes(String(request.query?.enrich ?? request.body?.enrich ?? '').toLowerCase());
+    const provider = new CricbuzzProvider();
+
+    // 1) Collect a bounded set of match ids from the live/upcoming/recent feeds.
+    const matchIds = new Set();
+    for (const loader of [
+      () => provider.getLiveMatches(),
+      () => provider.getUpcomingMatches(),
+      () => provider.getRecentMatches(),
+    ]) {
+      try {
+        const result = await loader();
+        const list = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
+        for (const m of list.slice(0, 8)) {
+          if (m?.match_id) matchIds.add(String(m.match_id));
+          if (matchIds.size >= 15) break;
+        }
+      } catch {
+        // best-effort per feed
+      }
+      if (matchIds.size >= 15) break;
+    }
+
+    // 2) Pull squads for each match and collect player candidates (deduped by id).
+    const candidates = new Map();
+    let squadsFetched = 0;
+    for (const matchId of matchIds) {
+      try {
+        const raw = await provider.getMatchSquads(matchId);
+        const squad = raw && (raw.team1 || raw.team2) ? raw : normalizeMatchSquads(raw, matchId);
+        collectPlayersFromSquad(squad, candidates);
+        squadsFetched += 1;
+      } catch {
+        // skip a match whose squad can't be scraped
+      }
+    }
+
+    // 3) Optional bounded enrichment via the player-detail endpoint.
+    let enriched = 0;
+    if (enrich) {
+      const ids = [...candidates.keys()].slice(0, 25);
+      for (const id of ids) {
+        try {
+          const detail = await fetchPlayerByProviderId(id);
+          const d = detail?.data;
+          if (!d) continue;
+          const c = candidates.get(id);
+          candidates.set(id, {
+            ...c,
+            full_name: d.full_name || c.full_name,
+            short_name: d.short_name || c.short_name,
+            role: d.role || c.role,
+            batting_style: d.batting_style || null,
+            bowling_style: d.bowling_style || null,
+            dob: d.dob || null,
+            country: d.country || c.country,
+            image_url: d.provider_image_url || c.image_url,
+          });
+          enriched += 1;
+        } catch {
+          // skip enrichment failure
+        }
+      }
+    }
+
+    // 4) Upsert all candidates.
+    const tally = { added: 0, updated: 0, skipped: 0, failed: 0 };
+    for (const p of candidates.values()) {
+      const r = await upsertSyncedPlayer(p);
+      tally.added += r.added;
+      tally.updated += r.updated;
+      tally.skipped += r.skipped;
+      tally.failed += r.failed;
+    }
+
+    invalidateAdminPlayerImageIndex();
+    await withAudit(
+      request,
+      { action: 'players.syncFromCricbuzz', entityType: 'player', newValue: { matches: squadsFetched, candidates: candidates.size, enriched, ...tally } },
+      async () => null,
+    );
+    return {
+      success: true,
+      provider: 'cricbuzz',
+      matchesScanned: squadsFetched,
+      candidates: candidates.size,
+      enriched,
+      ...tally,
+      syncedAt: new Date().toISOString(),
+    };
   });
 
   fastify.post(

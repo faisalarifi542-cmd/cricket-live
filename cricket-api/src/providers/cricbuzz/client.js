@@ -759,6 +759,14 @@ export const cricbuzzApi = {
     return request(apiClient, `/cricket-schedule/upcoming-series/${type}/${ts}`);
   },
 
+  // --- Full schedule (series) page ---
+  // Returns the raw HTML of /cricket-schedule/series/all. Its series LIST
+  // section carries each series' authoritative date range in the row anchor's
+  // `title` attribute — parsed by normalizer.parseScheduleSeriesPage.
+  async getScheduleSeriesPage() {
+    return request(htmlClient, '/cricket-schedule/series/all', { responseType: 'text' });
+  },
+
   // --- Match Squads (HTML scraping with FIX) ---
   async getMatchSquads(matchId) {
     const html = await request(htmlClient, `/cricket-match-squads/${matchId}`, { responseType: 'text' });

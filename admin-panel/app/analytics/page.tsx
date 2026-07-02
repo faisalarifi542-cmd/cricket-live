@@ -10,7 +10,7 @@ import {
   Eye,
   AlertTriangle,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AdminShell } from '@/components/layout/AdminShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
@@ -91,6 +91,14 @@ function AnalyticsInner() {
   const dau = useResource(() => analyticsApi.timeseries('active_users', from, to, 'day'), [from, to]);
   const sessions = useResource(() => analyticsApi.timeseries('sessions', from, to, 'day'), [from, to]);
   const streams = useResource(() => analyticsApi.timeseries('live_stream_opens', from, to, 'day'), [from, to]);
+
+  // Realtime active users from the Redis presence window — refreshed every 30s.
+  const realtime = useResource(() => analyticsApi.realtime(), []);
+  useEffect(() => {
+    const id = setInterval(() => realtime.reload(), 30_000);
+    return () => clearInterval(id);
+  }, [realtime.reload]);
+  const live = realtime.data?.data;
 
   const data = summary.data?.data;
   const num = (v?: number) => formatNumber(v ?? 0);
@@ -189,6 +197,17 @@ function AnalyticsInner() {
 
       {/* Summary cards */}
       <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Active users now"
+          value={live ? num(live.activeUsers) : '—'}
+          icon={Radio}
+          tone={live && live.activeUsers > 0 ? 'positive' : 'default'}
+          hint={
+            live
+              ? `In the last ${live.windowSeconds}s · ${num(live.activeSessions)} sessions`
+              : 'No live users yet'
+          }
+        />
         <StatCard
           label="New users (today)"
           value={num(data?.newUsers.today)}

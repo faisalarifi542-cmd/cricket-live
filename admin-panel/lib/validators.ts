@@ -57,6 +57,11 @@ export const streamSchema = z.object({
   clear_key_key_id: z.string().optional().nullable(),
   clear_key_key: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  // Send the "stream published" push on a Draft -> Published transition.
+  // Opt-in, ENABLED BY DEFAULT (matches the backend default).
+  notify_on_publish: z.boolean().default(true),
+  // Manual force-send (admin explicitly re-pushes); still deduped server-side.
+  send_push_now: z.boolean().default(false),
 });
 export type StreamInput = z.infer<typeof streamSchema>;
 

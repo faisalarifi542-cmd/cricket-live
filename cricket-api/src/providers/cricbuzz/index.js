@@ -317,6 +317,21 @@ export class CricbuzzProvider extends BaseProvider {
     }
   }
 
+  // Real Cricbuzz series schedule LIST (section B of /cricket-schedule/series/all)
+  // → array of { series_id, name, start_date, end_date, source } with the
+  // AUTHORITATIVE series-level date ranges. Best-effort: a parse/fetch failure
+  // returns [] rather than throwing.
+  async getFullSchedule() {
+    try {
+      const html = await cricbuzzApi.getScheduleSeriesPage();
+      this.recordSuccess();
+      return norm.parseScheduleSeriesPage(html);
+    } catch (err) {
+      this.recordFailure();
+      return [];
+    }
+  }
+
   async getMatchHeader(matchId) {
     try {
       const raw = await cricbuzzApi.getMatchHeader(matchId);

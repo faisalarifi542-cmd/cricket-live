@@ -7,6 +7,7 @@ import {
   HeartPulse,
   Pencil,
   Plus,
+  Radio,
   RefreshCw,
   Trash2,
   Wifi,
@@ -20,8 +21,9 @@ import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Switch } from '@/components/ui/Switch';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { StreamForm, type StreamFormValue } from '@/components/forms/StreamForm';
-import { streamsApi, type StreamRow } from '@/lib/api';
+import { StreamForm, type StreamFormValue, type StreamMatchMeta } from '@/components/forms/StreamForm';
+import { SyncMatchesModal } from '@/components/streams/SyncMatchesModal';
+import { streamsApi, type StreamRow, type StreamSyncMatch } from '@/lib/api';
 import { useDebouncedValue, usePermissions, useResource, useAuth } from '@/lib/hooks';
 import { STREAM_QUALITIES, STREAM_TYPES } from '@/lib/constants';
 import { formatRelative } from '@/lib/utils';
@@ -54,7 +56,65 @@ function StreamsInner() {
 
   const [editing, setEditing] = useState<StreamFormValue | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [formMeta, setFormMeta] = useState<StreamMatchMeta | null>(null);
+  const [lockMatch, setLockMatch] = useState(false);
+  const [showSync, setShowSync] = useState(false);
   const [toDelete, setToDelete] = useState<StreamRow | null>(null);
+
+  // Open the create form pre-filled (and locked) from a real synced match — the
+  // editor never types match metadata.
+  function addStreamFromMatch(m: StreamSyncMatch) {
+    setEditing({
+      match_external_id: m.match_external_id,
+      match_title: m.title,
+      team_a: m.team1_name,
+      team_b: m.team2_name,
+      title: '',
+      notify_on_publish: true,
+    } as StreamFormValue);
+    setFormMeta({
+      match_external_id: m.match_external_id,
+      matchup: m.matchup,
+      series_name: m.series_name,
+      venue: m.venue,
+      start_time: m.start_time,
+      status_text: m.status_text,
+      phase: m.phase,
+    });
+    setLockMatch(true);
+    setShowSync(false);
+    setShowForm(true);
+  }
+
+  // Always load the FULL saved record before editing so every field prefills
+  // (never a blank edit form).
+  async function openEdit(id: number | string, meta?: StreamSyncMatch | null) {
+    const t = toast.loading('Loading stream…');
+    try {
+      const res = await streamsApi.get(id);
+      toast.dismiss(t);
+      setEditing(res.data as unknown as StreamFormValue);
+      setFormMeta(
+        meta
+          ? {
+              match_external_id: meta.match_external_id,
+              matchup: meta.matchup,
+              series_name: meta.series_name,
+              venue: meta.venue,
+              start_time: meta.start_time,
+              status_text: meta.status_text,
+              phase: meta.phase,
+            }
+          : null,
+      );
+      setLockMatch(!!meta);
+      setShowSync(false);
+      setShowForm(true);
+    } catch (err) {
+      toast.dismiss(t);
+      toast.error(err instanceof Error ? err.message : 'Failed to load stream');
+    }
+  }
 
   const rows = useMemo(() => {
     let list = (data?.data || []) as StreamRow[];
@@ -213,10 +273,7 @@ function StreamsInner() {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  setEditing(r as unknown as StreamFormValue);
-                  setShowForm(true);
-                }}
+                onClick={() => openEdit(r.id)}
                 icon={<Pencil className="h-3.5 w-3.5" />}
               >
                 Edit
@@ -249,11 +306,22 @@ function StreamsInner() {
             >
               Refresh
             </Button>
+            {perms.can('streams.view') && (
+              <Button
+                variant="secondary"
+                icon={<Radio className="h-4 w-4" />}
+                onClick={() => setShowSync(true)}
+              >
+                Sync Live &amp; Upcoming Matches
+              </Button>
+            )}
             {perms.can('streams.write') && (
               <Button
                 icon={<Plus className="h-4 w-4" />}
                 onClick={() => {
                   setEditing(null);
+                  setFormMeta(null);
+                  setLockMatch(false);
                   setShowForm(true);
                 }}
               >
@@ -327,7 +395,17 @@ function StreamsInner() {
         open={showForm}
         onClose={() => setShowForm(false)}
         initial={editing}
+        matchMeta={formMeta}
+        lockMatch={lockMatch}
         onSaved={reload}
+      />
+
+      <SyncMatchesModal
+        open={showSync}
+        onClose={() => setShowSync(false)}
+        canWrite={perms.can('streams.write')}
+        onAddStream={addStreamFromMatch}
+        onEditStream={(id, match) => openEdit(id, match)}
       />
 
       <ConfirmDialog

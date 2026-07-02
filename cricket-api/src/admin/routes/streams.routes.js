@@ -2,9 +2,18 @@ import { adminAuth, requirePermissions } from '../auth.js';
 import { withAudit, recordAudit } from '../audit.js';
 import { query } from '../../lib/db.js';
 import axios from 'axios';
+import { DateTime } from 'luxon';
 import { clearDataCache } from '../../lib/data-control.js';
 import { getRedis, KEYS } from '../../lib/redis.js';
 import { recordNotificationHistory, sendOneSignalNotification } from '../../lib/onesignal.js';
+import providerManager from '../../providers/provider-manager.js';
+import {
+  NOTIFICATION_EVENTS,
+  streamPublishedKey,
+  claimNotificationEvent,
+  markNotificationLog,
+  getStreamNotificationStatus,
+} from '../../lib/notification-dedupe.js';
  
 const ALLOWED_QUALITY = new Set(['AUTO', 'FHD', 'HD', 'SD']);
 const ALLOWED_TYPE = new Set(['hls', 'dash', 'mpd', 'iframe', 'external']);
@@ -319,33 +328,248 @@ async function invalidateStreamCaches(matchId) {
   ).catch(() => null);
 }
 
-async function sendStreamNotification(row) {
-  if (!row?.match_external_id) return null;
-  const notification = {
-    title: row.match_title || row.title || 'Live stream is available',
-    body: `Watch live cricket now on CricPro.`,
-    target_type: 'all',
+// A stream is "Published" (visible to users) when it is active and the admin
+// has not parked it in draft/disabled. Mirrors public-app-state's intent.
+function isStreamPublished(row) {
+  if (!row) return false;
+  const active = Number(row.is_active) === 1;
+  const state = String(row.lifecycle_state || 'scheduled').toLowerCase();
+  return active && state !== 'draft' && state !== 'disabled';
+}
+
+function streamMatchupLabel(row) {
+  const a = (row.team_a || '').trim();
+  const b = (row.team_b || '').trim();
+  if (a && b) return `${a} vs ${b}`;
+  return (row.match_title || row.title || 'Your match').trim();
+}
+
+// Clean, premium publish notification derived purely from the stream's real
+// match metadata (auto-filled at Sync/Add time — no manual typing).
+function buildStreamNotification(row) {
+  const matchup = streamMatchupLabel(row);
+  return {
+    title: 'Live Stream Available',
+    body: `${matchup} is now live on CricPro. Tap to watch.`,
+    target_type: 'category',
+    target_value: 'live_stream',
     deep_link_type: 'live_stream',
-    deep_link_value: row.match_external_id,
+    deep_link_value: String(row.match_external_id),
     payload: {
       type: 'live_stream',
       matchId: String(row.match_external_id),
       deepLink: `cricpro://match/${row.match_external_id}/live`,
     },
   };
-  const result = await sendOneSignalNotification(notification);
-  await recordNotificationHistory({
-    notification,
-    payload: result.payload,
-    providerResponse: result.response,
-    status: 'sent',
+}
+
+/**
+ * Send the "stream published" push at most ONCE per stream, only on a real
+ * Draft/Inactive -> Published transition (or an explicit force), de-duplicated
+ * via notification_log so repeated saves never re-blast users.
+ *
+ * @returns {Promise<{status: 'sent'|'failed'|'skipped'|'already_sent', reason?: string}>}
+ */
+async function maybeSendPublishNotification(row, { wasPublished, notifyOptIn, force = false } = {}) {
+  if (!row?.match_external_id) return { status: 'skipped', reason: 'no_match' };
+  if (!notifyOptIn && !force) return { status: 'skipped', reason: 'opt_out' };
+  if (!isStreamPublished(row)) return { status: 'skipped', reason: 'not_published' };
+  // Only fire on the transition into published (unless the admin forced a send).
+  if (wasPublished && !force) return { status: 'skipped', reason: 'already_published' };
+
+  const dedupeKey = streamPublishedKey(row.id);
+  const notification = buildStreamNotification(row);
+  const claim = await claimNotificationEvent({
+    matchId: row.match_external_id,
+    eventType: NOTIFICATION_EVENTS.STREAM_PUBLISHED,
+    dedupeKey,
+    streamId: row.id,
+    title: notification.title,
+    body: notification.body,
   });
-  return result.response;
+  if (!claim.claimed) return { status: 'already_sent', reason: 'deduped' };
+
+  try {
+    const result = await sendOneSignalNotification(notification);
+    await markNotificationLog(dedupeKey, { status: 'sent', providerResponse: result.response });
+    await recordNotificationHistory({
+      notification,
+      payload: result.payload,
+      providerResponse: result.response,
+      status: 'sent',
+    });
+    return { status: 'sent' };
+  } catch (err) {
+    await markNotificationLog(dedupeKey, { status: 'failed', errorMessage: err.message, providerResponse: err.providerResponse || null });
+    await recordNotificationHistory({
+      notification,
+      status: 'failed',
+      errorMessage: err.message,
+      providerResponse: err.providerResponse || null,
+    });
+    return { status: 'failed', reason: err.message };
+  }
+}
+
+// "Send notification on publish" — opt-in flag, ENABLED BY DEFAULT. Accepts the
+// new `notify_on_publish` plus the legacy `send_push_now` (manual force).
+function publishNotifyOptIn(body = {}) {
+  const raw = body.notify_on_publish;
+  if (raw === undefined || raw === null) return true; // default ON
+  return !(raw === false || raw === 0 || raw === '0' || raw === 'false');
+}
+
+// ---------------------------------------------------------------------------
+// Sync Live & Upcoming Matches (admin "Sync" button)
+// ---------------------------------------------------------------------------
+const COMPLETED_STATUSES = new Set(['completed', 'complete', 'finished', 'abandoned', 'no_result', 'recent']);
+
+function matchupTitle(m) {
+  const a = m.team1?.short_name || m.team1?.name || '';
+  const b = m.team2?.short_name || m.team2?.name || '';
+  if (a && b) return `${a} vs ${b}`;
+  return m.match_desc || m.series_name || 'Match';
+}
+
+// Shape a provider match into the rich, ready-to-autofill record the admin
+// "Add Stream" form consumes — the editor never types match metadata.
+function syncMatchDto(m, phase) {
+  const venueParts = [m.venue?.name, m.venue?.city].filter(Boolean);
+  return {
+    match_id: String(m.match_id),
+    match_external_id: String(m.match_id),
+    title: m.match_desc || matchupTitle(m),
+    matchup: matchupTitle(m),
+    team1_name: m.team1?.name || '',
+    team1_short: m.team1?.short_name || '',
+    team1_logo: m.team1?.logo_url || null,
+    team2_name: m.team2?.name || '',
+    team2_short: m.team2?.short_name || '',
+    team2_logo: m.team2?.logo_url || null,
+    series_id: m.series_id || '',
+    series_name: m.series_name || '',
+    venue: venueParts.join(', '),
+    start_time: m.start_time || null,
+    match_format: m.match_format || '',
+    match_type: m.match_type || '',
+    status: m.status || '',
+    status_text: m.status_text || '',
+    phase, // 'live' | 'upcoming'
+  };
+}
+
+// Summarise the existing stream records for a match into an admin-friendly
+// status label so the Sync result can show "Published" / "Stream Added" /
+// "Add Stream" without the editor digging into each record.
+function summariseStreamsForMatch(rows = []) {
+  if (!rows.length) {
+    return { has_stream: false, stream_count: 0, published: false, stream_status: 'none', stream_status_label: 'Add Stream', streams: [] };
+  }
+  const published = rows.some((r) => isStreamPublished(r));
+  return {
+    has_stream: true,
+    stream_count: rows.length,
+    published,
+    stream_status: published ? 'published' : 'draft',
+    stream_status_label: published ? 'Published' : 'Stream Added',
+    streams: rows.map((r) => ({
+      id: r.id,
+      title: r.title || r.label || null,
+      is_active: !!r.is_active,
+      status: r.status || 'unknown',
+      lifecycle_state: r.lifecycle_state || 'scheduled',
+      priority: Number(r.priority || 100),
+    })),
+  };
 }
  
 export default async function streamsRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
  
+  fastify.get('/sync', { preHandler: [requirePermissions('streams.view')] }, async (request) => {
+    const requestedTz = String(request.query?.tz || 'UTC');
+    const zone = DateTime.now().setZone(requestedTz).isValid ? requestedTz : 'UTC';
+    const now = DateTime.now().setZone(zone);
+    const windowStart = now.startOf('day');
+    const windowEnd = now.plus({ days: 1 }).endOf('day');
+
+    const [liveRes, upcomingRes] = await Promise.allSettled([
+      providerManager.execute('getLiveMatches'),
+      providerManager.execute('getUpcomingMatches'),
+    ]);
+    const liveList = liveRes.status === 'fulfilled' && Array.isArray(liveRes.value?.data) ? liveRes.value.data : [];
+    const upcomingList = upcomingRes.status === 'fulfilled' && Array.isArray(upcomingRes.value?.data) ? upcomingRes.value.data : [];
+    const provider = liveRes.value?.provider || upcomingRes.value?.provider || null;
+    const errors = [];
+    if (liveRes.status === 'rejected') errors.push(`live: ${liveRes.reason?.message || 'failed'}`);
+    if (upcomingRes.status === 'rejected') errors.push(`upcoming: ${upcomingRes.reason?.message || 'failed'}`);
+
+    // Dedupe by match id — LIVE wins over an upcoming duplicate.
+    const byId = new Map();
+    for (const m of liveList) {
+      const id = String(m?.match_id || '');
+      if (!id || COMPLETED_STATUSES.has(String(m.status))) continue;
+      byId.set(id, syncMatchDto(m, 'live'));
+    }
+    for (const m of upcomingList) {
+      const id = String(m?.match_id || '');
+      if (!id || byId.has(id) || COMPLETED_STATUSES.has(String(m.status))) continue;
+      // today/tomorrow window only (timezone-safe).
+      const start = m.start_time ? DateTime.fromISO(m.start_time, { zone }) : null;
+      if (!start || !start.isValid || start < windowStart || start > windowEnd) continue;
+      byId.set(id, syncMatchDto(m, 'upcoming'));
+    }
+
+    const items = [...byId.values()];
+
+    // One round-trip to attach existing stream records per match.
+    if (items.length) {
+      const ids = items.map((i) => i.match_external_id);
+      const placeholders = ids.map(() => '?').join(', ');
+      const streamRows = await query(
+        `SELECT id, match_external_id, title, label, is_active, status, lifecycle_state, priority
+           FROM match_streams
+          WHERE match_external_id IN (${placeholders})
+          ORDER BY priority ASC, id ASC`,
+        ids,
+      ).catch(() => []);
+      const grouped = new Map();
+      for (const r of streamRows) {
+        const key = String(r.match_external_id);
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(r);
+      }
+      for (const item of items) {
+        Object.assign(item, summariseStreamsForMatch(grouped.get(item.match_external_id) || []));
+      }
+    }
+
+    // Live first, then upcoming by start time.
+    items.sort((a, b) => {
+      if (a.phase !== b.phase) return a.phase === 'live' ? -1 : 1;
+      return String(a.start_time || '').localeCompare(String(b.start_time || ''));
+    });
+
+    return {
+      success: true,
+      data: {
+        timezone: zone,
+        provider: provider || 'cricbuzz',
+        syncedAt: new Date().toISOString(),
+        window: { from: windowStart.toISO(), to: windowEnd.toISO() },
+        counts: {
+          total: items.length,
+          live: items.filter((i) => i.phase === 'live').length,
+          upcoming: items.filter((i) => i.phase === 'upcoming').length,
+          withStream: items.filter((i) => i.has_stream).length,
+          published: items.filter((i) => i.published).length,
+        },
+        errors,
+        matches: items,
+      },
+    };
+  });
+
   fastify.get('/', { preHandler: [requirePermissions('streams.view')] }, async (request) => {
     const { match_external_id, q, status, is_active } = request.query;
     const where = [];
@@ -371,7 +595,23 @@ export default async function streamsRoutes(fastify) {
   fastify.get('/:id', { preHandler: [requirePermissions('streams.view')] }, async (request, reply) => {
     const rows = await query(`SELECT * FROM match_streams WHERE id = ?`, [request.params.id]);
     if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
-    return { success: true, data: rowToDto(rows[0]) };
+    const dto = rowToDto(rows[0]);
+    const notifyLog = await getStreamNotificationStatus(request.params.id);
+    return {
+      success: true,
+      data: {
+        ...dto,
+        published: isStreamPublished(rows[0]),
+        publish_notification: notifyLog
+          ? {
+              status: notifyLog.status,
+              error: notifyLog.error_message || null,
+              sent_at: notifyLog.sent_at || null,
+              created_at: notifyLog.created_at || null,
+            }
+          : null,
+      },
+    };
   });
  
   fastify.post('/', { preHandler: [requirePermissions('streams.write')] }, async (request, reply) => {
@@ -397,10 +637,17 @@ export default async function streamsRoutes(fastify) {
     );
     const row = await query(`SELECT * FROM match_streams WHERE id = ?`, [result.insertId]);
     await invalidateStreamCaches(data.match_external_id);
-    if (request.body?.send_push_now && row[0]?.is_active) {
-      await sendStreamNotification(row[0]).catch(() => null);
+    // A freshly-created stream has no prior state, so publishing it now is a
+    // genuine transition. Fires once (deduped); manual send_push_now forces it.
+    let notification = { status: 'skipped', reason: 'not_published' };
+    if (row[0]) {
+      notification = await maybeSendPublishNotification(row[0], {
+        wasPublished: false,
+        notifyOptIn: publishNotifyOptIn(request.body),
+        force: !!request.body?.send_push_now,
+      });
     }
-    return reply.code(201).send({ success: true, data: rowToDto(row[0]) });
+    return reply.code(201).send({ success: true, data: rowToDto(row[0]), notification });
   });
  
   fastify.put('/:id', { preHandler: [requirePermissions('streams.write')] }, async (request, reply) => {
@@ -431,10 +678,18 @@ export default async function streamsRoutes(fastify) {
     if (data.match_external_id && data.match_external_id !== old[0].match_external_id) {
       await invalidateStreamCaches(data.match_external_id);
     }
-    if (request.body?.send_push_now && row[0]?.is_active) {
-      await sendStreamNotification(row[0]).catch(() => null);
+    // Send the publish push only on a real Draft/Inactive -> Published
+    // transition (deduped). Re-saving an already-published stream is a no-op;
+    // send_push_now forces a (still deduped) manual send.
+    let notification = { status: 'skipped', reason: 'not_published' };
+    if (row[0]) {
+      notification = await maybeSendPublishNotification(row[0], {
+        wasPublished: isStreamPublished(old[0]),
+        notifyOptIn: publishNotifyOptIn(request.body),
+        force: !!request.body?.send_push_now,
+      });
     }
-    return reply.send({ success: true, data: rowToDto(row[0]) });
+    return reply.send({ success: true, data: rowToDto(row[0]), notification });
   });
  
   fastify.delete('/:id', { preHandler: [requirePermissions('streams.write')] }, async (request, reply) => {

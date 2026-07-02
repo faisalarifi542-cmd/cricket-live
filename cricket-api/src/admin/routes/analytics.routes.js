@@ -10,6 +10,7 @@
  */
 import { adminAuth, requirePermissions } from '../auth.js';
 import { query } from '../../lib/db.js';
+import { getPresence } from '../../lib/presence.js';
 
 // Clamp a from/to query into safe DATETIME bounds. Defaults to last 30 days.
 function dateRange(q) {
@@ -37,6 +38,13 @@ const COUNT_EVENT = (name) => `SUM(event_name = '${name}') `;
 
 export default async function analyticsAdminRoutes(fastify) {
   fastify.addHook('preHandler', adminAuth);
+
+  // GET /admin/analytics/realtime — active users/sessions right now, from the
+  // Redis presence window (real heartbeats only; stale users auto-expire).
+  fastify.get('/realtime', { preHandler: [requirePermissions('analytics.view')] }, async () => {
+    const presence = await getPresence();
+    return { success: true, data: presence };
+  });
 
   // GET /admin/analytics/summary?from=&to=
   fastify.get('/summary', { preHandler: [requirePermissions('analytics.view')] }, async (request) => {

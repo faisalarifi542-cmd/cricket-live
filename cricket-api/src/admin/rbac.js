@@ -148,11 +148,13 @@ export const ROLE_PERMISSIONS = {
   [ROLE_EDITOR]: [
     'dashboard.view',
     'matches.view',
-    'streams.view',
+    // Live streams: editors run the sync and manage stream records + images.
+    'streams.view', 'streams.write', 'streams.test',
     'home.view', 'home.write',
     'series.view',
-    'teams.view',
-    'players.view',
+    // Teams/players: editors manage display info + images (logos/photos).
+    'teams.view', 'teams.write',
+    'players.view', 'players.write',
     'schedule.view', 'schedule.write',
     'news.view', 'news.write',
   ],

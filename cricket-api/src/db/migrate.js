@@ -487,6 +487,22 @@ const TABLES = [
     FOREIGN KEY (provider_id) REFERENCES api_providers(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 
+  // Maps a provider's match id to the extra ids that provider needs to fetch a
+  // single match. ESPN Cricinfo, for example, requires BOTH matchId AND seriesId
+  // for its summary/playbyplay endpoints, but the app only carries one id. This
+  // table persists the matchId -> seriesId link (learned from ESPN's scoreboard
+  // feed) so a match-detail request that arrives before the first scoreboard poll
+  // (e.g. right after a restart) can still resolve its seriesId. Keyed by
+  // provider_type so other providers can reuse it.
+  `CREATE TABLE IF NOT EXISTS provider_match_mappings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    provider_type VARCHAR(50) NOT NULL,
+    match_id VARCHAR(64) NOT NULL,
+    series_id VARCHAR(64),
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_provider_match (provider_type, match_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
   `CREATE TABLE IF NOT EXISTS app_settings (
     id INT AUTO_INCREMENT PRIMARY KEY,
     setting_key VARCHAR(140) UNIQUE NOT NULL,
@@ -1022,6 +1038,9 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'players', 'image_updated_at', 'image_updated_at DATETIME NULL');
   await addColumnIfMissing(pool, 'players', 'is_image_active', 'is_image_active TINYINT(1) DEFAULT 1');
   await addColumnIfMissing(pool, 'players', 'is_active', 'is_active TINYINT(1) DEFAULT 1');
+  // Cricbuzz sync bookkeeping: when this player was last refreshed from the provider.
+  await addColumnIfMissing(pool, 'players', 'last_synced_at', 'last_synced_at DATETIME NULL');
+  await addColumnIfMissing(pool, 'players', 'short_name', 'short_name VARCHAR(120) NULL');
 
   await addColumnIfMissing(pool, 'match_streams', 'match_title', 'match_title VARCHAR(250) NULL');
   await addColumnIfMissing(pool, 'match_streams', 'team_a', 'team_a VARCHAR(180) NULL');
@@ -1123,6 +1142,28 @@ async function applyCompatibilityMigrations(pool) {
   await addColumnIfMissing(pool, 'push_notifications', 'payload', 'payload JSON NULL');
   await addColumnIfMissing(pool, 'push_notifications', 'provider_response', 'provider_response JSON NULL');
   await addColumnIfMissing(pool, 'push_notifications', 'error_message', 'error_message TEXT NULL');
+
+  // Automated-notification de-duplication log. A UNIQUE dedupe_key guarantees a
+  // logical event (stream published, new innings, ...) fires at most ONCE,
+  // surviving repeated admin saves, duplicate poll ticks, and backend restarts.
+  // See lib/notification-dedupe.js. status: pending | sent | failed | skipped.
+  await pool.query(`CREATE TABLE IF NOT EXISTS notification_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    match_external_id VARCHAR(80) NOT NULL,
+    event_type VARCHAR(40) NOT NULL,
+    dedupe_key VARCHAR(180) NOT NULL,
+    stream_id BIGINT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    title VARCHAR(220) NULL,
+    body TEXT NULL,
+    provider_response JSON NULL,
+    error_message TEXT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sent_at DATETIME NULL,
+    UNIQUE KEY uniq_notification_dedupe (dedupe_key),
+    INDEX idx_notification_log_match (match_external_id, event_type),
+    INDEX idx_notification_log_created (created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(() => null);
 
   await addColumnIfMissing(pool, 'cache_events', 'cache_key', 'cache_key VARCHAR(300) NULL');
   await addColumnIfMissing(pool, 'cache_events', 'data_type', 'data_type VARCHAR(80) NULL');

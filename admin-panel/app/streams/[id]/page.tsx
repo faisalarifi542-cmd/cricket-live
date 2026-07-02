@@ -152,6 +152,13 @@ function StreamDetail() {
               <div className="text-[10px] uppercase tracking-wide text-slate-500">Stream URL</div>
               <div className="mt-1 break-all font-mono text-xs text-cyan-200">{data.stream_url}</div>
             </div>
+            <div className="mt-3 rounded-lg border border-line bg-white/[0.03] p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Publish notification</div>
+                <PublishNotificationBadge data={data} />
+              </div>
+              <p className="text-xs text-slate-400">{publishNotificationHint(data)}</p>
+            </div>
             {(data as Record<string, unknown>).notes ? (
               <div className="mt-3 rounded-lg border border-line bg-white/[0.04] p-3 text-xs text-slate-300">
                 {String((data as Record<string, unknown>).notes)}
@@ -208,4 +215,32 @@ function StreamDetail() {
       />
     </>
   );
+}
+
+function PublishNotificationBadge({ data }: { data: StreamRow }) {
+  const n = data.publish_notification;
+  if (!n) return <StatusBadge tone="muted">Not sent yet</StatusBadge>;
+  if (n.status === 'sent') return <StatusBadge tone="success">Sent</StatusBadge>;
+  if (n.status === 'failed') return <StatusBadge tone="danger">Failed</StatusBadge>;
+  if (n.status === 'already_sent') return <StatusBadge tone="info">Already sent</StatusBadge>;
+  return <StatusBadge tone="muted">Skipped</StatusBadge>;
+}
+
+function publishNotificationHint(data: StreamRow): string {
+  const n = data.publish_notification;
+  if (!n) {
+    return data.published
+      ? 'Published — a notification will be sent once on the first publish.'
+      : 'No publish notification sent. It fires once when the stream becomes Published.';
+  }
+  if (n.status === 'sent') {
+    return `Sent${n.sent_at ? ` at ${formatDateTime(n.sent_at)}` : ''}. It will not be re-sent for this stream.`;
+  }
+  if (n.status === 'failed') {
+    return `Last attempt failed: ${n.error || 'unknown error'}.`;
+  }
+  if (n.status === 'already_sent') {
+    return 'Already sent for this stream (deduplicated) — re-saving will not notify again.';
+  }
+  return 'Skipped — the stream is not Published or notifications are turned off.';
 }

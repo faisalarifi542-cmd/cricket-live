@@ -1,326 +1,253 @@
-import axios from 'axios';
 import { BaseProvider } from '../base-provider.js';
-import config from '../../config/index.js';
+import { cricinfoClient } from './client.js';
+import * as norm from './normalizer.js';
+import { ProviderFeatureNotSupported, ProviderIncompleteData } from '../provider-results.js';
 import logger from '../../lib/logger.js';
 
-const client = axios.create({
-  baseURL: config.providers.cricinfo.baseUrl,
-  timeout: 10000,
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-    'Accept': 'application/json',
-  },
-});
-
+/**
+ * ESPN Cricinfo provider (site.api / site.web.api JSON, priority 2 fallback).
+ *
+ * INTERFACE PARITY, not data-depth parity: every BaseProvider method exists, but
+ * methods ESPN's public site.api cannot serve return a typed sentinel
+ * (ProviderFeatureNotSupported / ProviderIncompleteData) instead of empty-but-OK
+ * data, so provider-manager falls through to the next provider rather than
+ * handing back a blank response. Sentinels are RETURNED (not thrown), so they
+ * never trip this provider's health cooldown — only real network/parse errors do.
+ */
 export class CricinfoProvider extends BaseProvider {
   constructor() {
     super('cricinfo', 2);
   }
 
-  async getLiveMatches() {
+  /** Run a fetch+normalize with unified health accounting for genuine errors. */
+  async #run(label, fn) {
     try {
-      const { data } = await client.get('/pages/matches/current?lang=en&latest=true');
+      const result = await fn();
       this.recordSuccess();
-      return this.#normalizeMatchList(data);
+      return result;
     } catch (err) {
       this.recordFailure();
-      logger.warn({ msg: 'Cricinfo getLiveMatches failed', error: err.message });
+      logger.warn({ msg: `Cricinfo ${label} failed`, error: err.message });
       throw err;
     }
+  }
+
+  // --- match lists ---------------------------------------------------------
+
+  async getLiveMatches() {
+    return this.#run('getLiveMatches', async () => {
+      const raw = await cricinfoClient.getScoreboardHeader();
+      return norm.normalizeMatchList(raw, 'live');
+    });
   }
 
   async getUpcomingMatches() {
-    try {
-      const { data } = await client.get('/pages/matches/current?lang=en&latest=true');
-      this.recordSuccess();
-      return this.#normalizeMatchList(data, 'upcoming');
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getUpcomingMatches', async () => {
+      const raw = await cricinfoClient.getScoreboardHeader();
+      return norm.normalizeMatchList(raw, 'upcoming');
+    });
   }
 
   async getRecentMatches() {
-    try {
-      const { data } = await client.get('/pages/matches/current?lang=en&latest=true');
-      this.recordSuccess();
-      return this.#normalizeMatchList(data, 'recent');
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getRecentMatches', async () => {
+      const raw = await cricinfoClient.getScoreboardHeader();
+      return norm.normalizeMatchList(raw, 'recent');
+    });
   }
 
+  // --- match detail --------------------------------------------------------
+
   async getMatchInfo(matchId) {
+    return this.#run('getMatchInfo', async () => {
+      const raw = await cricinfoClient.getSummary(matchId);
+      return norm.normalizeMatchDetail(raw);
+    });
+  }
+
+  // getMatchInfoDetailed is a Cricbuzz-only richer variant; site.api's summary
+  // is the same header, so reuse it (the app calls this from provider-fetch).
+  async getMatchInfoDetailed(matchId) {
+    return this.#run('getMatchInfoDetailed', async () => {
+      const raw = await cricinfoClient.getSummary(matchId);
+      return norm.normalizeMatchDetail(raw);
+    });
+  }
+
+  async getMatchHeader(matchId) {
     try {
-      const { data } = await client.get(`/pages/match/details?lang=en&seriesId=0&matchId=${matchId}`);
+      const raw = await cricinfoClient.getSummary(matchId);
       this.recordSuccess();
-      return this.#normalizeMatchDetail(data);
+      return norm.normalizeMatchDetail(raw);
     } catch (err) {
       this.recordFailure();
-      throw err;
+      return null; // header is a best-effort fallback in the app
     }
   }
 
   async getScorecard(matchId) {
-    try {
-      const { data } = await client.get(`/pages/match/scorecard?lang=en&seriesId=0&matchId=${matchId}`);
-      this.recordSuccess();
-      return this.#normalizeScorecard(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getScorecard', async () => {
+      const raw = await cricinfoClient.getSummary(matchId);
+      const card = norm.normalizeScorecard(raw);
+      if (!card || !card.innings.length) {
+        return new ProviderIncompleteData('getScorecard', 'ESPN summary had no innings/roster data');
+      }
+      return card;
+    });
   }
 
   async getCommentary(matchId) {
-    try {
-      const { data } = await client.get(`/pages/match/comments?lang=en&seriesId=0&matchId=${matchId}&inningNumber=1&commentType=ALL&fromInningOver=-1`);
-      this.recordSuccess();
-      return this.#normalizeCommentary(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getCommentary', async () => {
+      const raw = await cricinfoClient.getPlayByPlay(matchId, undefined, 1);
+      return norm.normalizeCommentary(raw);
+    });
   }
 
+  async getFullCommentary(matchId, inningsId) {
+    return this.#run('getFullCommentary', async () => {
+      // Page through ESPN commentary; inningsId is not a direct page selector on
+      // site.api, so we fetch the first few pages and return the merged list.
+      const first = await cricinfoClient.getPlayByPlay(matchId, undefined, 1);
+      const pageCount = Math.min(Number(first?.commentary?.pageCount || 1), 5);
+      let items = norm.normalizeCommentary(first);
+      for (let p = 2; p <= pageCount; p++) {
+        // eslint-disable-next-line no-await-in-loop
+        const next = await cricinfoClient.getPlayByPlay(matchId, undefined, p);
+        items = items.concat(norm.normalizeCommentary(next));
+      }
+      return items;
+    });
+  }
+
+  // --- series --------------------------------------------------------------
+
   async getSeriesList() {
-    try {
-      const { data } = await client.get('/pages/series/list?lang=en');
-      this.recordSuccess();
-      return this.#normalizeSeriesList(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getSeriesList', async () => {
+      const raw = await cricinfoClient.getScoreboardHeader();
+      return norm.normalizeSeriesList(raw);
+    });
   }
 
   async getSeriesInfo(seriesId) {
-    try {
-      const { data } = await client.get(`/pages/series/schedule?lang=en&seriesId=${seriesId}`);
-      this.recordSuccess();
-      return this.#normalizeMatchList(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getSeriesInfo', async () => {
+      const raw = await cricinfoClient.getSeriesScoreboard(seriesId);
+      return norm.normalizeSeriesInfo(raw, seriesId);
+    });
   }
 
   async getPointsTable(seriesId) {
-    try {
-      const { data } = await client.get(`/pages/series/standings?lang=en&seriesId=${seriesId}`);
-      this.recordSuccess();
-      return this.#normalizePointsTable(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    return this.#run('getPointsTable', async () => {
+      const raw = await cricinfoClient.getSeriesScoreboard(seriesId);
+      const table = norm.normalizePointsTable(raw);
+      if (!table.length) {
+        return new ProviderIncompleteData('getPointsTable', 'ESPN scoreboard exposed no standings');
+      }
+      return table;
+    });
   }
 
+  async getUpcomingSchedule(type, timestamp) {
+    return this.#run('getUpcomingSchedule', async () => {
+      const raw = await cricinfoClient.getScoreboardHeader();
+      return norm.normalizeSchedule(raw);
+    });
+  }
+
+  // --- player / team -------------------------------------------------------
+
+  // ESPN player/team profiles are not reliably reachable by bare id via the
+  // public site.api (they need the enclosing event/series context). Rather than
+  // return a hollow record that would shadow Cricbuzz, declare unsupported.
   async getPlayerInfo(playerId) {
-    try {
-      const { data } = await client.get(`/pages/player/summary?lang=en&playerId=${playerId}`);
-      this.recordSuccess();
-      return this.#normalizePlayer(data);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getPlayerInfo', 'ESPN site.api has no standalone player-by-id endpoint');
   }
 
   async getTeamInfo(teamId) {
-    try {
-      const { data } = await client.get(`/pages/team/schedule?lang=en&teamId=${teamId}`);
-      this.recordSuccess();
-      return this.#normalizeTeam(data, teamId);
-    } catch (err) {
-      this.recordFailure();
-      throw err;
-    }
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getTeamInfo', 'ESPN site.api has no standalone team-by-id endpoint');
   }
 
-  // --- Normalizers ---
+  // --- methods ESPN site.api does not serve → typed "not supported" --------
+  // These return (not throw) a sentinel so the manager cleanly falls through to
+  // the next provider. recordSuccess() keeps the provider "up" for health.
 
-  #normalizeMatchList(data, filter) {
-    const matches = data?.matches || data?.content?.matches || [];
-    return matches
-      .filter((m) => {
-        if (!filter) return true;
-        const state = (m.state || '').toLowerCase();
-        if (filter === 'upcoming') return state === 'upcoming' || state === 'pre';
-        if (filter === 'recent') return state === 'post' || state === 'complete';
-        return state === 'live';
-      })
-      .map((m) => ({
-        match_id: String(m.objectId || m.id || ''),
-        series_id: String(m.series?.objectId || ''),
-        series_name: m.series?.longName || '',
-        match_format: (m.format || '').toLowerCase(),
-        status: this.#mapStatus(m.state),
-        status_text: m.statusText || m.status || '',
-        team1: { id: String(m.teams?.[0]?.team?.objectId || ''), name: m.teams?.[0]?.team?.longName || '', short_name: m.teams?.[0]?.team?.abbreviation || '' },
-        team2: { id: String(m.teams?.[1]?.team?.objectId || ''), name: m.teams?.[1]?.team?.longName || '', short_name: m.teams?.[1]?.team?.abbreviation || '' },
-        venue: { name: m.ground?.longName || '', city: m.ground?.town?.name || '', country: m.ground?.country?.name || '' },
-        start_time: m.startTime || null,
-        score: {},
-        last_updated: new Date().toISOString(),
-      }));
+  async getMatchStats(matchId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getMatchStats');
   }
 
-  #normalizeMatchDetail(data) {
-    const m = data?.match || data;
-    return {
-      match_id: String(m.objectId || ''),
-      series_id: String(m.series?.objectId || ''),
-      series_name: m.series?.longName || '',
-      match_format: (m.format || '').toLowerCase(),
-      status: this.#mapStatus(m.state),
-      status_text: m.statusText || '',
-      team1: { id: String(m.teams?.[0]?.team?.objectId || ''), name: m.teams?.[0]?.team?.longName || '', short_name: m.teams?.[0]?.team?.abbreviation || '', innings: [] },
-      team2: { id: String(m.teams?.[1]?.team?.objectId || ''), name: m.teams?.[1]?.team?.longName || '', short_name: m.teams?.[1]?.team?.abbreviation || '', innings: [] },
-      venue: { name: m.ground?.longName || '', city: m.ground?.town?.name || '', country: m.ground?.country?.name || '' },
-      start_time: m.startTime || null,
-      toss: { winner: m.tossWinnerTeamId ? String(m.tossWinnerTeamId) : '', decision: m.tossWinnerChoice || '' },
-      result: m.statusText || '',
-      innings: [],
-      last_updated: new Date().toISOString(),
-    };
+  async getMatchOvers(matchId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getMatchOvers');
   }
 
-  #normalizeScorecard(data) {
-    const innings = data?.content?.innings || data?.innings || [];
-    return {
-      innings: innings.map((inn, idx) => ({
-        innings_number: idx + 1,
-        batting_team: inn.team?.longName || '',
-        batting_team_id: String(inn.team?.objectId || ''),
-        total: { runs: inn.runs || 0, wickets: inn.wickets || 0, overs: inn.overs || 0 },
-        run_rate: inn.runRate || 0,
-        extras: { total: inn.extras || 0, byes: inn.byes || 0, leg_byes: inn.legByes || 0, wides: inn.wides || 0, no_balls: inn.noballs || 0, penalty: 0 },
-        batting: (inn.inningBatsmen || []).map((b) => ({
-          player_id: String(b.player?.objectId || ''),
-          name: b.player?.longName || '',
-          runs: b.runs || 0, balls: b.balls || 0, fours: b.fours || 0, sixes: b.sixes || 0,
-          strike_rate: b.strikerate || 0, dismissal: b.dismissalText?.long || '', is_batting: false, is_striker: false,
-        })),
-        bowling: (inn.inningBowlers || []).map((b) => ({
-          player_id: String(b.player?.objectId || ''),
-          name: b.player?.longName || '',
-          overs: b.overs || 0, maidens: b.maidens || 0, runs: b.conceded || 0, wickets: b.wickets || 0,
-          economy: b.economy || 0, dots: 0, wides: b.wides || 0, no_balls: b.noballs || 0, is_bowling: false,
-        })),
-        fall_of_wickets: [],
-        partnerships: [],
-      })),
-      last_updated: new Date().toISOString(),
-    };
+  async getNewsStories(cursor) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getNewsStories');
   }
 
-  #normalizeCommentary(data) {
-    const comms = data?.content?.comments || data?.comments || [];
-    return comms.map((c) => ({
-      id: String(c.id || Date.now()),
-      innings_number: c.inningNumber || 0,
-      over: c.overNumber ?? null,
-      ball: c.ballNumber ?? null,
-      event: c.type?.toLowerCase() || 'ball',
-      text: c.text || '',
-      runs: c.totalRuns || 0,
-      is_wicket: c.type === 'WICKET',
-      is_boundary: c.totalRuns === 4 || c.totalRuns === 6,
-      batsman: c.batsmanName || '',
-      bowler: c.bowlerName || '',
-      timestamp: Date.now(),
-    }));
+  async getSeriesStatsTypes(seriesId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesStatsTypes');
   }
 
-  #normalizeSeriesList(data) {
-    const collections = data?.content?.collections || data?.series || [];
-    return collections.map((s) => ({
-      series_id: String(s.objectId || s.id || ''),
-      name: s.longName || s.name || '',
-      season: s.season || '',
-      start_date: s.startDate || null,
-      end_date: s.endDate || null,
-    }));
+  async getSeriesStatsTable(seriesId, statType) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesStatsTable');
   }
 
-  #normalizePointsTable(data) {
-    const groups = data?.content?.standings?.groups || data?.standings || [];
-    const result = [];
-    for (const group of groups) {
-      for (const entry of group.teamStats || []) {
-        result.push({
-          team_id: String(entry.teamInfo?.objectId || ''),
-          team_name: entry.teamInfo?.longName || '',
-          team_short: entry.teamInfo?.abbreviation || '',
-          position: entry.rank || 0,
-          played: entry.matchesPlayed || 0,
-          won: entry.matchesWon || 0,
-          lost: entry.matchesLost || 0,
-          tied: entry.matchesTied || 0,
-          no_result: entry.matchesNoResult || 0,
-          points: entry.points || 0,
-          nrr: parseFloat(entry.nrr || 0),
-          group: group.name || '',
-          qualified: false,
-        });
-      }
-    }
-    return result;
+  async getSeriesNews(seriesId, cursor) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesNews');
   }
 
-  #normalizePlayer(data) {
-    const p = data?.content?.player || data?.player || data;
-    return {
-      player_id: String(p.objectId || ''),
-      name: p.longName || p.name || '',
-      full_name: p.longName || '',
-      dob: p.dateOfBirth || null,
-      nationality: p.country?.name || '',
-      role: p.playingRole || '',
-      batting_style: p.longBattingStyles?.[0] || '',
-      bowling_style: p.longBowlingStyles?.[0] || '',
-      image_url: '',
-      teams: [],
-      bio: '',
-      stats: {},
-      last_updated: new Date().toISOString(),
-    };
+  async getMatchNews(matchId, cursor) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getMatchNews');
   }
 
-  #normalizeTeam(data, teamId) {
-    const t = data?.content?.team || {};
-    return {
-      team_id: String(t.objectId || teamId),
-      name: t.longName || '',
-      short_name: t.abbreviation || '',
-      logo_url: '',
-      country: t.country?.name || '',
-      players: [],
-      last_updated: new Date().toISOString(),
-    };
+  async getHighlights(matchId, inningsId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getHighlights');
   }
 
-  #mapStatus(state) {
-    if (!state) return 'upcoming';
-    const s = state.toLowerCase();
-    if (s === 'live') return 'live';
-    if (s === 'post' || s === 'complete') return 'completed';
-    if (s === 'pre' || s === 'upcoming') return 'upcoming';
-    return 'upcoming';
+  async getBallsMap(matchId, inningsId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getBallsMap');
   }
 
-  // Fallback methods for features not supported by Cricinfo
-  async getPointsTable() {
-    return []; // Not implemented in Cricinfo
+  async getOverByOver(matchId, inningsId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getOverByOver');
   }
 
-  async getMatchSquads() {
-    return { team1: null, team2: null }; // Not implemented in Cricinfo
+  async getMatchSquads(matchId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getMatchSquads');
   }
 
-  async getLiveLine() {
-    return null; // Not implemented in Cricinfo
+  async getLiveLine(matchId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getLiveLine');
+  }
+
+  async getSeriesTeams(seriesId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesTeams');
+  }
+
+  async getSeriesSquadGroups(seriesId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesSquadGroups');
+  }
+
+  async getSeriesSquad(seriesId, squadId) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getSeriesSquad');
+  }
+
+  async getRankings(params) {
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getRankings');
   }
 }

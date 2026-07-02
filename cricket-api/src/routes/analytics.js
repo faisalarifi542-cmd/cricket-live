@@ -1,4 +1,5 @@
 import { query } from '../lib/db.js';
+import { recordPresence } from '../lib/presence.js';
 import logger from '../lib/logger.js';
 
 // Privacy-safe analytics ingest. Anonymous device_id / session_id only — never
@@ -150,6 +151,23 @@ export default async function analyticsRoutes(fastify) {
     } catch (err) {
       // Never surface analytics errors to the client.
       logger.debug(`analytics ingest error: ${err.message}`);
+      return reply.code(204).send();
+    }
+  });
+
+  // POST /analytics/heartbeat — realtime presence. The app calls this every
+  // 30–60s while active. Stores the anonymous device/session in a Redis
+  // presence window (no PII, auto-expiring). Always 204 so the app never
+  // retry-storms.
+  fastify.post('/analytics/heartbeat', async (request, reply) => {
+    try {
+      const b = request.body || {};
+      const deviceId = clampId(b.device_id);
+      const sessionId = clampId(b.session_id);
+      if (deviceId || sessionId) await recordPresence({ deviceId, sessionId });
+      return reply.code(204).send();
+    } catch (err) {
+      logger.debug(`heartbeat error: ${err.message}`);
       return reply.code(204).send();
     }
   });

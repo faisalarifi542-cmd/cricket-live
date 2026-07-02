@@ -36,7 +36,7 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   permission?: string;
-  group: 'live' | 'content' | 'ops' | 'access';
+  group: 'live' | 'content' | 'ops' | 'access' | 'system';
 };
 
 export const navigation: NavItem[] = [
@@ -51,7 +51,6 @@ export const navigation: NavItem[] = [
   // Content
   { label: 'App Settings', href: '/settings', icon: Settings, permission: 'settings.view', group: 'content' },
   { label: 'Home Manager', href: '/homepage', icon: Home, permission: 'home.view', group: 'content' },
-  { label: 'App Assets', href: '/assets', icon: ImageIcon, permission: 'settings.view', group: 'content' },
   { label: 'Splash Screen', href: '/splash', icon: Sparkles, permission: 'settings.view', group: 'content' },
   { label: 'Series', href: '/series', icon: ClipboardList, permission: 'series.view', group: 'content' },
   { label: 'Teams', href: '/teams', icon: Users, permission: 'teams.view', group: 'content' },
@@ -63,15 +62,18 @@ export const navigation: NavItem[] = [
   { label: 'Notifications', href: '/notifications', icon: Bell, permission: 'notifications.view', group: 'ops' },
   { label: 'Analytics', href: '/analytics', icon: BarChart3, permission: 'analytics.view', group: 'ops' },
   { label: 'Ads', href: '/ads', icon: Megaphone, permission: 'ads.view', group: 'ops' },
-  { label: 'Cache', href: '/cache', icon: DatabaseZap, permission: 'cache.view', group: 'ops' },
-  { label: 'Data Control', href: '/data-control', icon: SlidersHorizontal, permission: 'cache.view', group: 'ops' },
-  { label: 'Health & Logs', href: '/health', icon: HeartPulse, permission: 'health.view', group: 'ops' },
 
   // Access control
-  { label: 'API Security', href: '/api-security', icon: ShieldCheck, permission: 'apiSecurity.view', group: 'access' },
   { label: 'Admin Users', href: '/users', icon: UserSquare2, permission: 'adminUsers.view', group: 'access' },
   { label: 'Roles', href: '/roles', icon: Shield, permission: 'roles.view', group: 'access' },
   { label: 'Audit Logs', href: '/audit-logs', icon: FileKey, permission: 'audit.view', group: 'access' },
+
+  // System & tools (advanced — hidden from Editors who lack these permissions)
+  { label: 'App Assets', href: '/assets', icon: ImageIcon, permission: 'settings.view', group: 'system' },
+  { label: 'Cache', href: '/cache', icon: DatabaseZap, permission: 'cache.view', group: 'system' },
+  { label: 'Data Control', href: '/data-control', icon: SlidersHorizontal, permission: 'dataControl.view', group: 'system' },
+  { label: 'API Security', href: '/api-security', icon: ShieldCheck, permission: 'apiSecurity.view', group: 'system' },
+  { label: 'Health & Logs', href: '/health', icon: HeartPulse, permission: 'health.view', group: 'system' },
 ];
 
 export const navigationGroups: { id: NavItem['group']; label: string }[] = [
@@ -79,6 +81,7 @@ export const navigationGroups: { id: NavItem['group']; label: string }[] = [
   { id: 'content', label: 'Content' },
   { id: 'ops', label: 'Operations' },
   { id: 'access', label: 'Access Control' },
+  { id: 'system', label: 'System & Tools' },
 ];
 
 export const STREAM_QUALITIES = ['AUTO', 'FHD', 'HD', 'SD'] as const;

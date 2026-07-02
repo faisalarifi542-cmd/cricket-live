@@ -677,6 +677,28 @@ export async function buildPublicAppConfig() {
       news: 'cricpro://news/:id',
       series: 'cricpro://series/:id',
     },
+    // Per-category default ON/OFF the app should apply on first run. Stream
+    // (and new-innings, which rides the stream category) are ON by default;
+    // every other category is opt-in (OFF) until the user enables it. The keys
+    // match the OneSignal tag categories (notif_<key>) the app syncs.
+    preferences: {
+      // Stream availability — ON by default.
+      streamDefaultOn: true,
+      // New innings rides the live_stream category and is ON for streamed
+      // matches by default.
+      newInningsDefaultOn: true,
+      defaults: {
+        live_stream: true,
+        live_scores: false,
+        match_start: false,
+        toss: false,
+        wickets: false,
+        innings_result: false,
+        favorite_team: false,
+        news: false,
+        announcements: false,
+      },
+    },
   };
 
   const player = {

@@ -376,6 +376,9 @@ async function start() {
   process.on('unhandledRejection', (err) => {
     logger.error({ msg: 'Unhandled rejection', error: err?.message, stack: err?.stack });
   });
+  process.on('uncaughtException', (err) => {
+    logger.error({ msg: 'Uncaught exception', error: err?.message, stack: err?.stack });
+  });
 }
 
 start();
