@@ -363,7 +363,7 @@ void main() {
       }
 
       test('WWC Jun 12 - Jul 05 with stale "upcoming" status => Ongoing', () {
-        final api = const ApiSeries(
+        const api = ApiSeries(
           id: '10119',
           name: "ICC Women's T20 World Cup 2026",
           status: 'upcoming', // stale provider text

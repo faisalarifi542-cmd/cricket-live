@@ -369,17 +369,14 @@ class _MatchesScreenState extends State<MatchesScreen>
   List<CricketMatch> _applyCategory(List<CricketMatch> items) {
     if (category == 0) return items;
     bool matches(CricketMatch m) {
-      final s = '${m.series} ${m.matchDesc}'.toLowerCase();
+      // Route through the shared [UpcomingSort] classifier (the same one
+      // Schedule and the repository use) so a match buckets the same way on
+      // every screen — instead of a divergent inline regex whose token set
+      // drifted (e.g. "cup"/"trophy" wrongly matched as Domestic).
       return switch (category) {
-        1 => RegExp(
-                r'(international|tour|world cup|champions|series|t20i|odi|test|trophy|asia cup|bilateral)')
-            .hasMatch(s),
-        2 => RegExp(
-                r'(league|premier|ipl|bbl|psl|cpl|the hundred|blast|super smash|t20 mumbai|ilt20)')
-            .hasMatch(s),
-        3 => RegExp(
-                r'(county|domestic|ranji|shield|cup|division|trophy|first[- ]class|state)')
-            .hasMatch(s),
+        1 => UpcomingSort.isInternationalMatch(m),
+        2 => UpcomingSort.isMajorLeague(m),
+        3 => UpcomingSort.isDomesticOrOther(m),
         _ => true,
       };
     }

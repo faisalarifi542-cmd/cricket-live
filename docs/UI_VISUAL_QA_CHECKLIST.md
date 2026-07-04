@@ -21,7 +21,7 @@ status column as each screen is verified on a real device/emulator.
 | Matches — Live | 🔧 | Phase-aware badge (STUMPS etc.); pulsing dot only for active live | — | yes | 390 |
 | Matches — Upcoming | 🔧 | "Match Center" CTA | — | yes | 390 |
 | Matches — Finished | 🔧 | "Match Center" CTA | — | yes | 390 |
-| Schedule | 🔧 | Per-card time line via shared `formatMatchDateTime` (Today/Tomorrow); day summary shows Today/Tomorrow | Sorting already correct (verified, no change); date strip hand-rolled (out of scope) | yes | 390 |
+| Schedule | 🔧 | Per-card time line via shared `formatMatchDateTime` (Today/Tomorrow); day summary shows Today/Tomorrow; **status pill now routes through `MatchStatusDisplay`** (STUMPS/LUNCH/TEA/INN BREAK + no pulsing dot during a stoppage, instead of a pulsing LIVE next to "Day 1: Stumps") | Sorting already correct (verified, no change); date strip hand-rolled (out of scope) | yes | 390 |
 | Series — All | 🔧 | Canonical sort (ongoing→upcoming→completed, within-section dates); shared `CricLogo` + bell | Filter chips hand-rolled (out of scope) | yes | 390 |
 | Series — Ongoing | 🔧 | Sort: live-match series first, then start-date desc | — | yes | 390 |
 | Series — Upcoming | 🔧 | Sort: soonest start date first | — | yes | 390 |
@@ -33,7 +33,7 @@ status column as each screen is verified on a real device/emulator.
 | Screen | Status | Issues fixed | Remaining issues | Screenshot needed | Device size tested |
 |---|---|---|---|---|---|
 | Match Details — Info | 🔧 | Info value `maxLines:2 + ellipsis` (long venue/teams no longer wrap unbounded) | — | yes | 390 |
-| Match Details — Live | 🔧 | Scorecard via shared `TeamScoreView` (no more duplicated formatting); event types trust server `type`; extras (Wd/Nb/B/Lb) labelled, not mis-read as runs | — | yes | 390 |
+| Match Details — Live | 🔧 | Scorecard via shared `TeamScoreView` (no more duplicated formatting); event types trust server `type`; extras (Wd/Nb/B/Lb) labelled, not mis-read as runs; **non-ball commentary notes (stumps/lunch/drinks/milestone) now show the server's own label upper-cased instead of a generic "UPDATE"** | — | yes | 390 |
 | Match Details — Score | 🔧 | Agrees with Live tab (both use `TeamScoreView`) | — | yes | 390 |
 | Match Details — Squad | 🔧 | Dedicated Wicket-keepers group; "Playing XI not announced yet" empty state when only bench exists | — | yes | 390 |
 | Match Details — Commentary | 🔧 | Event styling consistent with Live tab (server `type`); extras handled | Commentary ordering already correct (verified) | yes | 390 |
@@ -45,7 +45,7 @@ status column as each screen is verified on a real device/emulator.
 | Screen | Status | Issues fixed | Remaining issues | Screenshot needed | Device size tested |
 |---|---|---|---|---|---|
 | Series Details — Overview | 🔧 | Status uses authoritative `classifySeriesStatus` (agrees with list card); "Match Center" CTA | — | yes | 390 |
-| Series Details — Matches | 🔧 | Balanced team columns (match note moved to a centered row under both) | — | yes | 390 |
+| Series Details — Matches | 🔧 | Balanced team columns (match note moved to a centered row under both); **status pill + note now route through `MatchStatusDisplay`** (STUMPS/LUNCH/TEA badge, no pulsing dot during a stoppage; note shows the phase label instead of "LIVE NOW") | — | yes | 390 |
 | Series Details — Squads | ➖ | Not touched this pass (uses shared `PremiumSquad` which got the WK-group fix) | — | yes | 390 |
 | Series Details — Stats / Points Table | 🔧 | Canonical sort (points→NRR→wins→name) frontend + backend; team code via `teamCodeOf` ("SL A" not "SRI LANKA A") | — | yes | 390 |
 | Series Details hero | 🔧 | Shared `CricLogo`; removed hardcoded "3" notification badge → dot-only | — | yes | 390 |
@@ -65,7 +65,7 @@ status column as each screen is verified on a real device/emulator.
 
 | Check | Status | Notes |
 |---|---|---|
-| Status contradiction (LIVE vs Stumps) | 🔧 | Backend `phase` field + frontend `MatchStatusDisplay` resolver; badge + label now agree on Home hero/list, Matches list, **Match Details header, and the minimized floating bar** (all wired in the screenshot-review pass) |
+| Status contradiction (LIVE vs Stumps) | 🔧 | Backend `phase` field + frontend `MatchStatusDisplay` resolver; badge + label now agree on Home hero/list, Matches list, **Schedule card, Series match card**, Match Details header, and the minimized floating bar |
 | Points table order | 🔧 | Sort by points desc → NRR desc → wins desc → name asc (frontend + backend) |
 | Series list order | 🔧 | Ongoing → Upcoming → Completed, within-section date ordering |
 | Schedule date wording | 🔧 | Today/Tomorrow via shared `formatMatchDateTime` |

@@ -98,7 +98,7 @@ void main() {
 
     // No explicit teams/host: SeriesView.fromApi must derive both AFG/IND and
     // the host (India) from the title alone, so the location item appears.
-    final view = SeriesView.fromApi(ApiSeries(
+    final view = SeriesView.fromApi(const ApiSeries(
       id: 's-host',
       name: 'Afghanistan Tour Of India 2026',
       status: 'Upcoming',

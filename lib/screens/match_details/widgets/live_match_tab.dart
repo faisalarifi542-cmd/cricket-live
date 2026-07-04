@@ -1643,7 +1643,14 @@ _LiveEvent _liveEvent(Map<String, dynamic> row, dynamic c) {
 
   final runs = _liveRuns(row);
   if (runs == null) {
-    // A non-ball commentary update (drinks/stumps/milestone) — not a delivery.
+    // A non-ball commentary update (drinks/stumps/lunch/milestone) — not a
+    // delivery. Prefer the server's own event label (e.g. "Stumps", "Lunch
+    // Break", "Drinks") so the Live tab reads the same label as the full
+    // Commentary tab, instead of a generic "UPDATE".
+    final label = _liveStr(row['label'] ?? row['event'] ?? row['type']);
+    if (label.isNotEmpty) {
+      return _LiveEvent(label.toUpperCase(), c.muted as Color);
+    }
     return _LiveEvent('UPDATE', c.muted as Color);
   }
   if (runs == 0) return const _LiveEvent('DOT BALL', Color(0xff60a5fa));

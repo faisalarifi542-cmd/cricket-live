@@ -51,11 +51,13 @@ class _SeriesMatchCard extends StatelessWidget {
     final c = context.cric;
     final phone = context.w <= 430;
     final logoSize = phone ? 46.0 : 50.0;
-    final (statusLabel, statusColor, isLive) = match.isLive
-        ? ('Live', c.live, true)
-        : match.isFinished
-            ? ('Completed', c.success, false)
-            : ('Upcoming', c.cyan, false);
+    // Route through the shared status resolver so a stumps/lunch/tea/innings-
+    // break match badges as STUMPS/LUNCH/TEA/INN BREAK (no pulsing dot) instead
+    // of a pulsing "Live" pill next to a "Stumps Day 1" note — the badge and
+    // the note can no longer disagree.
+    final status = MatchStatusDisplay.of(context, match);
+    final (statusLabel, statusColor, isLive) =
+        (status.badge, status.color, status.subPhase == MatchSubPhase.live);
     final fmt = _formatTag(match);
     final desc = match.matchDesc.isNotEmpty
         ? 'MATCH $index • ${match.matchDesc.toUpperCase()}'
@@ -265,8 +267,12 @@ class _MatchRightNote extends StatelessWidget {
       );
     }
     if (match.isLive) {
+      // Use the shared phase label so a stoppage (stumps/lunch/tea/innings
+      // break) reads "Day 1 Stumps"/"Innings break" instead of the misleading
+      // "LIVE NOW", and drops the red live styling while paused.
+      final note = MatchStatusDisplay.of(context, match).phaseLabel;
       return Text(
-        match.statusText.isNotEmpty ? match.statusText : 'LIVE NOW',
+        note.isNotEmpty ? note : 'LIVE',
         textAlign: TextAlign.center,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,

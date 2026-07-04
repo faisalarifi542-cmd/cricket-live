@@ -412,33 +412,28 @@ class _MatchStatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    final live = match.isLive;
-    final finished = match.isFinished;
-    final color = live
-        ? c.live
-        : finished
-            ? c.success
-            : c.cyan;
-    final label = live
-        ? 'LIVE'
-        : finished
-            ? 'Completed'
-            : 'Upcoming';
+    // Single source of truth for the badge word + color + whether the match is
+    // actively bowling. A stumps/lunch/tea/innings-break match now shows STUMPS/
+    // LUNCH/TEA/INN BREAK with NO pulsing dot, instead of a pulsing LIVE pill
+    // next to a "Day 1: Stumps" note — the badge and the note can no longer
+    // disagree.
+    final status = MatchStatusDisplay.of(context, match);
+    final color = status.color;
+    final activelyLive = status.subPhase == MatchSubPhase.live;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: .12),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color.withValues(alpha: .6)),
-        boxShadow: live
+        boxShadow: activelyLive
             ? [BoxShadow(color: color.withValues(alpha: .3), blurRadius: 10)]
             : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (live) ...[
+          if (activelyLive) ...[
             Container(
               width: 6,
               height: 6,
@@ -447,7 +442,7 @@ class _MatchStatusPill extends StatelessWidget {
             const SizedBox(width: 5),
           ],
           Text(
-            label,
+            status.badge,
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.w800,
