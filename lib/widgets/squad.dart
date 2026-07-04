@@ -27,8 +27,8 @@ class PremiumSquad extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final groups = _groupByRole(playingXi);
-    final hasAny =
-        groups.values.any((list) => list.isNotEmpty) || bench.isNotEmpty;
+    final hasPlayingXi = groups.values.any((list) => list.isNotEmpty);
+    final hasAny = hasPlayingXi || bench.isNotEmpty;
     if (!hasAny) {
       return Container(
         padding: const EdgeInsets.all(18),
@@ -62,6 +62,31 @@ class PremiumSquad extends StatelessWidget {
                     fontSize: 13,
                     letterSpacing: .5)),
           ),
+        ],
+        // When the Playing XI itself is empty but a bench/squad list exists,
+        // say so explicitly instead of rendering an empty section header above
+        // the reserves (the "Squad data incomplete" graceful state).
+        if (!hasPlayingXi && bench.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: c.card,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: c.border.withValues(alpha: .7)),
+            ),
+            child: Row(children: [
+              Icon(Icons.info_outline_rounded, color: c.cyan, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Playing XI not announced yet. Showing the squad below.',
+                  style: TextStyle(
+                      color: c.muted, fontWeight: FontWeight.w700, height: 1.3),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
         ],
         for (final group in _kRoleOrder)
           if (groups[group]!.isNotEmpty) ...[
@@ -424,6 +449,7 @@ _RoleBadge? _roleBadge(String role, bool isWk) {
 }
 
 const _kRoleOrder = [
+  'Wicket-keepers',
   'Top Order',
   'Middle Order',
   'All-rounders',
@@ -442,12 +468,16 @@ Map<String, List<Map<String, dynamic>>> _groupByRole(List<dynamic> raw) {
     final isWk = _truthy(p['isWicketKeeper']) ||
         _truthy(p['is_wicketkeeper']) ||
         role.contains('wk') ||
-        role.contains('wicketkeeper');
+        role.contains('wicketkeeper') ||
+        role.contains('wicket-keeper');
     if (role.contains('all-rounder') || role.contains('allrounder')) {
       groups['All-rounders']!.add(p);
+    } else if (isWk) {
+      // Dedicated wicket-keeper group — never merged into Top/Middle Order.
+      groups['Wicket-keepers']!.add(p);
     } else if (role.contains('bowler') && !role.contains('bat')) {
       groups['Bowlers']!.add(p);
-    } else if (isWk || role.contains('bat') || role.isEmpty) {
+    } else if (role.contains('bat') || role.isEmpty) {
       batting.add(p);
     } else {
       // Unknown role - treat as a batter so player is still visible.
@@ -466,7 +496,7 @@ Map<String, List<Map<String, dynamic>>> _groupByRole(List<dynamic> raw) {
   }
   if (kDebugMode) {
     debugPrint(
-        'PremiumSquad groups topOrder=${groups['Top Order']!.length} middle=${groups['Middle Order']!.length} ar=${groups['All-rounders']!.length} bowl=${groups['Bowlers']!.length}');
+        'PremiumSquad groups wk=${groups['Wicket-keepers']!.length} topOrder=${groups['Top Order']!.length} middle=${groups['Middle Order']!.length} ar=${groups['All-rounders']!.length} bowl=${groups['Bowlers']!.length}');
   }
   return groups;
 }

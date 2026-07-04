@@ -25,6 +25,9 @@ class AnalyticsService {
   static const int _flushAt = 10; // flush when queue reaches this many events
   static const int _maxQueue = 200; // hard cap; oldest dropped beyond this
   static const Duration _flushInterval = Duration(seconds: 30);
+  // Realtime presence ping while the app is foregrounded. The backend stores it
+  // in a short Redis window (~120s) so the admin "Active users now" stays live.
+  static const Duration _heartbeatInterval = Duration(seconds: 45);
   // A session ends after this much inactivity. Re-opening / resuming within the
   // window continues the SAME session; beyond it a fresh session starts.
   static const Duration _sessionTimeout = Duration(minutes: 30);
@@ -37,6 +40,7 @@ class AnalyticsService {
   String? _installId;
   String? _sessionId;
   Timer? _flushTimer;
+  Timer? _heartbeatTimer;
   bool _initialized = false;
   bool _flushing = false;
 
@@ -90,6 +94,9 @@ class AnalyticsService {
         'app_version': ApiConfig.appVersion,
         'platform': ApiConfig.clientType,
       });
+
+      // Begin realtime presence heartbeats while foregrounded.
+      _startHeartbeat();
     } catch (_) {
       // Never let analytics init affect app start.
     }
@@ -149,6 +156,8 @@ class AnalyticsService {
         'app_version': ApiConfig.appVersion,
         'platform': ApiConfig.clientType,
       });
+      // Resume presence heartbeats on foreground.
+      _startHeartbeat();
     } catch (_) {/* ignore */}
   }
 
@@ -194,8 +203,50 @@ class AnalyticsService {
   void screenView(String screenName) =>
       track('screen_view', {'screen_name': screenName});
 
+  /// A match details/center was opened.
+  void matchOpen(String matchId) => track('match_open', {'match_id': matchId});
+
+  /// A live stream/player was opened for a match.
+  void streamOpen(String matchId) =>
+      track('live_stream_open', {'match_id': matchId});
+
+  /// A push notification was opened/tapped.
+  void notificationOpen(String type, {String? id}) =>
+      track('notification_open', {'type': type, if (id != null) 'id': id});
+
   /// Flush on app background so queued events aren't lost.
-  void onAppBackground() => _flush();
+  void onAppBackground() {
+    _stopHeartbeat();
+    _flush();
+  }
+
+  // --- Realtime presence heartbeat ----------------------------------------
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) => _sendHeartbeat());
+    _sendHeartbeat();
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  Future<void> _sendHeartbeat() async {
+    if (_deviceId == null) return;
+    try {
+      await _client.post(
+        '/analytics/heartbeat',
+        body: {
+          'device_id': _deviceId,
+          'session_id': _sessionId,
+          'app_version': ApiConfig.appVersion,
+          'platform': ApiConfig.clientType,
+        },
+        allowFailure: true,
+      );
+    } catch (_) {/* presence is best-effort */}
+  }
 
   Future<void> _flush() async {
     if (_flushing || _queue.isEmpty) return;
@@ -222,6 +273,7 @@ class AnalyticsService {
   void dispose() {
     _flushTimer?.cancel();
     _flushTimer = null;
+    _stopHeartbeat();
     _initialized = false;
   }
 

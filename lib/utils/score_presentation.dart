@@ -21,12 +21,13 @@ enum ScoreDisplayMode {
   cardMultiInnings,
   matchDetailsLimitedOvers,
   matchDetailsMultiInnings,
+  compactCard,
   compactBar,
 }
 
 /// The layout family a mode belongs to (roomy hero/details stacked rows, tight
-/// card stacked rows, or the single-line compact bar).
-enum ScoreLayoutFamily { hero, card, details, bar }
+/// card stacked rows, compact grid cells, or the single-line compact bar).
+enum ScoreLayoutFamily { hero, card, details, compact, bar }
 
 extension ScoreDisplayModeX on ScoreDisplayMode {
   ScoreLayoutFamily get family => switch (this) {
@@ -39,6 +40,7 @@ extension ScoreDisplayModeX on ScoreDisplayMode {
         ScoreDisplayMode.matchDetailsLimitedOvers ||
         ScoreDisplayMode.matchDetailsMultiInnings =>
           ScoreLayoutFamily.details,
+        ScoreDisplayMode.compactCard => ScoreLayoutFamily.compact,
         ScoreDisplayMode.compactBar => ScoreLayoutFamily.bar,
       };
 }
@@ -76,14 +78,24 @@ class TeamScorePresentation {
     return unitEach ? o.map((e) => '$e ov').join(' • ') : '${o.join(' • ')} ov';
   }
 
-  /// Clamps a caller-supplied current-innings index to the valid range of
-  /// [scored]. The current innings is decided by the MATCH (which side is
-  /// actually batting — see `CricketMatch.currentScoredIndexForTeam`), NOT by
-  /// "is the match live", so the `*` lands only on the batting team's active
-  /// innings and never on both teams. Returns `-1` (no highlight) when the
-  /// supplied index is out of range.
-  int resolveCurrentIndex(int index) =>
-      (index >= 0 && index < scored.length) ? index : -1;
+  /// Resolves which scored innings (if any) carries the current/live `*`.
+  ///
+  /// Precedence:
+  ///   • An explicit, in-range [index] (≥ 0) always wins — this is the match-
+  ///     driven choice (`CricketMatch.currentScoredIndexForTeam`) that knows
+  ///     which side is batting, so the star lands only on that team.
+  ///   • The default `index == -1` means "auto": a LIVE, multi-innings score
+  ///     stars its own latest (most recent) innings — the active one. This is
+  ///     the standalone-widget fallback for callers that only know the match is
+  ///     live (e.g. the widget test), and is never reached for the non-batting
+  ///     team because that side is passed [kNoCurrentInnings] (-2) instead.
+  ///   • Anything else (out of range, [kNoCurrentInnings], or not live) → -1,
+  ///     no highlight. The latest innings is never moved ahead of an earlier one.
+  int resolveCurrentIndex(int index, {required bool live}) {
+    if (index >= 0) return index < scored.length ? index : -1;
+    if (index == -1 && live && isMultiInnings) return scored.length - 1;
+    return -1;
+  }
 
   /// `1st`, `2nd`, `3rd`, `4th`… ordinal label for an innings row.
   static String ordinal(int oneBased) {

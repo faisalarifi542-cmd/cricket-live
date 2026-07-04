@@ -15,6 +15,7 @@ import { shutdownDb } from './lib/db.js';
 import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
 import { startPhase1bWarmers, stopPhase1bWarmers } from './lib/phase1b-warmers.js';
+import providerManager from './providers/provider-manager.js';
 import { cacheOnSend } from './middleware/cache.js';
 import { enrichTeamLogos } from './lib/team-logos.js';
 import { enrichPlayerImages } from './lib/player-images.js';
@@ -345,6 +346,13 @@ async function start() {
     logger.info(`📖 API docs: http://localhost:${config.server.port}/docs`);
     logger.info(`🔌 WebSocket: ws://localhost:${config.server.port}/ws`);
     logger.info(`📊 Metrics: http://localhost:${config.server.port}/metrics`);
+
+    // Log resolved provider config + reset in-memory health for this fresh
+    // process (each PM2 worker records its own runtime order; a restarted
+    // process must never inherit a stale "down").
+    providerManager.logStartupConfig().catch((err) => {
+      logger.warn({ msg: 'Provider startup config log failed', error: err.message });
+    });
 
     // Phase 1b — start in-process cache warmers a moment after the server is up
     // (so Redis/DB connections are ready). Master kill switch: ENABLE_PHASE1B_WARMING.

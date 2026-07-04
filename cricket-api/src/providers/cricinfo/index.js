@@ -32,6 +32,53 @@ export class CricinfoProvider extends BaseProvider {
     }
   }
 
+  /**
+   * True when an error is the expected "this matchId is not in ESPN's id space"
+   * miss (client.js throws `... no seriesId known for match <id>`). This is NOT
+   * a provider failure — ESPN simply cannot resolve a Cricbuzz-origin match id.
+   */
+  #isMissingSeriesMapping(err) {
+    return typeof err?.message === 'string' && /no seriesId known/i.test(err.message);
+  }
+
+  /** Build the typed sentinel returned for an expected series-mapping miss. */
+  #missingSeriesMappingResult(method, matchId) {
+    const sentinel = new ProviderIncompleteData(method, 'missing_series_mapping');
+    sentinel.provider = 'cricinfo';
+    sentinel.matchId = String(matchId || '');
+    sentinel.message =
+      'Cricinfo cannot resolve this match because the matchId belongs to another provider ID space.';
+    return sentinel;
+  }
+
+  /**
+   * Match-detail runner. Same health accounting as #run for genuine errors, but
+   * a missing series mapping is treated as a soft fall-through: it RETURNS a
+   * typed sentinel (so provider-manager moves to the next provider) and does
+   * NOT record a failure, so a Cricbuzz-origin match never trips ESPN's health
+   * cooldown / falsely marks it "down".
+   */
+  async #runDetail(label, matchId, fn) {
+    try {
+      const result = await fn();
+      this.recordSuccess();
+      return result;
+    } catch (err) {
+      if (this.#isMissingSeriesMapping(err)) {
+        logger.debug({
+          msg: `Cricinfo ${label} skipped: missing series mapping`,
+          provider: 'cricinfo',
+          matchId: String(matchId || ''),
+          reason: 'missing_series_mapping',
+        });
+        return this.#missingSeriesMappingResult(label, matchId);
+      }
+      this.recordFailure();
+      logger.warn({ msg: `Cricinfo ${label} failed`, error: err.message });
+      throw err;
+    }
+  }
+
   // --- match lists ---------------------------------------------------------
 
   async getLiveMatches() {
@@ -58,7 +105,7 @@ export class CricinfoProvider extends BaseProvider {
   // --- match detail --------------------------------------------------------
 
   async getMatchInfo(matchId) {
-    return this.#run('getMatchInfo', async () => {
+    return this.#runDetail('getMatchInfo', matchId, async () => {
       const raw = await cricinfoClient.getSummary(matchId);
       return norm.normalizeMatchDetail(raw);
     });
@@ -67,7 +114,7 @@ export class CricinfoProvider extends BaseProvider {
   // getMatchInfoDetailed is a Cricbuzz-only richer variant; site.api's summary
   // is the same header, so reuse it (the app calls this from provider-fetch).
   async getMatchInfoDetailed(matchId) {
-    return this.#run('getMatchInfoDetailed', async () => {
+    return this.#runDetail('getMatchInfoDetailed', matchId, async () => {
       const raw = await cricinfoClient.getSummary(matchId);
       return norm.normalizeMatchDetail(raw);
     });
@@ -79,13 +126,24 @@ export class CricinfoProvider extends BaseProvider {
       this.recordSuccess();
       return norm.normalizeMatchDetail(raw);
     } catch (err) {
+      // A missing series mapping is expected for non-ESPN match ids — do not
+      // count it as a transport failure (it must not flip healthy=false).
+      if (this.#isMissingSeriesMapping(err)) {
+        logger.debug({
+          msg: 'Cricinfo getMatchHeader skipped: missing series mapping',
+          provider: 'cricinfo',
+          matchId: String(matchId || ''),
+          reason: 'missing_series_mapping',
+        });
+        return null; // header is a best-effort fallback in the app
+      }
       this.recordFailure();
       return null; // header is a best-effort fallback in the app
     }
   }
 
   async getScorecard(matchId) {
-    return this.#run('getScorecard', async () => {
+    return this.#runDetail('getScorecard', matchId, async () => {
       const raw = await cricinfoClient.getSummary(matchId);
       const card = norm.normalizeScorecard(raw);
       if (!card || !card.innings.length) {
@@ -96,14 +154,14 @@ export class CricinfoProvider extends BaseProvider {
   }
 
   async getCommentary(matchId) {
-    return this.#run('getCommentary', async () => {
+    return this.#runDetail('getCommentary', matchId, async () => {
       const raw = await cricinfoClient.getPlayByPlay(matchId, undefined, 1);
       return norm.normalizeCommentary(raw);
     });
   }
 
   async getFullCommentary(matchId, inningsId) {
-    return this.#run('getFullCommentary', async () => {
+    return this.#runDetail('getFullCommentary', matchId, async () => {
       // Page through ESPN commentary; inningsId is not a direct page selector on
       // site.api, so we fetch the first few pages and return the merged list.
       const first = await cricinfoClient.getPlayByPlay(matchId, undefined, 1);

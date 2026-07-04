@@ -65,21 +65,16 @@ export async function ensureProviderSchema() {
 export async function ensureDefaultProvider() {
   await ensureProviderSchema();
   const meta = JSON.stringify({ role: DEFAULT_PROVIDER.role, source: 'cricket-api', appBaseUrl: DEFAULT_PROVIDER.baseUrl });
+  // Insert the row only if it does not exist yet. On conflict this is a NO-OP
+  // (id = id) so admin edits to priority / is_active / role / name survive every
+  // seed run — this function executes on every admin providers GET, and an
+  // ON DUPLICATE KEY UPDATE here previously reverted admin changes on each load.
   await query(
     `INSERT INTO api_providers
        (slug, name, provider_type, base_url, description, priority, timeout_ms,
         rate_limit_per_minute, is_active, health_status, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
-     ON DUPLICATE KEY UPDATE
-       name = VALUES(name),
-       provider_type = VALUES(provider_type),
-       base_url = VALUES(base_url),
-       description = VALUES(description),
-       priority = VALUES(priority),
-       timeout_ms = VALUES(timeout_ms),
-       rate_limit_per_minute = VALUES(rate_limit_per_minute),
-       is_active = 1,
-       metadata = VALUES(metadata)`,
+     ON DUPLICATE KEY UPDATE id = id`,
     [
       DEFAULT_PROVIDER.slug,
       DEFAULT_PROVIDER.name,
@@ -98,10 +93,9 @@ export async function ensureDefaultProvider() {
 }
 
 /**
- * Seed the ESPN Cricinfo fallback row. Unlike the primary, this deliberately
- * does NOT force `is_active` on update — the row is created enabled, but if an
- * admin later disables it, that choice must survive subsequent seed runs (this
- * function runs on every admin providers GET).
+ * Seed the ESPN Cricinfo fallback row. Like the primary, this only creates the
+ * row when missing and is a NO-OP on conflict, so admin edits to its priority,
+ * role, and enablement persist across seed runs.
  */
 export async function ensureCricinfoProvider() {
   await ensureProviderSchema();
@@ -111,15 +105,7 @@ export async function ensureCricinfoProvider() {
        (slug, name, provider_type, base_url, description, priority, timeout_ms,
         rate_limit_per_minute, is_active, health_status, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
-     ON DUPLICATE KEY UPDATE
-       name = VALUES(name),
-       provider_type = VALUES(provider_type),
-       base_url = VALUES(base_url),
-       description = VALUES(description),
-       priority = VALUES(priority),
-       timeout_ms = VALUES(timeout_ms),
-       rate_limit_per_minute = VALUES(rate_limit_per_minute),
-       metadata = VALUES(metadata)`,
+     ON DUPLICATE KEY UPDATE id = id`,
     [
       CRICINFO_PROVIDER.slug,
       CRICINFO_PROVIDER.name,

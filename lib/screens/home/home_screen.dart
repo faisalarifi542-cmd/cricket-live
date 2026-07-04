@@ -13,10 +13,13 @@ import '../../models/cricket_match.dart';
 import '../../models/home_feed.dart';
 import '../../repositories/cricket_repository.dart';
 import '../../upcoming_sort.dart';
+import '../../utils/match_classification.dart';
+import '../../utils/match_status.dart';
 import '../../utils/team_format.dart';
 import '../../widgets/team_score_view.dart';
 import '../../services/favorite_countries_service.dart';
 import 'package:cricpro_flutter/services/analytics_service.dart';
+import 'home_hero_order.dart';
 
 part 'widgets/home_header.dart';
 part 'widgets/home_hero.dart';
@@ -258,13 +261,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _prioritiseHero(feed.topFeatured),
           forceRefresh: forceRefresh,
         );
-        return overlaid;
+        return _orderHeroByStatus(overlaid);
       }
     } catch (_) {
       // Feed failed — try aggregation; if that also fails, let it throw.
     }
-    return _loadHero(forceRefresh: forceRefresh);
+    return _orderHeroByStatus(await _loadHero(forceRefresh: forceRefresh));
   }
+
+  /// Orders the hero carousel so Live matches lead, then Upcoming, then
+  /// Finished — a STABLE sort, so the admin-curated / favourite order is kept
+  /// WITHIN each status bucket (it only re-buckets by status). This prevents a
+  /// finished match being the first hero while live/upcoming ones exist, and
+  /// when there are no live matches an upcoming match leads (never a finished
+  /// one). The live/upcoming/finished section TABS below stay independent.
+  // Orders the hero carousel via the shared classifier (status + score + start
+  // time): Live first, then Upcoming, then Finished — so a hero flagged
+  // "upcoming" that already has a score is never placed before a live match.
+  List<CricketMatch> _orderHeroByStatus(List<CricketMatch> list) =>
+      orderByPhase(list);
 
   /// Replaces any hero match with its fresh counterpart from the fast match
   /// feeds (live first, then recent, then upcoming) matched by id, so the
@@ -461,7 +476,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         topSpacing: showUpcomingInstead ? 0 : 22,
         onOpenMatch: widget.onOpenMatchDetails,
         onSeeAll: widget.onOpenSchedule ?? widget.onOpenMatches ?? () {},
+        // The prominent "More Upcoming Matches" CTA belongs to the Upcoming
+        // view only. On a populated Live/Finished tab the upcoming row is just a
+        // teaser (header "See All" is enough) — never the big upcoming CTA. It
+        // returns only when Upcoming is the ACTIVE content (Live tab empty).
+        onOpenSchedule: showUpcomingInstead ? widget.onOpenSchedule : null,
       ));
+    }
+
+    // "More Upcoming Matches → Schedule" CTA at the end of the Upcoming main
+    // list (Home keeps only today/tomorrow; Schedule has the full fixture list).
+    if (topTab == 1 && widget.onOpenSchedule != null) {
+      children.add(_MoreUpcomingCta(onOpenSchedule: widget.onOpenSchedule!));
     }
 
     // 5. Featured Series — always last.
@@ -583,7 +609,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final res =
           await _repository.upcomingMatchesMerged(forceRefresh: forceRefresh);
-      return UpcomingSort.sortUpcoming(res.data);
+      // Home Upcoming is a SHORT teaser: de-dupe, keep only genuine upcoming
+      // matches, and window to today + tomorrow (local). The full day-by-day
+      // fixture list lives on the Schedule screen (see the "More Upcoming
+      // Matches" CTA), so Home never floods with every future Cricbuzz match.
+      return UpcomingSort.sortUpcoming(dedupeMatchesById(res.data))
+          .where(isUpcomingMatch)
+          .where(isTodayOrTomorrowLocal)
+          .toList();
     } catch (_) {
       return const <CricketMatch>[];
     }
@@ -599,14 +632,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (tab == 1) {
       final res =
           await _repository.upcomingMatchesMerged(forceRefresh: forceRefresh);
-      final sorted = UpcomingSort.sortUpcoming(res.data);
+      // De-dupe by id, then keep only genuinely-upcoming matches so a live/
+      // scored match never leaks into the Upcoming list (same rules as Matches).
+      final sorted = UpcomingSort.sortUpcoming(dedupeMatchesById(res.data))
+          .where(isUpcomingMatch)
+          .toList();
       _tabData = sorted;
       return sorted;
     }
     final res =
         await _repository.matchesForTab(tab, forceRefresh: forceRefresh);
-    _tabData = res.data;
-    return res.data;
+    final deduped = dedupeMatchesById(res.data);
+    // Keep only matches whose canonical phase matches the selected tab, so the
+    // same match can't show in both Live and Finished sections.
+    final filtered =
+        deduped.where(tab == 0 ? isLiveMatch : isFinishedMatch).toList();
+    _tabData = filtered;
+    return filtered;
   }
 
   void _setTopTab(int value) {
@@ -807,19 +849,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// each card is replaced by its fresh-by-id counterpart (so scores still
   /// update in place). If the membership actually changed (a match started or
   /// finished), the freshly-prioritised [resolved] order is adopted as-is.
-  List<CricketMatch> _preserveHeroOrder(List<CricketMatch> resolved) {
-    final prev = _heroData;
-    if (prev == null || prev.isEmpty) return resolved;
-    final prevIds = prev.map((m) => m.id).toSet();
-    final freshIds = resolved.map((m) => m.id).toSet();
-    if (prevIds.length != freshIds.length || !prevIds.containsAll(freshIds)) {
-      return resolved; // membership changed — adopt the new order.
-    }
-    final byId = {for (final m in resolved) m.id: m};
-    return [
-      for (final m in prev) byId[m.id] ?? m,
-    ];
-  }
+  List<CricketMatch> _preserveHeroOrder(List<CricketMatch> resolved) =>
+      preserveHeroOrder(_heroData, resolved);
 
   Future<void> _refreshHeroSilently(double? oldOffset) async {
     try {
@@ -1043,7 +1074,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   context.horizontalPadding,
                   8,
                   context.horizontalPadding,
-                  context.mainBottomPadding + 84,
+                  context.mainScrollBottomInset,
                 ),
                 children: _buildSections(),
               ),

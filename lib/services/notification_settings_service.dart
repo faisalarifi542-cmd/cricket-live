@@ -34,54 +34,60 @@ class NotificationSettingsService {
   static const String _keyPrefix = 'notif_pref_';
 
   /// The full set of toggleable categories, in display order.
+  ///
+  /// Product rule (admin-automation spec): the live stream category is ON by
+  /// default (and new-innings rides it). Every OTHER category is opt-in (OFF)
+  /// so non-stream notifications are never forced. The backend can override
+  /// these defaults via `/app/config` → notifications.preferences.defaults
+  /// (see [applyConfigDefaults]).
   static const List<NotificationCategory> categories = [
     NotificationCategory(
       key: 'live_scores',
       title: 'Live match score updates',
       description: 'Score changes while a match you follow is in play.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'match_start',
       title: 'Match start reminders',
       description: 'A heads-up shortly before a match begins.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'toss',
       title: 'Toss updates',
       description: 'Who won the toss and chose to bat or bowl.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'wickets',
       title: 'Wickets & milestones',
       description: 'Wickets, fifties, hundreds and other key moments.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'innings_result',
       title: 'Innings break & result',
       description: 'Innings breaks and the final result.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'live_stream',
       title: 'Live stream available',
-      description: 'When a live stream is available to watch.',
+      description: 'When a live stream (and new innings) is available to watch.',
       defaultOn: true,
     ),
     NotificationCategory(
       key: 'favorite_team',
       title: 'Favourite team match alerts',
       description: 'Alerts for matches involving your favourite teams.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'news',
       title: 'News & general updates',
       description: 'Cricket news and general updates.',
-      defaultOn: true,
+      defaultOn: false,
     ),
     NotificationCategory(
       key: 'announcements',
@@ -100,6 +106,14 @@ class NotificationSettingsService {
 
   bool _loaded = false;
 
+  /// Keys the user has explicitly chosen (persisted). Backend config defaults
+  /// never override an explicit user choice.
+  final Set<String> _userSet = {};
+
+  /// Backend-provided defaults (from /app/config). Applied to any category the
+  /// user hasn't explicitly set.
+  final Map<String, bool> _configDefaults = {};
+
   bool isEnabled(String key) =>
       values.value[key] ??
       categories
@@ -108,7 +122,8 @@ class NotificationSettingsService {
                   key: '', title: '', description: '', defaultOn: true))
           .defaultOn;
 
-  /// Loads saved choices once. Missing keys fall back to each category default.
+  /// Loads saved choices once. Missing keys fall back to the backend config
+  /// default (if known) then the category default.
   Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
@@ -116,8 +131,14 @@ class NotificationSettingsService {
       final prefs = await SharedPreferences.getInstance();
       final next = <String, bool>{};
       for (final category in categories) {
-        next[category.key] =
-            prefs.getBool('$_keyPrefix${category.key}') ?? category.defaultOn;
+        final storedKey = '$_keyPrefix${category.key}';
+        if (prefs.containsKey(storedKey)) {
+          _userSet.add(category.key);
+          next[category.key] = prefs.getBool(storedKey) ?? category.defaultOn;
+        } else {
+          next[category.key] =
+              _configDefaults[category.key] ?? category.defaultOn;
+        }
       }
       values.value = next;
     } catch (_) {
@@ -127,11 +148,33 @@ class NotificationSettingsService {
     NotificationService.instance.syncCategoryTags(values.value);
   }
 
+  /// Apply backend default ON/OFF states from `/app/config`
+  /// (notifications.preferences.defaults). Only affects categories the user has
+  /// NOT explicitly toggled, so a user choice always wins. Safe to call on every
+  /// config load.
+  void applyConfigDefaults(Map<String, bool> defaults) {
+    if (defaults.isEmpty) return;
+    var changed = false;
+    final next = Map<String, bool>.from(values.value);
+    for (final entry in defaults.entries) {
+      _configDefaults[entry.key] = entry.value;
+      if (!_userSet.contains(entry.key) && next[entry.key] != entry.value) {
+        next[entry.key] = entry.value;
+        changed = true;
+      }
+    }
+    if (changed) {
+      values.value = next;
+      NotificationService.instance.syncCategoryTags(next);
+    }
+  }
+
   /// Toggles a category, persists it, and syncs the tag set.
   Future<void> setEnabled(String key, bool enabled) async {
     final next = Map<String, bool>.from(values.value);
     next[key] = enabled;
     values.value = next;
+    _userSet.add(key);
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('$_keyPrefix$key', enabled);

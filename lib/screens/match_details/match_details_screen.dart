@@ -62,6 +62,16 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
   String? _initializedMatchId;
   bool _polling = false;
 
+  /// Whether the last summary/tab response was served from STALE cache (a
+  /// refresh is retrying) — surfaced in the "Updated X ago" row as
+  /// "Stale data, retrying". Reset to false on a fresh successful response.
+  bool _isStale = false;
+
+  /// True while the network is unreachable and data is coming from offline
+  /// cache — surfaced as "Offline cache". Set on a network failure, cleared on
+  /// a successful response.
+  bool _isOffline = false;
+
   /// True once the user has manually tapped a tab. Until then we are allowed
   /// to auto-select the Live tab for live/finished matches.
   bool _userPickedTab = false;
@@ -407,9 +417,10 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
     final results = await Future.wait<dynamic>(
         [summary, current, scorecard, liveCenter, commentary, overs]);
     if (!mounted) return;
+    final summaryEnvelope =
+        results[0] as ApiEnvelope<Map<String, dynamic>>;
     setState(() {
-      _summaryFuture =
-          Future.value(results[0] as ApiEnvelope<Map<String, dynamic>>);
+      _summaryFuture = Future.value(summaryEnvelope);
       _tabFutures[tab] =
           Future.value(results[1] as ApiEnvelope<Map<String, dynamic>>);
       _tabFutures[2] = Future.value(
@@ -421,6 +432,10 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
       _tabFutures[5] = Future.value(
           results[5] as ApiEnvelope<Map<String, dynamic>>); // Overs
       _lastUpdatedAt = DateTime.now();
+      // A successful manual refresh clears the offline flag; reflect staleness
+      // from the envelope meta so the "Updated X ago" row stays accurate.
+      _isOffline = false;
+      _isStale = summaryEnvelope.meta.isStale;
     });
     _restoreScroll(oldOffset);
     // If polling was paused by an offline back-off, resume it now that the
@@ -503,6 +518,10 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
           await _repository.matchDetail(_matchId, forceRefresh: true);
       if (!mounted) return;
       _consecutivePollFailures = 0;
+      // A successful response clears the offline flag; track staleness from the
+      // envelope meta so the "Updated X ago" row can say "Stale data, retrying".
+      _isOffline = false;
+      _isStale = summary.meta.isStale;
       final currentTab = tab;
       final previousTabData = _tabData[currentTab];
       // Refresh the visible tab's own payload. Live(1)/Scorecard(2) and
@@ -571,6 +590,14 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
       _consecutivePollFailures++;
       _pollTimer?.cancel();
       _pollTimer = null;
+      // Surface the offline state in the "Updated X ago" row so the user knows
+      // the shown data is from cache, not a fresh fetch.
+      if (mounted) {
+        setState(() {
+          _isOffline = true;
+          _isStale = true;
+        });
+      }
       _armRecovery();
     } finally {
       _polling = false;
@@ -815,6 +842,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
                 _RefreshStatusRow(
                   lastUpdatedAt: _lastUpdatedAt,
                   onRefresh: _refreshCurrentTab,
+                  isStale: _isStale,
+                  isOffline: _isOffline,
                 ),
                 const SizedBox(height: 10),
                 MatchDetailsTabBar(

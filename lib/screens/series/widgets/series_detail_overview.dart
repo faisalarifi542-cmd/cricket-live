@@ -124,16 +124,20 @@ class _SeriesContext {
   int get upcomingCount => matches.where((m) => m.isUpcoming).length;
   int get completedCount => matches.where((m) => m.isFinished).length;
 
-  SeriesStatus get status {
-    if (liveCount > 0) return SeriesStatus.ongoing;
-    if (completedCount > 0 && upcomingCount == 0) return SeriesStatus.completed;
-    return SeriesStatus.upcoming;
-  }
+  /// Uses the authoritative [classifySeriesStatus] (date-based, with a live-
+  /// match override) so the Overview status agrees with the series LIST card
+  /// for the same series — instead of a count-only derivation that could read
+  /// "Upcoming" here while the list card reads "Ongoing".
+  SeriesStatus get status =>
+      classifySeriesStatus(title, startDate, endDate, liveCount: liveCount);
 
   String get statusLabel => switch (status) {
         SeriesStatus.ongoing => 'In Progress',
         SeriesStatus.upcoming => 'Upcoming',
         SeriesStatus.completed => 'Completed',
+        // This getter is derived from match counts and never yields `unknown`;
+        // the arm exists only to keep the switch exhaustive.
+        SeriesStatus.unknown => 'Upcoming',
       };
 
   /// The two primary teams (bilateral) for the hero, derived from matches.
@@ -855,7 +859,7 @@ class _NextMatchCard extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: GradientButton(
-              label: match.isLive ? 'View Match' : 'Set Reminder',
+              label: match.isLive ? 'Match Center' : 'Set Reminder',
               icon: match.isLive
                   ? Icons.play_circle_fill_rounded
                   : Icons.notifications_active_rounded,

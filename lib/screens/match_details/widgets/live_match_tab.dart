@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
 import 'package:cricpro_flutter/components.dart';
+import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/screens/match_details/widgets/match_details_ui.dart';
+import 'package:cricpro_flutter/utils/score_presentation.dart';
+import 'package:cricpro_flutter/widgets/team_score_view.dart';
 
 /// Premium compact "Live Center" tab for Match Details.
 ///
@@ -493,8 +496,8 @@ class _ResultSummaryCard extends StatelessWidget {
           ),
           if (scoreLines.isNotEmpty) ...[
             const SizedBox(height: 14),
-            for (final line in scoreLines) ...[
-              _ScoreLineRow(team: line.$1, score: line.$2),
+            for (final team in scoreLines) ...[
+              _ResultScoreRow(team: team),
               const SizedBox(height: 6),
             ],
           ],
@@ -515,22 +518,27 @@ class _ResultSummaryCard extends StatelessWidget {
   }
 }
 
-class _ScoreLineRow extends StatelessWidget {
-  const _ScoreLineRow({required this.team, required this.score});
+/// One team's result score, rendered through the shared [TeamScoreView] so the
+/// Live result view and the Score tab share a single score formatter (no more
+/// hand-built `runs/wickets (overs ov)` strings that could drift on declared
+/// innings, the `ov` unit, or the multi-innings `&` join).
+class _ResultScoreRow extends StatelessWidget {
+  const _ResultScoreRow({required this.team});
 
-  final String team;
-  final String score;
+  final _ResultTeamScore team;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final pres = TeamScorePresentation(team.innings);
+    final multi = pres.isMultiInnings;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: TextBaseline.alphabetic,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(
+        SizedBox(
+          width: 52,
           child: Text(
-            team,
+            team.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -541,12 +549,17 @@ class _ScoreLineRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        Text(
-          score,
-          style: TextStyle(
-            color: c.text,
-            fontWeight: FontWeight.w900,
-            fontSize: 14,
+        Expanded(
+          child: TeamScoreView(
+            innings: team.innings,
+            mainSize: multi ? 17 : 22,
+            oversSize: 13,
+            mode: multi
+                ? ScoreDisplayMode.matchDetailsMultiInnings
+                : ScoreDisplayMode.matchDetailsLimitedOvers,
+            align: CrossAxisAlignment.start,
+            // A finished match never stars an innings.
+            currentInningsIndex: kNoCurrentInnings,
           ),
         ),
       ],
@@ -1600,16 +1613,39 @@ class _LiveEvent {
   final Color color;
 }
 
+/// Trusts the server-normalized `type`/`event` field first (mirroring the
+/// Commentary tab's rule), then falls back to the `is_wicket`/`is_four`/
+/// `is_six` flags, and finally the runs value. Handles extras (wide/no-ball/
+/// bye/leg-bye) so a wide with `runs:1` is no longer mislabelled "1 RUN".
 _LiveEvent _liveEvent(Map<String, dynamic> row, dynamic c) {
-  final event = _liveStr(row['event']).toLowerCase();
+  final type = _liveStr(row['type'] ?? row['event']).toLowerCase();
+  final event = type;
   final isWicket = _truthyLive(row['is_wicket']) || event == 'wicket';
   final isFour = _truthyLive(row['is_four']) || event == 'four';
   final isSix = _truthyLive(row['is_six']) || event == 'six';
+
+  // Server-normalized extra types take precedence so extras are never re-guessed
+  // from the runs count (a wide with 1 run must read WIDE, not "1 RUN").
+  if (type == 'wide' || type == 'no_ball' || type == 'noball' || type == 'no-ball') {
+    return _LiveEvent(type == 'wide' ? 'WIDE' : 'NO BALL', (c.warning as Color));
+  }
+  if (type == 'bye' || type == 'leg_bye' || type == 'legbye' || type == 'leg-bye') {
+    return _LiveEvent(type == 'bye' ? 'BYE' : 'LEG BYE', (c.warning as Color));
+  }
+  if (type == 'extra') {
+    return _LiveEvent('EXTRA', (c.warning as Color));
+  }
+
   if (isWicket) return _LiveEvent('WICKET', c.live as Color);
   if (isSix) return _LiveEvent('SIX', c.success as Color);
   if (isFour) return _LiveEvent('FOUR', c.cyan as Color);
+  if (type == 'dot') return const _LiveEvent('DOT BALL', Color(0xff60a5fa));
+
   final runs = _liveRuns(row);
-  if (runs == null) return _LiveEvent('BALL', c.cyan as Color);
+  if (runs == null) {
+    // A non-ball commentary update (drinks/stumps/milestone) — not a delivery.
+    return _LiveEvent('UPDATE', c.muted as Color);
+  }
   if (runs == 0) return const _LiveEvent('DOT BALL', Color(0xff60a5fa));
   return _LiveEvent(runs == 1 ? '1 RUN' : '$runs RUNS', c.cyan as Color);
 }
@@ -2210,31 +2246,47 @@ Map<String, dynamic>? _resolvePlayerOfMatch(Map<String, dynamic> summary) {
   return null;
 }
 
-/// Builds team score lines such as `SL 303/7 (50.0 ov)` from the match detail
-/// team innings.
-List<(String, String)> _resultScoreLines(Map<String, dynamic> summary) {
-  final lines = <(String, String)>[];
+/// A team's score for the Live result view: the team's short name plus its
+/// structured [InningsScore] list, rendered through the shared [TeamScoreView]
+/// so the result view and the Score tab can never disagree on formatting
+/// (declared `d`, the `ov` unit, the multi-innings `&` join, current-innings
+/// starring).
+class _ResultTeamScore {
+  const _ResultTeamScore({required this.name, required this.innings});
+  final String name;
+  final List<InningsScore> innings;
+}
+
+/// Builds structured team scores from the match-detail team innings, so the
+/// Live result view renders through the shared [TeamScoreView] (the single
+/// score formatter) instead of hand-building `runs/wickets (overs ov)` strings.
+List<_ResultTeamScore> _resultScoreLines(Map<String, dynamic> summary) {
+  final lines = <_ResultTeamScore>[];
   for (final key in const ['team1', 'team2']) {
     final team = _liveMap(summary[key]);
     if (team.isEmpty) continue;
     final name = _liveStr(
       team['short_name'] ?? team['shortName'] ?? team['name'],
     );
-    final innings = _liveList(team['innings']);
-    if (innings.isEmpty) continue;
-    final parts = <String>[];
-    for (final raw in innings) {
+    final rawInnings = _liveList(team['innings']);
+    if (rawInnings.isEmpty) continue;
+    final innings = <InningsScore>[];
+    for (final raw in rawInnings) {
       final inn = _liveMap(raw);
-      final runs = _liveStr(inn['runs'], fallback: '0');
-      final wickets = _liveStr(inn['wickets'], fallback: '0');
+      final runs = apiInt(inn['runs']);
+      // A batted innings needs a runs figure; skip empty placeholders so a
+      // "Yet to bat" innings never reads as 0/0.
+      if (runs == null) continue;
       final oversRaw = _liveStr(inn['overs']);
-      final overs = oversRaw.isEmpty ? '' : normalizeOversText(oversRaw);
-      final declared = _truthyLive(inn['declared']) ? 'd' : '';
-      final scoreText = '$runs/$wickets$declared';
-      parts.add(overs.isEmpty ? scoreText : '$scoreText ($overs ov)');
+      innings.add(InningsScore(
+        runs: runs,
+        wickets: apiInt(inn['wickets']),
+        overs: oversRaw.isEmpty ? '' : normalizeOversText(oversRaw),
+        declared: _truthyLive(inn['declared']),
+      ));
     }
-    if (parts.isEmpty) continue;
-    lines.add((name.isEmpty ? 'Team' : name, parts.join(' & ')));
+    if (innings.isEmpty) continue;
+    lines.add(_ResultTeamScore(name: name.isEmpty ? 'Team' : name, innings: innings));
   }
   return lines;
 }

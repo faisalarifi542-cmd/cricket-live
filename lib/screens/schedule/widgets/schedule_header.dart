@@ -95,6 +95,7 @@ class _DateSelector extends StatelessWidget {
         height: 92,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.only(right: 20),
           itemCount: placeholders.length,
           separatorBuilder: (_, __) => const SizedBox(width: 10),
           itemBuilder: (_, i) => _DateCard(
@@ -109,6 +110,7 @@ class _DateSelector extends StatelessWidget {
       height: 92,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(right: 20),
         itemCount: days.length,
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (_, i) => _DateCard(
@@ -282,6 +284,9 @@ class _CategoryChips extends StatelessWidget {
       height: 42,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        // Trailing padding so the last category chip (e.g. "Women") scrolls
+        // fully into view instead of being cut flush at the right edge.
+        padding: const EdgeInsets.only(right: 20),
         itemCount: filters.length,
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (_, i) => _CategoryChip(

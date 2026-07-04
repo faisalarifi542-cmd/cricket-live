@@ -1,0 +1,1198 @@
+[
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_01.png",
+    "bbox": [
+      24,
+      13,
+      732,
+      412
+    ],
+    "width": 708,
+    "height": 399,
+    "component_area": 257595
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_02.png",
+    "bbox": [
+      757,
+      23,
+      1415,
+      402
+    ],
+    "width": 658,
+    "height": 379,
+    "component_area": 232439
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_03.png",
+    "bbox": [
+      420,
+      877,
+      1032,
+      1054
+    ],
+    "width": 612,
+    "height": 177,
+    "component_area": 95649
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_04.png",
+    "bbox": [
+      25,
+      624,
+      366,
+      891
+    ],
+    "width": 341,
+    "height": 267,
+    "component_area": 50903
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_05.png",
+    "bbox": [
+      904,
+      711,
+      1377,
+      849
+    ],
+    "width": 473,
+    "height": 138,
+    "component_area": 49831
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_06.png",
+    "bbox": [
+      474,
+      402,
+      625,
+      780
+    ],
+    "width": 151,
+    "height": 378,
+    "component_area": 30300
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_07.png",
+    "bbox": [
+      455,
+      777,
+      871,
+      888
+    ],
+    "width": 416,
+    "height": 111,
+    "component_area": 27299
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_08.png",
+    "bbox": [
+      32,
+      440,
+      235,
+      516
+    ],
+    "width": 203,
+    "height": 76,
+    "component_area": 10061
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_09.png",
+    "bbox": [
+      967,
+      461,
+      1082,
+      573
+    ],
+    "width": 115,
+    "height": 112,
+    "component_area": 7030
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_10.png",
+    "bbox": [
+      757,
+      459,
+      872,
+      571
+    ],
+    "width": 115,
+    "height": 112,
+    "component_area": 7000
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_11.png",
+    "bbox": [
+      1293,
+      460,
+      1406,
+      573
+    ],
+    "width": 113,
+    "height": 113,
+    "component_area": 6991
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_12.png",
+    "bbox": [
+      1077,
+      459,
+      1193,
+      573
+    ],
+    "width": 116,
+    "height": 114,
+    "component_area": 6981
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_13.png",
+    "bbox": [
+      1185,
+      461,
+      1299,
+      573
+    ],
+    "width": 114,
+    "height": 112,
+    "component_area": 6944
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_14.png",
+    "bbox": [
+      653,
+      459,
+      765,
+      573
+    ],
+    "width": 112,
+    "height": 114,
+    "component_area": 6879
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_15.png",
+    "bbox": [
+      865,
+      460,
+      977,
+      571
+    ],
+    "width": 112,
+    "height": 111,
+    "component_area": 6859
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_16.png",
+    "bbox": [
+      308,
+      439,
+      401,
+      530
+    ],
+    "width": 93,
+    "height": 91,
+    "component_area": 3057
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_17.png",
+    "bbox": [
+      690,
+      618,
+      754,
+      682
+    ],
+    "width": 64,
+    "height": 64,
+    "component_area": 2022
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_18.png",
+    "bbox": [
+      1212,
+      620,
+      1264,
+      679
+    ],
+    "width": 52,
+    "height": 59,
+    "component_area": 1212
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_19.png",
+    "bbox": [
+      845,
+      623,
+      901,
+      678
+    ],
+    "width": 56,
+    "height": 55,
+    "component_area": 1200
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_20.png",
+    "bbox": [
+      1034,
+      642,
+      1075,
+      675
+    ],
+    "width": 41,
+    "height": 33,
+    "component_area": 364
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_21.png",
+    "bbox": [
+      26,
+      759,
+      67,
+      798
+    ],
+    "width": 41,
+    "height": 39,
+    "component_area": 240
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_22.png",
+    "bbox": [
+      1039,
+      623,
+      1070,
+      656
+    ],
+    "width": 31,
+    "height": 33,
+    "component_area": 212
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_23.png",
+    "bbox": [
+      46,
+      598,
+      79,
+      633
+    ],
+    "width": 33,
+    "height": 35,
+    "component_area": 178
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_24.png",
+    "bbox": [
+      311,
+      643,
+      339,
+      676
+    ],
+    "width": 28,
+    "height": 33,
+    "component_area": 125
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_25.png",
+    "bbox": [
+      1057,
+      642,
+      1086,
+      673
+    ],
+    "width": 29,
+    "height": 31,
+    "component_area": 121
+  },
+  {
+    "sheet": "sheet1_tournament",
+    "file": "auto_extracted/sheet1_tournament/sheet1_tournament_asset_26.png",
+    "bbox": [
+      1024,
+      642,
+      1053,
+      673
+    ],
+    "width": 29,
+    "height": 31,
+    "component_area": 121
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_01.png",
+    "bbox": [
+      28,
+      21,
+      732,
+      330
+    ],
+    "width": 704,
+    "height": 309,
+    "component_area": 200153
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_02.png",
+    "bbox": [
+      747,
+      23,
+      1415,
+      328
+    ],
+    "width": 668,
+    "height": 305,
+    "component_area": 187923
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_03.png",
+    "bbox": [
+      20,
+      530,
+      714,
+      759
+    ],
+    "width": 694,
+    "height": 229,
+    "component_area": 142624
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_04.png",
+    "bbox": [
+      50,
+      779,
+      1398,
+      890
+    ],
+    "width": 1348,
+    "height": 111,
+    "component_area": 126252
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_05.png",
+    "bbox": [
+      751,
+      539,
+      1407,
+      764
+    ],
+    "width": 656,
+    "height": 225,
+    "component_area": 126080
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_06.png",
+    "bbox": [
+      853,
+      918,
+      1335,
+      1049
+    ],
+    "width": 482,
+    "height": 131,
+    "component_area": 52745
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_07.png",
+    "bbox": [
+      520,
+      338,
+      717,
+      539
+    ],
+    "width": 197,
+    "height": 201,
+    "component_area": 25640
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_08.png",
+    "bbox": [
+      1034,
+      339,
+      1232,
+      538
+    ],
+    "width": 198,
+    "height": 199,
+    "component_area": 25394
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_09.png",
+    "bbox": [
+      48,
+      357,
+      295,
+      436
+    ],
+    "width": 247,
+    "height": 79,
+    "component_area": 13750
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_10.png",
+    "bbox": [
+      1258,
+      351,
+      1395,
+      513
+    ],
+    "width": 137,
+    "height": 162,
+    "component_area": 13560
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_11.png",
+    "bbox": [
+      724,
+      396,
+      1021,
+      480
+    ],
+    "width": 297,
+    "height": 84,
+    "component_area": 10106
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_12.png",
+    "bbox": [
+      365,
+      366,
+      483,
+      483
+    ],
+    "width": 118,
+    "height": 117,
+    "component_area": 5536
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_13.png",
+    "bbox": [
+      343,
+      940,
+      435,
+      1032
+    ],
+    "width": 92,
+    "height": 92,
+    "component_area": 4529
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_14.png",
+    "bbox": [
+      128,
+      940,
+      211,
+      1026
+    ],
+    "width": 83,
+    "height": 86,
+    "component_area": 4260
+  },
+  {
+    "sheet": "sheet2_bilateral",
+    "file": "auto_extracted/sheet2_bilateral/sheet2_bilateral_asset_15.png",
+    "bbox": [
+      548,
+      947,
+      646,
+      1028
+    ],
+    "width": 98,
+    "height": 81,
+    "component_area": 4177
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_01.png",
+    "bbox": [
+      33,
+      17,
+      950,
+      382
+    ],
+    "width": 917,
+    "height": 365,
+    "component_area": 312696
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_02.png",
+    "bbox": [
+      33,
+      393,
+      950,
+      700
+    ],
+    "width": 917,
+    "height": 307,
+    "component_area": 261842
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_03.png",
+    "bbox": [
+      34,
+      956,
+      1414,
+      1059
+    ],
+    "width": 1380,
+    "height": 103,
+    "component_area": 118199
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_04.png",
+    "bbox": [
+      966,
+      18,
+      1419,
+      282
+    ],
+    "width": 453,
+    "height": 264,
+    "component_area": 107432
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_05.png",
+    "bbox": [
+      1024,
+      381,
+      1281,
+      727
+    ],
+    "width": 257,
+    "height": 346,
+    "component_area": 37974
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_06.png",
+    "bbox": [
+      932,
+      736,
+      1375,
+      822
+    ],
+    "width": 443,
+    "height": 86,
+    "component_area": 29093
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_07.png",
+    "bbox": [
+      1028,
+      846,
+      1406,
+      944
+    ],
+    "width": 378,
+    "height": 98,
+    "component_area": 28520
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_08.png",
+    "bbox": [
+      978,
+      302,
+      1178,
+      377
+    ],
+    "width": 200,
+    "height": 75,
+    "component_area": 9985
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_09.png",
+    "bbox": [
+      36,
+      715,
+      149,
+      827
+    ],
+    "width": 113,
+    "height": 112,
+    "component_area": 7356
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_10.png",
+    "bbox": [
+      807,
+      715,
+      919,
+      827
+    ],
+    "width": 112,
+    "height": 112,
+    "component_area": 7251
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_11.png",
+    "bbox": [
+      294,
+      716,
+      406,
+      827
+    ],
+    "width": 112,
+    "height": 111,
+    "component_area": 7242
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_12.png",
+    "bbox": [
+      679,
+      716,
+      791,
+      827
+    ],
+    "width": 112,
+    "height": 111,
+    "component_area": 7239
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_13.png",
+    "bbox": [
+      166,
+      715,
+      278,
+      827
+    ],
+    "width": 112,
+    "height": 112,
+    "component_area": 7223
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_14.png",
+    "bbox": [
+      551,
+      715,
+      663,
+      827
+    ],
+    "width": 112,
+    "height": 112,
+    "component_area": 7215
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_15.png",
+    "bbox": [
+      422,
+      715,
+      534,
+      827
+    ],
+    "width": 112,
+    "height": 112,
+    "component_area": 7212
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_16.png",
+    "bbox": [
+      248,
+      850,
+      340,
+      940
+    ],
+    "width": 92,
+    "height": 90,
+    "component_area": 4405
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_17.png",
+    "bbox": [
+      64,
+      851,
+      147,
+      937
+    ],
+    "width": 83,
+    "height": 86,
+    "component_area": 4093
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_18.png",
+    "bbox": [
+      541,
+      854,
+      639,
+      934
+    ],
+    "width": 98,
+    "height": 80,
+    "component_area": 3516
+  },
+  {
+    "sheet": "sheet3_league",
+    "file": "auto_extracted/sheet3_league/sheet3_league_asset_19.png",
+    "bbox": [
+      816,
+      851,
+      892,
+      937
+    ],
+    "width": 76,
+    "height": 86,
+    "component_area": 3159
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_01.png",
+    "bbox": [
+      995,
+      733,
+      1412,
+      1040
+    ],
+    "width": 417,
+    "height": 307,
+    "component_area": 114929
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_02.png",
+    "bbox": [
+      40,
+      764,
+      448,
+      1040
+    ],
+    "width": 408,
+    "height": 276,
+    "component_area": 101360
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_03.png",
+    "bbox": [
+      37,
+      321,
+      405,
+      754
+    ],
+    "width": 368,
+    "height": 433,
+    "component_area": 68002
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_04.png",
+    "bbox": [
+      945,
+      46,
+      1405,
+      191
+    ],
+    "width": 460,
+    "height": 145,
+    "component_area": 55370
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_05.png",
+    "bbox": [
+      38,
+      184,
+      498,
+      307
+    ],
+    "width": 460,
+    "height": 123,
+    "component_area": 35827
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_06.png",
+    "bbox": [
+      979,
+      221,
+      1357,
+      331
+    ],
+    "width": 378,
+    "height": 110,
+    "component_area": 32500
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_07.png",
+    "bbox": [
+      827,
+      656,
+      976,
+      968
+    ],
+    "width": 149,
+    "height": 312,
+    "component_area": 30305
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_08.png",
+    "bbox": [
+      491,
+      856,
+      792,
+      997
+    ],
+    "width": 301,
+    "height": 141,
+    "component_area": 23225
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_09.png",
+    "bbox": [
+      726,
+      151,
+      917,
+      338
+    ],
+    "width": 191,
+    "height": 187,
+    "component_area": 23040
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_10.png",
+    "bbox": [
+      538,
+      151,
+      729,
+      337
+    ],
+    "width": 191,
+    "height": 186,
+    "component_area": 22974
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_11.png",
+    "bbox": [
+      439,
+      634,
+      827,
+      750
+    ],
+    "width": 388,
+    "height": 116,
+    "component_area": 20908
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_12.png",
+    "bbox": [
+      433,
+      345,
+      575,
+      509
+    ],
+    "width": 142,
+    "height": 164,
+    "component_area": 14205
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_13.png",
+    "bbox": [
+      450,
+      54,
+      666,
+      136
+    ],
+    "width": 216,
+    "height": 82,
+    "component_area": 12007
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_14.png",
+    "bbox": [
+      209,
+      53,
+      425,
+      134
+    ],
+    "width": 216,
+    "height": 81,
+    "component_area": 11586
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_15.png",
+    "bbox": [
+      693,
+      59,
+      900,
+      131
+    ],
+    "width": 207,
+    "height": 72,
+    "component_area": 10075
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_16.png",
+    "bbox": [
+      744,
+      984,
+      955,
+      1063
+    ],
+    "width": 211,
+    "height": 79,
+    "component_area": 9594
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_17.png",
+    "bbox": [
+      471,
+      811,
+      787,
+      883
+    ],
+    "width": 316,
+    "height": 72,
+    "component_area": 6731
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_18.png",
+    "bbox": [
+      980,
+      381,
+      1140,
+      513
+    ],
+    "width": 160,
+    "height": 132,
+    "component_area": 4518
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_19.png",
+    "bbox": [
+      1256,
+      380,
+      1412,
+      512
+    ],
+    "width": 156,
+    "height": 132,
+    "component_area": 4455
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_20.png",
+    "bbox": [
+      1257,
+      586,
+      1412,
+      709
+    ],
+    "width": 155,
+    "height": 123,
+    "component_area": 4130
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_21.png",
+    "bbox": [
+      980,
+      586,
+      1118,
+      709
+    ],
+    "width": 138,
+    "height": 123,
+    "component_area": 3903
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_22.png",
+    "bbox": [
+      377,
+      530,
+      456,
+      610
+    ],
+    "width": 79,
+    "height": 80,
+    "component_area": 3595
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_23.png",
+    "bbox": [
+      531,
+      531,
+      611,
+      610
+    ],
+    "width": 80,
+    "height": 79,
+    "component_area": 3185
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_24.png",
+    "bbox": [
+      844,
+      529,
+      919,
+      613
+    ],
+    "width": 75,
+    "height": 84,
+    "component_area": 3121
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_25.png",
+    "bbox": [
+      56,
+      53,
+      145,
+      138
+    ],
+    "width": 89,
+    "height": 85,
+    "component_area": 2643
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_26.png",
+    "bbox": [
+      593,
+      742,
+      658,
+      808
+    ],
+    "width": 65,
+    "height": 66,
+    "component_area": 1848
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_27.png",
+    "bbox": [
+      700,
+      565,
+      758,
+      610
+    ],
+    "width": 58,
+    "height": 45,
+    "component_area": 1009
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_28.png",
+    "bbox": [
+      710,
+      536,
+      747,
+      578
+    ],
+    "width": 37,
+    "height": 42,
+    "component_area": 466
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_29.png",
+    "bbox": [
+      737,
+      567,
+      774,
+      606
+    ],
+    "width": 37,
+    "height": 39,
+    "component_area": 308
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_30.png",
+    "bbox": [
+      684,
+      567,
+      720,
+      606
+    ],
+    "width": 36,
+    "height": 39,
+    "component_area": 302
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_31.png",
+    "bbox": [
+      733,
+      544,
+      766,
+      580
+    ],
+    "width": 33,
+    "height": 36,
+    "component_area": 259
+  },
+  {
+    "sheet": "sheet4_misc",
+    "file": "auto_extracted/sheet4_misc/sheet4_misc_asset_32.png",
+    "bbox": [
+      692,
+      544,
+      723,
+      580
+    ],
+    "width": 31,
+    "height": 36,
+    "component_area": 240
+  }
+]

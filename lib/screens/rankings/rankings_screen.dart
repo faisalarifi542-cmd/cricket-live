@@ -413,36 +413,43 @@ class _PremiumRankingCard extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 50,
+            width: 42,
             child: Column(
               children: [
                 if (isFirst)
-                  Icon(Icons.emoji_events_rounded, color: c.cyan, size: 28),
+                  Icon(Icons.emoji_events_rounded, color: c.cyan, size: 26),
                 if (isFirst) const SizedBox(height: 4),
-                Text(
-                  '${entry.rank}',
-                  style: TextStyle(
-                    color: isFirst ? c.cyan : c.text,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 32,
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '${entry.rank}',
+                    style: TextStyle(
+                      color: isFirst ? c.cyan : c.text,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 28,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Allow the player name up to 2 lines so a long name wraps
+                // instead of truncating mid-surname (the "Travis ..." bug) —
+                // the row has room now that the rank column is tighter.
                 Text(
                   entry.name,
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: c.text,
                     fontWeight: FontWeight.w800,
-                    fontSize: 20,
+                    fontSize: 18,
+                    height: 1.2,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -554,11 +561,13 @@ class _RankingImage extends StatelessWidget {
     // always trusting the raw ranking image URL.
     final image = resolvePlayerImageUrl(entry.imageUrl);
     return Container(
-      width: 80,
-      height: 80,
+      // Slightly smaller avatar so the player name column gets more width and
+      // long names wrap instead of truncating.
+      width: 64,
+      height: 64,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: c.border, width: 1.5),
         color: c.card2,
       ),

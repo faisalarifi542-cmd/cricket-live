@@ -7,6 +7,7 @@ import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/components.dart';
 import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
+import 'package:cricpro_flutter/utils/match_status.dart';
 import 'package:cricpro_flutter/utils/team_format.dart';
 import 'package:cricpro_flutter/widgets/team_score_view.dart';
 
@@ -349,6 +350,8 @@ class MinimizedScoreBar extends StatelessWidget {
                     short: match.teamAShort,
                     innings: match.teamAInnings,
                     live: match.isLive,
+                    currentInningsIndex:
+                        match.currentScoredIndexForTeam(isTeamA: true),
                     color: const Color(0xff22d3ee),
                     logoLeading: true,
                     compact: compact,
@@ -370,6 +373,8 @@ class MinimizedScoreBar extends StatelessWidget {
                     short: match.teamBShort,
                     innings: match.teamBInnings,
                     live: match.isLive,
+                    currentInningsIndex:
+                        match.currentScoredIndexForTeam(isTeamA: false),
                     color: const Color(0xfff59e0b),
                     logoLeading: false,
                     compact: compact,
@@ -509,12 +514,17 @@ class _CenterBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    // Single source of truth for the live badge + status note, so the floating
+    // bar never shows a generic LIVE while the note says "Day 1: Stumps" — a
+    // paused live match reads STUMPS/LUNCH/TEA/INN BREAK in both places.
+    final status = MatchStatusDisplay.of(context, match);
 
     // Status / equation line.
     final Widget statusLine;
     if (match.isFinished) {
-      final resultRaw =
-          match.resultText.isNotEmpty ? match.resultText : match.statusText;
+      final resultRaw = status.phaseLabel.isNotEmpty
+          ? status.phaseLabel
+          : (match.resultText.isNotEmpty ? match.resultText : match.statusText);
       final result =
           resultRaw.isEmpty ? '' : shortMatchStatus(resultRaw, match);
       statusLine = Text(
@@ -541,9 +551,13 @@ class _CenterBlock extends StatelessWidget {
         ),
       );
     } else {
-      final s = match.statusText.isNotEmpty
-          ? shortMatchStatus(match.statusText, match)
-          : (match.isLive ? 'Live' : match.statusLabel);
+      // For a live match use the resolver's phase label (e.g. "Day 1 Stumps");
+      // fall back to the status text, then the coarse status label.
+      final s = status.phaseLabel.isNotEmpty
+          ? shortMatchStatus(status.phaseLabel, match)
+          : (match.statusText.isNotEmpty
+              ? shortMatchStatus(match.statusText, match)
+              : (match.isLive ? 'Live' : match.statusLabel));
       statusLine = Text(
         s,
         maxLines: 1,
@@ -562,7 +576,13 @@ class _CenterBlock extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (match.isLive) _LiveBadge(compact: compact),
+        if (match.isLive)
+          _LiveBadge(
+            compact: compact,
+            label: status.badge,
+            // Suppress the pulsing dot for a stoppage (stumps/lunch/tea/…).
+            pulsing: status.subPhase == MatchSubPhase.live,
+          ),
         if (match.isLive) const SizedBox(height: 3),
         statusLine,
         if (showProgress) ...[
@@ -603,8 +623,17 @@ class _CenterBlock extends StatelessWidget {
 }
 
 class _LiveBadge extends StatelessWidget {
-  const _LiveBadge({required this.compact});
+  const _LiveBadge({required this.compact, this.label = 'LIVE', this.pulsing = true});
   final bool compact;
+
+  /// Badge word — `LIVE` for an actively-bowling match, or `STUMPS`/`LUNCH`/
+  /// `TEA`/`INN BREAK` for a paused live match, so the floating bar never
+  /// contradicts the status note.
+  final String label;
+
+  /// Whether to show the pulsing live dot. Suppressed for a stoppage so the
+  /// badge does not read "live now" while the note says "Day 1 Stumps".
+  final bool pulsing;
 
   @override
   Widget build(BuildContext context) {
@@ -620,14 +649,16 @@ class _LiveBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: c.live, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
+          if (pulsing) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: c.live, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 5),
+          ],
           Text(
-            'LIVE',
+            label,
             style: TextStyle(
               color: c.live,
               fontWeight: FontWeight.w800,

@@ -121,6 +121,19 @@ class ProviderManager {
     const errors = [];
 
     for (const provider of providers) {
+      // Skip providers that lack required config (e.g. CricketData with no API
+      // key). Executing them just throws a guaranteed "not configured" error and
+      // pollutes the failover error list — treat as a clean skip instead.
+      if (typeof provider.isConfigured === 'function' && !provider.isConfigured()) {
+        logger.debug({
+          msg: 'Provider misconfigured, skipping',
+          provider: provider.name,
+          method,
+          reason: provider.configReason?.() || 'not_configured',
+        });
+        continue;
+      }
+
       if (!provider.isAvailable()) {
         logger.debug({ msg: 'Provider unavailable, skipping', provider: provider.name, method });
         continue;
@@ -167,16 +180,65 @@ class ProviderManager {
     throw new Error(errMsg);
   }
 
+  /** Look up a provider instance by its type/name (e.g. 'cricinfo'). */
+  getProvider(type) {
+    return this.byType.get(type) || null;
+  }
+
   /** Get health status of all known providers (regardless of DB enablement). */
   getHealthStatus() {
-    return [...this.byType.values()].map((p) => ({
-      name: p.name,
-      priority: p.priority,
-      healthy: p.healthy,
-      available: p.isAvailable(),
-      consecutiveFailures: p.consecutiveFailures,
-      lastFailure: p.lastFailure ? new Date(p.lastFailure).toISOString() : null,
-    }));
+    return [...this.byType.values()].map((p) => {
+      const configured = typeof p.isConfigured === 'function' ? p.isConfigured() : true;
+      const reason = typeof p.configReason === 'function' ? p.configReason() : null;
+      const state = typeof p.healthState === 'function'
+        ? p.healthState()
+        : (p.healthy ? 'up' : 'down');
+      return {
+        name: p.name,
+        priority: p.priority,
+        healthy: p.healthy,
+        available: p.isAvailable(),
+        configured,
+        state, // 'up' | 'down' | 'misconfigured' (admin route may refine to 'limited'/'disabled')
+        reason,
+        consecutiveFailures: p.consecutiveFailures,
+        lastFailure: p.lastFailure ? new Date(p.lastFailure).toISOString() : null,
+      };
+    });
+  }
+
+  /**
+   * Log the resolved provider config + runtime order once at boot, so every
+   * PM2 process records which providers it will actually use. Also resets
+   * in-memory health on boot (a fresh process must not inherit a stale "down").
+   */
+  async logStartupConfig() {
+    // Fresh process → clean health. Guards against a persisted/stale down state
+    // being assumed across restarts.
+    for (const p of this.byType.values()) {
+      p.healthy = true;
+      p.consecutiveFailures = 0;
+      p.lastFailure = null;
+    }
+    let cfg;
+    try {
+      cfg = await this.loadConfig();
+    } catch {
+      cfg = { dbOk: false, order: null };
+    }
+    const providers = this.resolveProviders(cfg);
+    const lines = providers.map((p) => {
+      const configured = typeof p.isConfigured === 'function' ? p.isConfigured() : true;
+      const reason = typeof p.configReason === 'function' ? p.configReason() : null;
+      return `- ${p.name} active=true usable=${configured}${reason ? ` reason=${reason}` : ''} priority=${p.priority}`;
+    });
+    const runtimeOrder = providers
+      .filter((p) => (typeof p.isConfigured === 'function' ? p.isConfigured() : true))
+      .map((p) => p.name)
+      .join(', ');
+    logger.info(
+      `Provider config loaded:\n${lines.join('\n')}\nFinal runtime provider order: ${runtimeOrder}`,
+    );
   }
 
   /** Persist health to Redis for cross-process visibility */
@@ -184,19 +246,24 @@ class ProviderManager {
     const redis = getRedis();
     const health = this.getHealthStatus();
     for (const p of health) {
-      await redis.setex(KEYS.providerHealth(p.name), 60, JSON.stringify(p));
+      // Never let a cache write failure bubble into an unhandled rejection.
+      // eslint-disable-next-line no-await-in-loop
+      await redis.setex(KEYS.providerHealth(p.name), 60, JSON.stringify(p)).catch(() => {});
     }
   }
 
-  /** Force-reset a provider's health */
+  /**
+   * Force-reset a provider's health. Returns true when a matching provider was
+   * found and reset, false otherwise.
+   */
   resetProvider(name) {
     const provider = [...this.byType.values()].find((p) => p.name === name);
-    if (provider) {
-      provider.healthy = true;
-      provider.consecutiveFailures = 0;
-      provider.lastFailure = null;
-      logger.info({ msg: 'Provider health reset', provider: name });
-    }
+    if (!provider) return false;
+    provider.healthy = true;
+    provider.consecutiveFailures = 0;
+    provider.lastFailure = null;
+    logger.info({ msg: 'Provider health reset', provider: name });
+    return true;
   }
 }
 

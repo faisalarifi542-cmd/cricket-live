@@ -86,3 +86,27 @@ node_modules/
 *.patch
 
 *.patch
+.aider*
+
+# Local session / tooling artifacts (not project source)
+.claude/plans/
+.claude/skills/
+.kiro/
+/skills/
+CHAT_HISTORY.md
+/claude.md
+
+# API response dumps / debug captures
+/cricket-api/ls.json
+/cricket-api/ml.json
+/series_response.json
+
+# Build artifacts
+/target/
+
+# Unreferenced design dumps / backups
+/current-design/
+/New/
+/admin-panel/New folder/
+/admin-panel/app.back/
+/assets/images/series/newest-design/

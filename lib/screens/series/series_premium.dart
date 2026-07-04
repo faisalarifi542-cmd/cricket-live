@@ -16,12 +16,19 @@ import 'package:cricpro_flutter/utils/team_format.dart';
 // Asset catalogue
 // ---------------------------------------------------------------------------
 
+
+
+
+
+
+
 class SAsset {
   static const _bg = 'assets/images/series/backgrounds';
   static const _fx = 'assets/images/series/effects';
   static const _venue = 'assets/images/series/venues';
   static const _ph = 'assets/images/series/placeholders';
   static const _home = 'assets/images/home';
+  static const _new = 'assets/images/series/new-design';
 
   // Backgrounds.
   static const topBackdrop = '$_bg/series_page_top_backdrop.webp';
@@ -33,6 +40,16 @@ class SAsset {
   static const squadSectionBg = '$_bg/series_squad_section_bg.webp';
   static const emptyStateBg = '$_bg/series_empty_state_bg.webp';
 
+  // New Series list screen assets.
+  static const newSeriesHeroBanner = '$_new/series_hero_banner.webp';
+  static const newTournamentSeriesCard = '$_new/tournament_series_card.webp';
+  static const newBilateralSeriesCard = '$_new/bilateral_series_card.webp';
+  static const newCompletedSeriesCard = '$_new/completed_series_card.webp';
+  static const newLeagueSeriesCard = '$_new/league_series_card.webp';
+  static const newFilterChipActive = '$_new/filter_chip_active.webp';
+  static const newFilterChipInactive = '$_new/filter_chip_inactive.webp';
+  static const newBottomNavBar = '$_new/bottom_nav_bar.webp';
+
   // Effects.
   static const vsUnderGlowStrong = '$_fx/vs_under_glow_strong.webp';
   static const vsUnderGlowSoft = '$_fx/vs_under_glow_soft.webp';
@@ -40,6 +57,24 @@ class SAsset {
   static const centerVsSpotlight = '$_fx/center_vs_spotlight.webp';
   static const neonCardTopEdge = '$_fx/neon_card_top_edge.webp';
   static const cyanParticles = '$_fx/cyan_particles_overlay.webp';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // Placeholders.
   static const trophyPlaceholder = '$_ph/series_trophy_placeholder.webp';
@@ -894,7 +929,7 @@ class _StatusTab extends StatelessWidget {
 // Category chips (All / International / League / Domestic) — Home style.
 // ---------------------------------------------------------------------------
 
-class SeriesCategoryChips extends StatelessWidget {
+class SeriesCategoryChips extends StatefulWidget {
   const SeriesCategoryChips({
     super.key,
     required this.items,
@@ -907,20 +942,74 @@ class SeriesCategoryChips extends StatelessWidget {
   final ValueChanged<int> onChanged;
 
   @override
+  State<SeriesCategoryChips> createState() => _SeriesCategoryChipsState();
+}
+
+class _SeriesCategoryChipsState extends State<SeriesCategoryChips> {
+  final ScrollController _controller = ScrollController();
+  late List<GlobalKey> _keys = _freshKeys();
+
+  List<GlobalKey> _freshKeys() =>
+      List.generate(widget.items.length, (_) => GlobalKey());
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureVisible());
+  }
+
+  @override
+  void didUpdateWidget(covariant SeriesCategoryChips old) {
+    super.didUpdateWidget(old);
+    if (old.items.length != widget.items.length) _keys = _freshKeys();
+    if (old.selected != widget.selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _ensureVisible());
+    }
+  }
+
+  /// Scrolls the selected chip fully into view so a tapped chip (e.g. the
+  /// right-most "Completed") is never left half-clipped at the row edge.
+  void _ensureVisible() {
+    if (!mounted) return;
+    final i = widget.selected;
+    if (i < 0 || i >= _keys.length) return;
+    final ctx = _keys[i].currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      alignment: 0.5,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final tight = context.w <= 393;
+    final items = widget.items;
+    final selected = widget.selected;
     return SizedBox(
       height: 48,
       child: ListView.separated(
+        controller: _controller,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         // Let the active chip's cyan under-glow spill instead of being clipped
         // by the row's hard edge; vertical padding gives the glow + scale room.
         clipBehavior: Clip.none,
-        // Trailing right padding keeps the last chip from being cut flush
-        // against the viewport edge so the row reads as clearly scrollable.
-        padding: const EdgeInsets.fromLTRB(2, 3, 16, 3),
+        // Generous trailing right padding keeps the last chip from being cut
+        // flush against the viewport edge so the row reads as clearly
+        // scrollable and the final chip scrolls fully into view (consistent
+        // with the Schedule chip rows). Auto-scroll (above) also brings the
+        // selected chip into view on tap.
+        padding: const EdgeInsets.fromLTRB(4, 3, 40, 3),
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(width: 9),
         itemBuilder: (context, i) {
@@ -928,7 +1017,8 @@ class SeriesCategoryChips extends StatelessWidget {
           var label = items[i].$1;
           if (tight && label == 'International') label = 'Intl';
           return TapScale(
-            onTap: () => onChanged(i),
+            key: _keys[i],
+            onTap: () => widget.onChanged(i),
             borderRadius: 24,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 220),

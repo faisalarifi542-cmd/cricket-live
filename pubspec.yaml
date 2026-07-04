@@ -46,6 +46,16 @@ flutter:
     - assets/images/live_stream/overlays/
     - assets/images/live_stream/icons/
     - assets/images/series/
+    - assets/images/series/new/core_clean_assets/
+    - assets/images/series/new/auto_extracted/sheet1_tournament/
+    - assets/images/series/new/auto_extracted/sheet2_bilateral/
+    - assets/images/series/new/auto_extracted/sheet3_league/
+    - assets/images/series/new/auto_extracted/sheet4_misc/
+    - assets/images/series/new-design/
+    - assets/images/series/newest-design/backgrounds/
+    - assets/images/series/newest-design/components/
+    - assets/images/series/newest-design/icons/
+    - assets/images/series/newest-design/overlays/
     - assets/images/series/backgrounds/
     - assets/images/series/effects/
     - assets/images/series/venues/

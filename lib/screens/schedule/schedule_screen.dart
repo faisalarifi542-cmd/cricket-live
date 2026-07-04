@@ -3,11 +3,14 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import '../../app_theme.dart';
+import '../../api_models.dart';
 import '../../components.dart';
 import '../../models/api_response.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 import '../../utils/team_format.dart';
+import '../../widgets/team_score_view.dart';
+import 'schedule_strip.dart';
 
 part 'widgets/schedule_header.dart';
 part 'widgets/schedule_cards.dart';
@@ -217,6 +220,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     await _schedule;
   }
 
+  /// Builds the date strip as a FIXED 14-day window starting at the device's
+  /// LOCAL today (see [buildScheduleStrip]) and buckets every match into it by
+  /// its effective calendar date. The strip is independent of the payload, so
+  /// Schedule always opens on today and live multi-day Tests show under today.
+  List<ScheduleDay> _regroupByLocalDate(List<ScheduleDay> days) {
+    final matches = [for (final day in days) ...day.matches];
+    return buildScheduleStrip(matches: matches, now: DateTime.now());
+  }
+
   List<CricketMatch> _applySearchSort(List<CricketMatch> matches) {
     var list = matches;
     if (_search.trim().isNotEmpty) {
@@ -323,15 +335,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               child: FutureBuilder<ApiEnvelope<List<ScheduleDay>>>(
                 future: _schedule,
                 builder: (context, snapshot) {
-                  final days = snapshot.data?.data ?? const <ScheduleDay>[];
+                  // The date strip is ALWAYS the fixed 14-day window from today
+                  // (independent of the payload), so `days` is never empty.
+                  // Loading/empty/error are driven by the snapshot itself.
+                  final days = _regroupByLocalDate(
+                      snapshot.data?.data ?? const <ScheduleDay>[]);
                   final waiting =
                       snapshot.connectionState == ConnectionState.waiting &&
-                          days.isEmpty;
-                  final safeSelected =
-                      days.isEmpty ? 0 : selectedDay.clamp(0, days.length - 1);
-                  final rawMatches = days.isEmpty
-                      ? <CricketMatch>[]
-                      : days[safeSelected].matches;
+                          !snapshot.hasData;
+                  final safeSelected = selectedDay.clamp(0, days.length - 1);
+                  final rawMatches = days[safeSelected].matches;
                   final matches = _applySearchSort(rawMatches);
 
                   return ListView(
@@ -339,9 +352,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       context.horizontalPadding,
                       14,
                       context.horizontalPadding,
-                      // With extendBody:false the bottom bar reserves real
-                      // space; a small inset is enough breathing room.
-                      context.mainBottomPadding + 8,
+                      // Clear the nav + sticky banner so the last fixture card
+                      // is never tucked under the bottom navigation.
+                      context.mainScrollBottomInset,
                     ),
                     children: [
                       _ScheduleHeader(
@@ -362,7 +375,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         onSelect: _setFilter,
                       ),
                       const SizedBox(height: 18),
-                      if (!waiting && days.isNotEmpty)
+                      if (!waiting)
                         _SummaryRow(
                           label:
                               _summaryLabel(days, safeSelected, matches.length),
@@ -372,7 +385,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       const SizedBox(height: 14),
                       if (waiting)
                         const _ScheduleSkeletonList()
-                      else if (snapshot.hasError && days.isEmpty)
+                      else if (snapshot.hasError && !snapshot.hasData)
                         _ScheduleStateCard(
                           icon: Icons.cloud_off_rounded,
                           title: 'Unable to load schedule',
@@ -380,23 +393,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               'Please check your connection and try again.',
                           onRetry: _refresh,
                         )
-                      else if (days.isEmpty)
-                        _ScheduleStateCard(
-                          icon: Icons.event_busy_rounded,
-                          title: 'No fixtures found',
-                          message:
-                              'Try another schedule filter or refresh shortly.',
-                          onRetry: _refresh,
-                        )
                       else if (matches.isEmpty)
                         _ScheduleStateCard(
                           icon: Icons.sports_cricket_rounded,
                           title: _search.isNotEmpty
                               ? 'No matches found'
-                              : 'No matches scheduled for this day',
+                              : 'No matches scheduled',
                           message: _search.isNotEmpty
                               ? 'No fixtures match "$_search". Try another search.'
-                              : 'Pick another date above or check back later.',
+                              : 'Check another date or view upcoming matches.',
                           onRetry: _refresh,
                         )
                       else
@@ -433,8 +438,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       };
 
   String _summaryLabel(List<ScheduleDay> days, int index, int count) {
-    final descriptive = days[index].dayDescriptive;
-    final base = descriptive.isEmpty ? 'Schedule' : descriptive;
+    final day = days[index];
+    // Prefer "Today"/"Tomorrow" for the selected day so the Schedule summary
+    // matches the wording Series Overview / Match Details use for the same
+    // match (the cross-screen date-wording consistency the QA flagged).
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    String base;
+    if (day.date != null) {
+      final d = DateTime(day.date!.year, day.date!.month, day.date!.day);
+      if (d == today) {
+        base = 'Today';
+      } else if (d == tomorrow) {
+        base = 'Tomorrow';
+      } else {
+        base = day.dayDescriptive;
+      }
+    } else {
+      base = day.dayDescriptive;
+    }
+    if (base.isEmpty) base = 'Schedule';
     return '$base — $count match${count == 1 ? '' : 'es'}';
   }
 

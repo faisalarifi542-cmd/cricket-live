@@ -132,7 +132,15 @@ class _StatsTab extends StatelessWidget {
       rows.addAll(apiList(m['rows'] ?? m['teams'] ?? m['pointsTableInfo']));
     }
     if (rows.isEmpty) rows.addAll(apiList(root['rows']));
-    return rows.map(apiMap).where((m) => m.isNotEmpty).toList();
+    final parsed = rows.map(apiMap).where((m) => m.isNotEmpty).toList();
+    // Sort canonically: points desc → NRR desc → wins desc → team name asc.
+    // A provider's official `rank`/`position` is honoured ONLY as the final
+    // tiebreaker (and only when it's a positive integer), so the displayed
+    // order is never wrong when points/NRR/wins actually differ but still
+    // respects an official ordering for a true dead heat. This is what stops
+    // two equal-points teams from appearing in arbitrary payload order.
+    parsed.sort(_comparePointsRow);
+    return parsed;
   }
 
   List<Map<String, dynamic>> _statRows(Map<String, dynamic> value, String key) {
@@ -142,6 +150,48 @@ class _StatsTab extends StatelessWidget {
         apiList(section['rows'] ?? section['players'] ?? section['items']);
     return rows.map(apiMap).where((m) => m.isNotEmpty).toList();
   }
+}
+
+/// Canonical points-table comparator: points desc → NRR desc → wins desc →
+/// team name asc, with a provider `rank`/`position` as the final tiebreaker for
+/// a true dead heat. NRR is parsed as a (possibly signed) decimal string.
+int _comparePointsRow(Map<String, dynamic> a, Map<String, dynamic> b) {
+  int cmp = _pointsSortValue(b).compareTo(_pointsSortValue(a));
+  if (cmp != 0) return cmp;
+  cmp = _nrrSortValue(b).compareTo(_nrrSortValue(a));
+  if (cmp != 0) return cmp;
+  cmp = _winsSortValue(b).compareTo(_winsSortValue(a));
+  if (cmp != 0) return cmp;
+  final nameA = _pointsTeamName(a).toLowerCase();
+  final nameB = _pointsTeamName(b).toLowerCase();
+  cmp = nameA.compareTo(nameB);
+  if (cmp != 0) return cmp;
+  // Final tiebreaker: a provider-supplied official rank/position, only when it
+  // is a positive integer. Falls back to stable input order otherwise.
+  final posA = _officialPosition(a);
+  final posB = _officialPosition(b);
+  if (posA != null && posB != null) return posA.compareTo(posB);
+  return 0;
+}
+
+int _pointsSortValue(Map<String, dynamic> r) =>
+    apiInt(r['points']) ?? apiInt(r['pts']) ?? apiInt(r['point']) ?? 0;
+
+int _winsSortValue(Map<String, dynamic> r) =>
+    apiInt(r['won']) ?? apiInt(r['wins']) ?? apiInt(r['w']) ?? 0;
+
+double _nrrSortValue(Map<String, dynamic> r) {
+  final raw = r['nrr'] ?? r['netRunRate'] ?? r['net_run_rate'] ?? r['nrrValue'];
+  final n = num.tryParse('${raw ?? ''}');
+  return n?.toDouble() ?? 0.0;
+}
+
+String _pointsTeamName(Map<String, dynamic> r) =>
+    apiString(r['teamName'] ?? r['team_name'] ?? r['teamShort'] ?? r['team'], 'Team');
+
+int? _officialPosition(Map<String, dynamic> r) {
+  final p = apiInt(r['rank']) ?? apiInt(r['position']);
+  return (p != null && p > 0) ? p : null;
 }
 
 class _PointsTableCard extends StatelessWidget {
@@ -222,7 +272,11 @@ class _PointsRow extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              formatTeamCode(short),
+              // teamCodeOf maps a known nation + variant suffix even when the
+              // `short` field is empty and we fall back to the full name — so
+              // "Sri Lanka A" resolves to "SL A", not the un-mapped "SRI LANKA
+              // A" that formatTeamCode would produce.
+              teamCodeOf(short, name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

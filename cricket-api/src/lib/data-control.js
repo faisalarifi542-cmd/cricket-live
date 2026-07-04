@@ -236,12 +236,27 @@ async function writeEnvelope(key, data, ttl, meta) {
   const physicalTtl = isLiveType
     ? ttl + staleWindow + 5
     : Math.max(ttl * 6, ttl + 60);
-  await getRedis().setex(key, physicalTtl, JSON.stringify(envelope));
+  // A cache write failure (e.g. Redis "Connection is closed") must never bubble
+  // into an unhandled rejection or fail the request — the envelope is still
+  // returned to the caller; it just isn't cached this round.
+  try {
+    await getRedis().setex(key, physicalTtl, JSON.stringify(envelope));
+  } catch (err) {
+    logger.warn({ msg: 'Cache write skipped (Redis unavailable)', key, error: err.message });
+  }
   return envelope;
 }
 
 async function readEnvelope(key) {
-  const raw = await getRedis().get(key);
+  // Treat any Redis read failure as a cache miss rather than throwing — a closed
+  // connection must degrade to "fetch fresh", never crash the request path.
+  let raw;
+  try {
+    raw = await getRedis().get(key);
+  } catch (err) {
+    logger.warn({ msg: 'Cache read failed (Redis unavailable), treating as miss', key, error: err.message });
+    return null;
+  }
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
 }

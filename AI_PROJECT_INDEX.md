@@ -42,7 +42,7 @@
 | Home | `lib/screens/home/home_screen.dart` |
 | Matches | `lib/screens/matches/matches_screen.dart` |
 | Schedule | `lib/screens/schedule/schedule_screen.dart` |
-| Series List | `lib/screens/series/series_list_screen.dart` |
+| Series List | `lib/screens/series/series_list_screen.dart` (poster cards: `widgets/series_poster_cards.dart` — `SeriesPosterCard` + `resolveSeriesPosterVariant` + `SeriesFilterChipBar` + `SeriesFeaturedHeroPoster`/`SeriesHeroCarousel`; asset paths in `series_new_assets.dart` → `SeriesNewAssets`, art under `assets/images/series/new/{core_clean_assets,auto_extracted}`) |
 | Series Detail | `lib/screens/series/series_detail_screen.dart` |
 | Match Details | `lib/screens/match_details/match_details_screen.dart` |
 | Player Profile | `lib/screens/player/player_detail_screen.dart` |

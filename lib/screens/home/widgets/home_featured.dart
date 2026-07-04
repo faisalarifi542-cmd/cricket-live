@@ -9,6 +9,7 @@ class _UpcomingMatchesSection extends StatelessWidget {
     required this.future,
     required this.onOpenMatch,
     required this.onSeeAll,
+    this.onOpenSchedule,
     this.excludeIds = const <String>{},
     this.topSpacing = 22,
   });
@@ -16,6 +17,10 @@ class _UpcomingMatchesSection extends StatelessWidget {
   final Future<List<CricketMatch>> future;
   final ValueChanged<String> onOpenMatch;
   final VoidCallback onSeeAll;
+
+  /// Navigates to the full Schedule screen (the complete day-by-day fixture
+  /// list). Drives the "More Upcoming Matches" CTA below the teaser row.
+  final VoidCallback? onOpenSchedule;
 
   /// Match ids already shown as the primary hero — excluded so no card is
   /// duplicated across Home.
@@ -46,9 +51,110 @@ class _UpcomingMatchesSection extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _FeaturedMatchesRow(matches: matches, onOpenMatch: onOpenMatch),
+            if (onOpenSchedule != null)
+              _MoreUpcomingCta(onOpenSchedule: onOpenSchedule!),
           ],
         );
       },
+    );
+  }
+}
+
+/// Premium CTA shown at the end of the Home Upcoming teaser: Home keeps only
+/// today/tomorrow fixtures, so this routes to the Schedule screen which holds
+/// the complete day-by-day fixture list.
+class _MoreUpcomingCta extends StatelessWidget {
+  const _MoreUpcomingCta({required this.onOpenSchedule});
+
+  final VoidCallback onOpenSchedule;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: TapScale(
+        onTap: onOpenSchedule,
+        borderRadius: 18,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: c.isDark ? c.card.withValues(alpha: .4) : c.card,
+            border: Border.all(color: c.cyan.withValues(alpha: .45)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: c.cyan.withValues(alpha: .14),
+                ),
+                child: Icon(Icons.calendar_month_rounded,
+                    color: c.cyan, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'More Upcoming Matches',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.text,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'View full schedule day by day',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.muted,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: LinearGradient(colors: [c.cyan, c.primary]),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Schedule',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                    SizedBox(width: 3),
+                    Icon(Icons.chevron_right_rounded,
+                        color: Colors.white, size: 18),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -194,11 +300,9 @@ class _FeaturedMatchMini extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final (label, color) = match.isLive
-        ? ('LIVE', c.live)
-        : match.isFinished
-            ? ('FINISHED', c.success)
-            : ('UPCOMING', c.cyan);
+    // Shared status display keeps the badge consistent with the rest of the app
+    // (STUMPS/LUNCH/TEA for a paused live match, not a generic LIVE).
+    final status = MatchStatusDisplay.of(context, match);
     return TapScale(
       onTap: onTap,
       borderRadius: 16,
@@ -252,16 +356,20 @@ class _FeaturedMatchMini extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(top: 1),
                         child: _StatusBadge(
-                            label: label,
-                            color: color,
-                            live: match.isLive,
+                            label: status.badge,
+                            color: status.color,
+                            live: status.subPhase == MatchSubPhase.live,
                             dense: true),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _heroTitle(match),
-                          maxLines: 1,
+                          // Two lines so a long comp name isn't cut to an ugly
+                          // "Asia Pacific Cricket Ch…"; the card's two Spacers
+                          // absorb the extra line so the 138px height never
+                          // overflows.
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: c.cyan,
@@ -699,7 +807,9 @@ String homeVisibleScoreKey(CricketMatch m) =>
 String _cardDateTime(CricketMatch match) {
   final dt = match.startDateTime?.toLocal();
   if (dt == null) {
-    return match.statusText.isNotEmpty ? match.statusText : match.startTime;
+    // Never leak a raw epoch `startTime` (e.g. 1782073800000) into a card.
+    if (match.statusText.isNotEmpty) return match.statusText;
+    return looksLikeRawTimestamp(match.startTime) ? 'Match yet to begin' : match.startTime;
   }
   return '${_months[dt.month - 1]} ${dt.day} • ${_clock(dt)}';
 }

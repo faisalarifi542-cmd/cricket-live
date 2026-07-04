@@ -7,41 +7,22 @@ class _MatchesHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
+    final logoSize = context.w <= 400 ? 30.0 : 34.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // CRICPRO wordmark — rendered as a tight italic RichText so the two
-        // halves read as one word (the PNG wordmark has an uneven gap).
-        _wordmark(c),
+        // Shared CRICPRO wordmark — same renderer as Home/Series/More so the
+        // logo is identical across every screen (no rotated/sized divergence).
+        CricLogo(size: logoSize),
         const Spacer(),
         _BellButton(onTap: onBell),
       ],
     );
   }
-
-  Widget _wordmark(CricColors c) {
-    return Transform.rotate(
-      angle: -0.04,
-      child: RichText(
-        text: TextSpan(
-          style: const TextStyle(
-            fontSize: 36,
-            fontWeight: FontWeight.w900,
-            fontStyle: FontStyle.italic,
-            letterSpacing: -0.5,
-            height: 1,
-          ),
-          children: [
-            TextSpan(text: 'CRIC', style: TextStyle(color: c.text)),
-            TextSpan(text: 'PRO', style: TextStyle(color: c.cyan)),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
+/// Bell built on the shared [GlowIconButton] so it matches the Home/Series/More
+/// notification button (consistent icon, size, border, tap target).
 class _BellButton extends StatelessWidget {
   const _BellButton({required this.onTap});
 
@@ -49,37 +30,9 @@ class _BellButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
-    return GestureDetector(
+    return GlowIconButton(
+      icon: Icons.notifications_none_rounded,
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: c.isDark ? c.card.withValues(alpha: .55) : c.card,
-          border: Border.all(color: c.cyan.withValues(alpha: .35)),
-          boxShadow: c.isDark
-              ? [
-                  BoxShadow(
-                    color: c.cyan.withValues(alpha: .10),
-                    blurRadius: 14,
-                    spreadRadius: -4,
-                  ),
-                ]
-              : c.cardShadow,
-        ),
-        alignment: Alignment.center,
-        child: Image.asset(
-          _MAsset.iconBell,
-          width: 21,
-          height: 21,
-          color: c.text,
-          errorBuilder: (_, __, ___) =>
-              Icon(Icons.notifications_none_rounded, color: c.text, size: 22),
-        ),
-      ),
     );
   }
 }

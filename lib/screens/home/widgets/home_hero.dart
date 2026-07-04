@@ -98,10 +98,10 @@ class _HeroMatchCarouselState extends State<_HeroMatchCarousel> {
         if (matches.isEmpty) return _HeroEmpty(height: baseHeight);
         final items = matches.take(5).toList(growable: false);
         // A Test / multi-innings card needs two stacked score rows per team, so
-        // the hero grows taller when any visible match is multi-innings — the
-        // score area gets real vertical room instead of being shrunk to tiny.
+        // the hero grows a touch taller when any visible match is multi-innings
+        // — the score area gets real vertical room instead of being shrunk.
         final anyMulti = items.any(_heroIsMultiInnings);
-        final heroHeight = baseHeight + (anyMulti ? 46 : 0);
+        final heroHeight = baseHeight + (anyMulti ? 30 : 0);
 
         // Loop only when there is more than one item, so both left and right
         // neighbours are visible like the target.
@@ -202,30 +202,30 @@ class _HeroMetrics {
     final wide = w >= 600;
     if (wide) {
       return const _HeroMetrics(
-        height: 348,
-        logoSize: 90,
-        scoreSize: 46,
-        codeSize: 27,
+        height: 334,
+        logoSize: 76,
+        scoreSize: 42,
+        codeSize: 25,
         ctaHeight: 48,
         viewportFraction: 0.88,
       );
     }
     if (small) {
       return const _HeroMetrics(
-        height: 286,
-        logoSize: 66,
-        scoreSize: 33,
-        codeSize: 21,
+        height: 282,
+        logoSize: 56,
+        scoreSize: 31,
+        codeSize: 20,
         ctaHeight: 44,
         viewportFraction: 0.965,
       );
     }
     // Normal phone.
     return const _HeroMetrics(
-      height: 312,
-      logoSize: 80,
-      scoreSize: 40,
-      codeSize: 24,
+      height: 304,
+      logoSize: 66,
+      scoreSize: 37,
+      codeSize: 22,
       ctaHeight: 46,
       viewportFraction: 0.94,
     );
@@ -290,20 +290,30 @@ class _HeroMatchCard extends StatelessWidget {
     final c = context.cric;
     final live = match.isLive;
     final finished = match.isFinished;
-    final (label, color) = live
-        ? ('LIVE', c.live)
-        : finished
-            ? ('FINISHED', c.success)
-            : ('UPCOMING', c.cyan);
+    // Single source of truth for the badge + phase label, so the badge and the
+    // center note never contradict (no generic "LIVE" while "Day 1: Stumps").
+    final status = MatchStatusDisplay.of(context, match);
     final small = metrics.height < 320;
-    // Centre status note (e.g. "Innings Break", result, or "Yet to bat").
+    // Slightly smaller, consistent logos across BOTH columns (premium, less
+    // dominant). Test trims a touch more so the two stacked score rows fit
+    // cleanly without scaling the logo down per-side (the old inconsistency).
+    final heroMulti = _heroIsMultiInnings(match);
+    final effLogo = heroMulti ? metrics.logoSize * 0.86 : metrics.logoSize;
+    // A SHARED, fixed score-area height for BOTH columns so each block has the
+    // same intrinsic size and the per-side FittedBox scales them identically —
+    // keeping the two sides perfectly aligned whether a side shows a score,
+    // stacked Test rows, or "Yet to bat". Test reserves room for two rows.
+    final scoreBoxHeight = heroMulti ? (small ? 50.0 : 56.0) : (small ? 52.0 : 58.0);
+    // Centre status note — driven by the shared status display so it matches the
+    // badge. For a live stoppage this reads "Day 1 Stumps"/"Innings break"/…;
+    // for a finished match, the result text; for upcoming, a LOCAL "Starts …"
+    // note (matches the local date/time line above — the GMT vs local mismatch
+    // the screenshots flagged).
     final note = live
-        ? (match.statusText.isNotEmpty ? match.statusText : match.resultText)
+        ? status.phaseLabel
         : finished
-            ? (match.resultText.isNotEmpty
-                ? match.resultText
-                : match.statusText)
-            : (match.statusText.isNotEmpty ? match.statusText : 'Upcoming');
+            ? status.phaseLabel
+            : _heroUpcomingNote(match);
     return TapScale(
       onTap: onTap,
       borderRadius: 26,
@@ -347,7 +357,13 @@ class _HeroMatchCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      _StatusBadge(label: label, color: color, live: live),
+                      _StatusBadge(
+                          label: status.badge,
+                          color: status.color,
+                          // Suppress the pulsing dot for a stoppage (stumps/lunch/
+                          // tea/…) so the badge does not read "live now" while
+                          // the note says "Day 1 Stumps".
+                          live: status.subPhase == MatchSubPhase.live),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -366,7 +382,7 @@ class _HeroMatchCard extends StatelessWidget {
                       _HeroStarButton(small: small),
                     ],
                   ),
-                  SizedBox(height: small ? 6 : 9),
+                  SizedBox(height: small ? 5 : 8),
                   // Date • time line.
                   Text(
                     _heroDateLine(match),
@@ -378,7 +394,13 @@ class _HeroMatchCard extends StatelessWidget {
                       fontSize: small ? 12.5 : 14,
                     ),
                   ),
-                  // Teams + scores fill the middle.
+                  // Teams + scores fill the middle. Both team columns share the
+                  // SAME fixed logo, code and score-box height, so each side's
+                  // block has an identical intrinsic size and the shared
+                  // FittedBox scales them by the SAME factor — the two logos /
+                  // codes / score blocks always land on the same baseline (the
+                  // batting-vs-bowling misalignment fix). The VS badge is
+                  // centred between them.
                   Expanded(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
@@ -389,9 +411,10 @@ class _HeroMatchCard extends StatelessWidget {
                             short: match.teamAShort,
                             logo: match.teamALogo,
                             accent: c.cyan,
-                            logoSize: metrics.logoSize,
+                            logoSize: effLogo,
                             codeSize: metrics.codeSize,
                             scoreSize: metrics.scoreSize,
+                            scoreBoxHeight: scoreBoxHeight,
                             innings: (live || finished)
                                 ? match.teamAInnings
                                 : const <InningsScore>[],
@@ -407,7 +430,7 @@ class _HeroMatchCard extends StatelessWidget {
                           ),
                         ),
                         _HomeVsBadge(
-                          width: small ? 52 : 60,
+                          width: small ? 46 : 54,
                           height: small ? 38 : 44,
                           intensity: 1.0,
                         ),
@@ -417,9 +440,10 @@ class _HeroMatchCard extends StatelessWidget {
                             short: match.teamBShort,
                             logo: match.teamBLogo,
                             accent: c.warning,
-                            logoSize: metrics.logoSize,
+                            logoSize: effLogo,
                             codeSize: metrics.codeSize,
                             scoreSize: metrics.scoreSize,
+                            scoreBoxHeight: scoreBoxHeight,
                             innings: (live || finished)
                                 ? match.teamBInnings
                                 : const <InningsScore>[],
@@ -441,6 +465,7 @@ class _HeroMatchCard extends StatelessWidget {
                   // team scores (the device bug). Long text ellipsis here; team
                   // scores never do.
                   if (note.isNotEmpty) ...[
+                    SizedBox(height: small ? 4 : 6),
                     _HeroCenterPill(
                         label: homeShortStatus(note, match),
                         color: c.cyan,
@@ -469,7 +494,7 @@ class _HeroMatchCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  SizedBox(height: small ? 10 : 14),
+                  SizedBox(height: small ? 8 : 12),
                   // CTA — "Watch Live" when an admin stream is available for this
                   // match, otherwise "Match Center". Defaults to Match Center and
                   // upgrades once availability resolves, so it never flickers.
@@ -501,9 +526,22 @@ bool _heroIsMultiInnings(CricketMatch m) =>
 String _heroDateLine(CricketMatch match) {
   final dt = match.startDateTime?.toLocal();
   if (dt == null) {
-    return match.startTime.isNotEmpty ? match.startTime : '';
+    // Never render a raw epoch `startTime` (e.g. 1782073800000) in the hero.
+    return looksLikeRawTimestamp(match.startTime) ? '' : match.startTime;
   }
   return '${dt.day} ${_months[dt.month - 1]} ${dt.year} • ${_clock(dt)}';
+}
+
+/// Centre status note for an UPCOMING hero match, in the user's LOCAL time so it
+/// agrees with [_heroDateLine] above — e.g. `Starts Jun 22 • 02:30 AM`. Never
+/// shows a GMT time. Falls back to the provider status only when no start time
+/// is available.
+String _heroUpcomingNote(CricketMatch match) {
+  final dt = match.startDateTime?.toLocal();
+  if (dt == null) {
+    return match.statusText.isNotEmpty ? match.statusText : 'Upcoming';
+  }
+  return 'Starts ${_months[dt.month - 1]} ${dt.day} • ${_clock(dt)}';
 }
 
 /// Small outlined star button in the hero top-right (favourite, visual only
@@ -755,6 +793,7 @@ class _HeroTeamBlock extends StatelessWidget {
     required this.logoSize,
     required this.codeSize,
     required this.scoreSize,
+    required this.scoreBoxHeight,
     this.innings = const <InningsScore>[],
     this.placeholder = '',
     this.live = false,
@@ -768,6 +807,7 @@ class _HeroTeamBlock extends StatelessWidget {
   final double logoSize;
   final double codeSize;
   final double scoreSize;
+  final double scoreBoxHeight;
   final List<InningsScore> innings;
   final String placeholder;
   final bool live;
@@ -781,78 +821,84 @@ class _HeroTeamBlock extends StatelessWidget {
     final scoredCount = innings.where((i) => i.hasRuns).length;
     final hasScore = scoredCount > 0;
     final multi = scoredCount > 1;
-    // Multi-innings (Test) uses stacked per-innings rows, so each row's score
-    // can be larger than a squeezed one-line combined score, and the overs get
-    // a real, readable size (not `mainSize * 0.5` shrunk again by FittedBox).
-    final mainSize = multi ? scoreSize * 0.64 : scoreSize;
-    final oversSize = multi ? scoreSize * 0.40 : scoreSize * 0.5;
-    // Shrink the logo a touch for Test cards so two score rows fit without the
-    // whole block being scaled down (which is what made overs tiny before).
-    final effLogoSize = multi ? logoSize * 0.84 : logoSize;
+    // Multi-innings (Test) uses stacked per-innings rows; the shared preset
+    // clamps the row score to the premium 15–18 band and overs to 12–14 (white)
+    // so two rows stay compact and readable.
+    final mainSize = multi ? scoreSize * 0.50 : scoreSize;
+    final oversSize = multi ? scoreSize * 0.40 : scoreSize * 0.46;
 
-    // The whole block is wrapped in a FittedBox(scaleDown): inside the hero's
-    // Expanded middle row the slot height is fixed, so a tall block (logo +
-    // code + two score lines) would otherwise overflow vertically (the device
-    // "BOTTOM OVERFLOWED BY 34 PIXELS" bug). scaleDown shrinks the block to fit
-    // instead of clipping, and scores stay readable rather than truncating.
+    // Both columns share the SAME logo, code and [scoreBoxHeight], so the two
+    // blocks have an identical intrinsic size. The single FittedBox(scaleDown)
+    // then scales each side by the SAME factor — logos stay the same size and
+    // the codes/scores land on the same baseline (alignment fix). The score
+    // sits in a fixed-height box (top-anchored) so a "Yet to bat" side reserves
+    // the same height as a scoring side and never drops lower/higher.
     return FittedBox(
       fit: BoxFit.scaleDown,
+      alignment: Alignment.topCenter,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-            border: Border.all(color: accent.withValues(alpha: .85), width: 2.5),
-            boxShadow: c.isDark
-                ? [
-                    BoxShadow(
-                      color: accent.withValues(alpha: .45),
-                      blurRadius: 20,
-                      spreadRadius: -2,
+              border:
+                  Border.all(color: accent.withValues(alpha: .85), width: 2.5),
+              boxShadow: c.isDark
+                  ? [
+                      BoxShadow(
+                        color: accent.withValues(alpha: .45),
+                        blurRadius: 20,
+                        spreadRadius: -2,
+                      ),
+                    ]
+                  : null,
+            ),
+            padding: const EdgeInsets.all(2),
+            child: TeamLogoWidget(
+              logoUrl: isPlaceholder ? null : logo,
+              teamName: name,
+              abbreviation: code,
+              color: accent,
+              size: logoSize,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            code,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w900,
+              fontSize: codeSize,
+              height: 1,
+            ),
+          ),
+          SizedBox(
+            height: scoreBoxHeight,
+            child: (hasScore || placeholder.isNotEmpty)
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.topCenter,
+                      child: TeamScoreView(
+                        innings: innings,
+                        mode: multi
+                            ? ScoreDisplayMode.heroMultiInnings
+                            : ScoreDisplayMode.heroLimitedOvers,
+                        mainSize: mainSize,
+                        oversSize: oversSize,
+                        live: live,
+                        currentInningsIndex: currentInningsIndex,
+                        placeholder: placeholder,
+                      ),
                     ),
-                  ]
+                  )
                 : null,
           ),
-          padding: const EdgeInsets.all(2),
-          child: TeamLogoWidget(
-            logoUrl: isPlaceholder ? null : logo,
-            teamName: name,
-            abbreviation: code,
-            color: accent,
-            size: effLogoSize,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          code,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: c.text,
-            fontWeight: FontWeight.w900,
-            fontSize: codeSize,
-            height: 1,
-          ),
-        ),
-        if (hasScore || placeholder.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          // Centralized professional score. Limited-overs → `218/10` / `44.2
-          // ov`; Test → stacked `1st 362/10  87.1 ov` / `2nd 391/10  96.2 ov`,
-          // both innings always visible and readable. Live runs read bright
-          // white, finished cyan; overs stay readable cyan. Never truncates.
-          TeamScoreView(
-            innings: innings,
-            mode: multi
-                ? ScoreDisplayMode.heroMultiInnings
-                : ScoreDisplayMode.heroLimitedOvers,
-            mainSize: mainSize,
-            oversSize: oversSize,
-            live: live,
-            currentInningsIndex: currentInningsIndex,
-            placeholder: placeholder,
-          ),
-        ],
         ],
       ),
     );

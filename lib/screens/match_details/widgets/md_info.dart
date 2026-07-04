@@ -257,6 +257,8 @@ class _InfoGridCard extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         items[i].value,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: items[i].valueColor ?? c.text,
                           fontWeight: FontWeight.w800,

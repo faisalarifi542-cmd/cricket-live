@@ -129,18 +129,6 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Since Node 15 an unhandled promise rejection terminates the process by
-// default. The worker pool fires many background provider/Redis promises
-// (polling handlers, schedulers); a single stray rejection — e.g. a provider
-// failure, or ioredis "Connection is closed" during a restart — must NOT take
-// the whole worker process down and trigger a restart loop. Log and continue.
-process.on('unhandledRejection', (err) => {
-  logger.error({ msg: 'Unhandled rejection (workers)', error: err?.message, stack: err?.stack });
-});
-process.on('uncaughtException', (err) => {
-  logger.error({ msg: 'Uncaught exception (workers)', error: err?.message, stack: err?.stack });
-});
-
 start().catch((err) => {
   logger.error({ msg: 'Worker system startup failed', error: err.message });
   process.exit(1);

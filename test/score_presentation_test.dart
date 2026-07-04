@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/utils/score_presentation.dart';
+import 'package:cricpro_flutter/upcoming_sort.dart';
 
 void main() {
   group('TeamScorePresentation — limited overs / single innings', () {
@@ -205,6 +206,133 @@ void main() {
       expect(m.teamAScoreText, '362/10 & 391/10 (96.2 ov)');
       expect(m.teamBScoreText, '291/10 & 90/3 (20.1 ov)');
       expect(m.teamAScoreText.contains('OV'), isFalse);
+    });
+  });
+
+  group('Real /app/home & /matches/live shape — innings_number ordering', () {
+    // Mirrors the ACTUAL backend payload shape: `score.team1` is an array and
+    // each innings carries the backend's snake_case `innings_number` ordinal
+    // (emitted by extractHomeInnings/extractInningsScore). Here it arrives
+    // REVERSED (2nd innings first) — the exact Home-hero bug — and must be
+    // normalized to chronological order with the live innings starred LAST.
+    CricketMatch parseHome() => CricketMatch.fromJson(<String, dynamic>{
+          'match_id': 'h1',
+          'status': 'live',
+          'team1': <String, dynamic>{'name': 'New Zealand', 'shortName': 'NZ'},
+          'team2': <String, dynamic>{'name': 'England', 'shortName': 'ENG'},
+          'score': <String, dynamic>{
+            'team1': <Map<String, dynamic>>[
+              {'runs': 209, 'wickets': 7, 'overs': 71.2, 'innings_number': 2},
+              {'runs': 438, 'wickets': 10, 'overs': 114.5, 'innings_number': 1},
+            ],
+            'team2': <Map<String, dynamic>>[
+              {'runs': 354, 'wickets': 10, 'overs': 88.2, 'innings_number': 1},
+            ],
+          },
+        });
+
+    test('NZ reads 438/10 & 209/7 (1st innings first), never reversed', () {
+      final p = TeamScorePresentation(parseHome().teamAInnings);
+      expect(p.combinedScore, '438/10 & 209/7');
+      expect(p.oversLine(), '114.5 ov • 71.2 ov');
+    });
+
+    test('overs order follows the score order', () {
+      final m = parseHome();
+      // Flat string also follows the corrected order.
+      expect(m.teamAScoreText, '438/10 & 209/7 (71.2 ov)');
+    });
+  });
+
+  group('Innings order WITHOUT any provider ordinal (closed-before-open)', () {
+    // The live backend may NOT send an ordinal (and old caches never did).
+    // Order must still be deterministic: a CLOSED innings (all out / declared)
+    // precedes an in-progress one. This is the real Home-hero `215/7 & 438/10*`
+    // case — reversed array, no innings_number — and must self-correct.
+    CricketMatch parseNoOrdinal(List<Map<String, dynamic>> nz) =>
+        CricketMatch.fromJson(<String, dynamic>{
+          'match_id': 'no1',
+          'status': 'live',
+          'curr_bat_team_id': '13',
+          'team1': <String, dynamic>{'name': 'NZ', 'shortName': 'NZ', 'id': '13'},
+          'team2': <String, dynamic>{'name': 'ENG', 'shortName': 'ENG', 'id': '9'},
+          'score': <String, dynamic>{'team1': nz},
+        });
+
+    test('reversed [open, closed] becomes [closed, open] = 438/10 & 215/7', () {
+      final m = parseNoOrdinal([
+        {'runs': 215, 'wickets': 7, 'overs': 76.0}, // open (current) listed 1st
+        {'runs': 438, 'wickets': 10, 'overs': 114.5}, // closed (completed)
+      ]);
+      final p = TeamScorePresentation(m.teamAInnings);
+      expect(p.combinedScore, '438/10 & 215/7');
+      expect(p.oversLine(), '114.5 ov • 76.0 ov');
+    });
+
+    test('star lands on the OPEN current innings, never the completed one', () {
+      final m = parseNoOrdinal([
+        {'runs': 215, 'wickets': 7, 'overs': 76.0},
+        {'runs': 438, 'wickets': 10, 'overs': 114.5},
+      ]);
+      // NZ (team1, id 13) is batting → current scored index is the LAST after
+      // ordering, i.e. the open 215/7 innings (index 1), not the completed 438.
+      final idx = m.currentScoredIndexForTeam(isTeamA: true);
+      expect(idx, 1);
+      expect(m.teamAInnings[idx].runs, 215);
+      expect(m.teamAInnings[idx].isClosed, isFalse);
+      expect(m.teamAInnings[0].runs, 438);
+      expect(m.teamAInnings[0].isClosed, isTrue);
+    });
+
+    test('declared first innings also sorts before an open second', () {
+      final m = parseNoOrdinal([
+        {'runs': 120, 'wickets': 4, 'overs': 30.0}, // open, listed first
+        {'runs': 500, 'wickets': 7, 'overs': 130.0, 'declared': true},
+      ]);
+      expect(TeamScorePresentation(m.teamAInnings).combinedScore,
+          '500/7d & 120/4');
+    });
+
+    test('a POSITIONAL ordinal that lies cannot reverse the order', () {
+      // Exactly the /app/live-scores fast-poll payload: the live innings is
+      // listed FIRST and numbered #1, the completed innings #2. A naive
+      // sort-by-ordinal would render `224/8 & 438/10*`. closed-before-open
+      // (physically invariant) must win → `438/10 & 224/8*`.
+      final m = parseNoOrdinal([
+        {'runs': 224, 'wickets': 8, 'overs': 81.1, 'innings_number': 1}, // open
+        {'runs': 438, 'wickets': 10, 'overs': 114.5, 'innings_number': 2}, // closed
+      ]);
+      final p = TeamScorePresentation(m.teamAInnings);
+      expect(p.combinedScore, '438/10 & 224/8');
+      expect(p.oversLine(), '114.5 ov • 81.1 ov');
+      // Star is the OPEN (current) innings, which sorts LAST.
+      final idx = m.currentScoredIndexForTeam(isTeamA: true);
+      expect(m.teamAInnings[idx].runs, 224);
+    });
+  });
+
+  group('Schedule category filters (IRE vs IND international / MLC league)', () {
+    CricketMatch make(String series, String desc) =>
+        CricketMatch.fromJson(<String, dynamic>{
+          'id': 'x',
+          'status': 'live',
+          'series_name': series,
+          'match_desc': desc,
+          'team1': <String, dynamic>{'name': 'A', 'shortName': 'A'},
+          'team2': <String, dynamic>{'name': 'B', 'shortName': 'B'},
+        });
+
+    final ireVsInd = make('India tour of Ireland, 2026', '2nd T20I');
+    final lakrVsSor = make('Major League Cricket 2026', '14th Match');
+
+    test('IRE vs IND classifies as international, not league', () {
+      expect(UpcomingSort.isInternationalMatch(ireVsInd), isTrue);
+      expect(UpcomingSort.isMajorLeague(ireVsInd), isFalse);
+    });
+
+    test('LAKR vs SOR classifies as league, not international', () {
+      expect(UpcomingSort.isMajorLeague(lakrVsSor), isTrue);
+      expect(UpcomingSort.isInternationalMatch(lakrVsSor), isFalse);
     });
   });
 

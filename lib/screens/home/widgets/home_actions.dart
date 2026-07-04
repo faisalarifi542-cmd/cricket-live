@@ -42,7 +42,7 @@ class _HomeActionBar extends StatelessWidget {
     final viewBtn = showView
         ? _OutlinedActionButton(
             icon: Icons.bar_chart_rounded,
-            label: 'View Match',
+            label: 'Match Center',
             trailingChevron: true,
             onTap: onViewMatch,
           )

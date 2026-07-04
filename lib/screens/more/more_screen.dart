@@ -115,7 +115,7 @@ class MoreScreen extends StatelessWidget {
                 ),
                 if (onOpenFloatingScore != null)
                   (
-                    'Floating Score over other apps',
+                    'Floating Score Overlay',
                     Icons.picture_in_picture_alt_rounded,
                     const Color(0xff22d3ee),
                     onOpenFloatingScore!,

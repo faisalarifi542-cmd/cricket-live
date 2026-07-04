@@ -14,6 +14,8 @@ import '../../models/api_response.dart';
 import '../../models/cricket_match.dart';
 import '../../repositories/cricket_repository.dart';
 import '../../upcoming_sort.dart';
+import '../../utils/match_classification.dart';
+import '../../utils/match_status.dart';
 import '../../utils/team_format.dart';
 import '../../widgets/ads/native_ad_card.dart';
 import '../../widgets/team_score_view.dart';
@@ -40,7 +42,6 @@ class _MAsset {
   static const iconWatchLive = '$_icons/watch_live_play.webp';
   static const iconViewStats = '$_icons/view_match_stats.webp';
   static const iconLocation = '$_icons/location_pin.webp';
-  static const iconBell = '$_icons/bell.webp';
 }
 
 /// Draws a "light-on-black" RGB texture (e.g. the VS light streak, which has
@@ -353,6 +354,18 @@ class _MatchesScreenState extends State<MatchesScreen>
   /// expose a reliable category field, so "All" always shows everything and a
   /// specific category only narrows when it still yields matches (otherwise we
   /// keep the full list rather than show a misleading empty state).
+  /// Keeps only matches whose canonical phase matches the selected tab
+  /// (0 = Live, 1 = Upcoming, 2 = Finished). This is what stops a live match
+  /// (it has a score / live status) from also appearing under Upcoming.
+  List<CricketMatch> _phaseFilterForTab(List<CricketMatch> items) {
+    return switch (topTab) {
+      0 => items.where(isLiveMatch).toList(),
+      1 => items.where(isUpcomingMatch).toList(),
+      2 => items.where(isFinishedMatch).toList(),
+      _ => items,
+    };
+  }
+
   List<CricketMatch> _applyCategory(List<CricketMatch> items) {
     if (category == 0) return items;
     bool matches(CricketMatch m) {
@@ -421,7 +434,7 @@ class _MatchesScreenState extends State<MatchesScreen>
                   context.horizontalPadding,
                   6,
                   context.horizontalPadding,
-                  context.mainBottomPadding + 88,
+                  context.mainScrollBottomInset,
                 ),
                 children: [
                   _MatchesHeader(onBell: widget.onOpenReminders),
@@ -450,9 +463,13 @@ class _MatchesScreenState extends State<MatchesScreen>
     return FutureBuilder<ApiEnvelope<List<CricketMatch>>>(
       future: _apiMatches,
       builder: (context, snapshot) {
-        final apiItems = _apiMatchesData?.data ??
+        final rawItems = _apiMatchesData?.data ??
             snapshot.data?.data ??
             const <CricketMatch>[];
+        // Reconcile the feed: de-dupe by id and keep only matches that truly
+        // belong to the selected tab's phase, so a match never shows in both
+        // Live and Upcoming (the backend feeds can overlap by id).
+        final apiItems = _phaseFilterForTab(dedupeMatchesById(rawItems));
 
         if (_apiMatchesData == null &&
             snapshot.connectionState == ConnectionState.waiting &&

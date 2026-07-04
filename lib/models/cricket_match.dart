@@ -7,6 +7,15 @@ import '../models.dart';
 /// Coarse match lifecycle phase, used to pick the Match Details initial tab.
 enum MatchPhase { live, finished, upcoming }
 
+/// Sentinel for `TeamScoreView.currentInningsIndex` returned by
+/// [CricketMatch.currentScoredIndexForTeam] when the call site KNOWS this team
+/// is NOT the one currently batting (or the match isn't live). It must suppress
+/// the current-innings `*` even in a live match — distinct from the widget's
+/// default `-1` ("auto": a live multi-innings score may star its own latest
+/// innings). Keeping these two negatives distinct is what stops the star from
+/// ever landing on BOTH teams.
+const int kNoCurrentInnings = -2;
+
 /// A single batting innings for one team, kept STRUCTURED so the UI can render
 /// each innings (runs/wickets + its own overs) professionally — Test/first-class
 /// matches show every innings clearly (`362/10 & 391/10` with `87.1 ov • 96.2
@@ -41,6 +50,12 @@ class InningsScore {
   /// True once this innings has a runs figure (a real, batted innings).
   bool get hasRuns => runs != null;
 
+  /// True when this innings is CLOSED (cannot receive more runs): all out
+  /// (10 wickets) or declared. A team's earlier innings is always closed before
+  /// its next innings starts, so this is the reliable chronological signal when
+  /// the provider omits an explicit innings ordinal.
+  bool get isClosed => declared || (wickets != null && wickets! >= 10);
+
   /// `362/10`, `45/3`, `218` (no wickets), with a trailing `d` when declared.
   String get scoreText {
     if (runs == null) return '';
@@ -50,6 +65,21 @@ class InningsScore {
 
   /// Overs without the unit, e.g. `87.1`. Empty when the feed omitted overs.
   String get oversText => overs.trim();
+
+  InningsScore copyWith({
+    int? runs,
+    int? wickets,
+    String? overs,
+    bool? declared,
+    int? inningsNumber,
+  }) =>
+      InningsScore(
+        runs: runs ?? this.runs,
+        wickets: wickets ?? this.wickets,
+        overs: overs ?? this.overs,
+        declared: declared ?? this.declared,
+        inningsNumber: inningsNumber ?? this.inningsNumber,
+      );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'runs': runs,
@@ -90,6 +120,7 @@ class CricketMatch {
     required this.matchDesc,
     required this.status,
     required this.statusText,
+    this.phase = '',
     required this.resultText,
     required this.venue,
     required this.startTime,
@@ -127,6 +158,15 @@ class CricketMatch {
   final String matchDesc;
   final String status;
   final String statusText;
+
+  /// Finer-grained live sub-phase from the backend (`stumps`/`lunch`/`tea`/
+  /// `drinks`/`rain`/`innings_break`/`live`/`upcoming`/`completed`/`abandoned`/
+  /// `no_result`). Empty when the provider/payload didn't send one (older
+  /// caches); callers fall back to [statusText] heuristics via
+  /// `MatchStatusDisplay.from`. This is ADDITIVE — [status] (coarse) and the
+  /// [isLive]/[isFinished]/[isUpcoming] flags are unchanged, so polling and tab
+  /// selection behave exactly as before.
+  final String phase;
   final String resultText;
   final String venue;
   final String startTime;
@@ -187,6 +227,7 @@ class CricketMatch {
       matchDesc: matchDesc,
       status: fresh.status,
       statusText: fresh.statusText,
+      phase: fresh.phase,
       resultText: fresh.resultText,
       venue: venue,
       startTime: startTime,
@@ -199,8 +240,8 @@ class CricketMatch {
       teamBLogo: teamBLogo,
       teamAScoreText: fresh.teamAScoreText,
       teamBScoreText: fresh.teamBScoreText,
-      teamAInnings: fresh.teamAInnings,
-      teamBInnings: fresh.teamBInnings,
+      teamAInnings: _stickyDeclared(teamAInnings, fresh.teamAInnings),
+      teamBInnings: _stickyDeclared(teamBInnings, fresh.teamBInnings),
       // Team ids are stable identity → keep ours if the fresh feed omitted them.
       teamAId: fresh.teamAId.isNotEmpty ? fresh.teamAId : teamAId,
       teamBId: fresh.teamBId.isNotEmpty ? fresh.teamBId : teamBId,
@@ -269,6 +310,7 @@ class CricketMatch {
       matchDesc: pick(matchDesc, other.matchDesc),
       status: status,
       statusText: statusText,
+      phase: phase,
       resultText: resultText,
       venue: pick(venue, other.venue),
       startTime: pick(startTime, other.startTime),
@@ -315,6 +357,7 @@ class CricketMatch {
         'matchDesc': matchDesc,
         'status': status,
         'statusText': statusText,
+        'phase': phase,
         'resultText': resultText,
         'venue': venue,
         'startTime': startTime,
@@ -363,6 +406,7 @@ class CricketMatch {
       matchDesc: (json['matchDesc'] ?? '').toString(),
       status: (json['status'] ?? 'upcoming').toString(),
       statusText: (json['statusText'] ?? '').toString(),
+      phase: (json['phase'] ?? '').toString(),
       resultText: (json['resultText'] ?? '').toString(),
       venue: (json['venue'] ?? '').toString(),
       startTime: (json['startTime'] ?? '').toString(),
@@ -424,6 +468,14 @@ class CricketMatch {
       const ['status_text', 'statusText', 'short_status', 'shortStatus'],
       fallback: '',
     );
+    // Finer-grained live sub-phase from the backend (stumps/lunch/tea/drinks/
+    // rain/innings_break/...). Empty when absent; the UI falls back to
+    // statusText heuristics. Lower-cased to match the resolver's expectations.
+    final phase = _str(
+      json,
+      const ['phase', 'matchPhase', 'match_phase'],
+      fallback: '',
+    ).toLowerCase();
     final matchDesc = _str(
       json,
       const [
@@ -444,8 +496,42 @@ class CricketMatch {
     // innings can never disagree on order, and the unit is always lowercase.
     final t1Innings = _parseInnings(t1Raw);
     final t2Innings = _parseInnings(t2Raw);
-    final t1Score = _flatScoreFrom(t1Innings);
-    final t2Score = _flatScoreFrom(t2Innings);
+    // Cricbuzz's list/home feeds (`/matches/live`, `/matches/recent`,
+    // `/app/home`) DROP the per-innings `declared` flag that the detail /
+    // `/app/live-scores` feed carries — so a declared innings like `288/9`
+    // rendered as `288/9` on the Matches screen and FLICKERED on Home as the
+    // declared (live-scores) and non-declared (matches/live) feeds alternated
+    // during polling. Derive `d` deterministically from signals EVERY feed
+    // carries (corrected innings order + the batting-team id) so the marker is
+    // identical on every screen and stable across polls.
+    final battingIdForDeclared = _str(
+      json,
+      const [
+        'curr_bat_team_id',
+        'currBatTeamId',
+        'battingTeamId',
+        'batTeamId',
+        'bat_team_id',
+      ],
+      fallback: '',
+    );
+    final finishedForDeclared = status == 'completed' ||
+        status == 'recent' ||
+        status == 'finished' ||
+        status == 'result' ||
+        status == 'abandoned';
+    final derivedDeclared = _deriveDeclared(
+      t1Innings,
+      t2Innings,
+      t1Id: t1.id,
+      t2Id: t2.id,
+      battingTeamId: battingIdForDeclared,
+      finished: finishedForDeclared,
+    );
+    final t1InningsD = derivedDeclared.$1;
+    final t2InningsD = derivedDeclared.$2;
+    final t1Score = _flatScoreFrom(t1InningsD);
+    final t2Score = _flatScoreFrom(t2InningsD);
     final start = _str(
       json,
       const ['start_time', 'startTime', 'dateTimeGMT', 'date', 'time'],
@@ -587,8 +673,8 @@ class CricketMatch {
               '${i.scoreText}@${i.oversText}ov#${i.inningsNumber ?? '-'}')
           .join(', ');
       debugPrint('CricProInnings[$id] '
-          'A=${t1.short}(id=${t1.id}) [${dump(t1Innings)}] '
-          'B=${t2.short}(id=${t2.id}) [${dump(t2Innings)}] '
+          'A=${t1.short}(id=${t1.id}) [${dump(t1InningsD)}] '
+          'B=${t2.short}(id=${t2.id}) [${dump(t2InningsD)}] '
           'battingTeamId=$battingTeamId currentInningsId=$currentInningsId');
     }
     final match = CricketMatch(
@@ -604,6 +690,7 @@ class CricketMatch {
       matchDesc: matchDesc,
       status: status,
       statusText: statusText,
+      phase: phase,
       resultText: result,
       venue: venue,
       startTime: start,
@@ -616,8 +703,8 @@ class CricketMatch {
       teamBLogo: t2.logo,
       teamAScoreText: t1Score,
       teamBScoreText: t2Score,
-      teamAInnings: t1Innings,
-      teamBInnings: t2Innings,
+      teamAInnings: t1InningsD,
+      teamBInnings: t2InningsD,
       teamAId: t1.id,
       teamBId: t2.id,
       battingTeamId: battingTeamId.isEmpty ? null : battingTeamId,
@@ -686,11 +773,14 @@ class CricketMatch {
   ///
   /// Pass [isTeamA] true for the [teamAInnings] side, false for [teamBInnings].
   int currentScoredIndexForTeam({required bool isTeamA}) {
-    if (!isLive) return -1;
+    if (!isLive) return kNoCurrentInnings;
     final inns = isTeamA ? teamAInnings : teamBInnings;
     final scoredCount = inns.where((i) => i.hasRuns).length;
-    if (scoredCount == 0) return -1;
-    if (!_isTeamBatting(isTeamA: isTeamA)) return -1;
+    if (scoredCount == 0) return kNoCurrentInnings;
+    // Explicitly suppress the star on the side that is NOT batting, so a live
+    // match never stars both teams (the non-batting team returns the sentinel
+    // rather than -1, which the widget would otherwise treat as "auto").
+    if (!_isTeamBatting(isTeamA: isTeamA)) return kNoCurrentInnings;
     // The active innings is always a team's LAST (most recent) scored innings.
     return scoredCount - 1;
   }
@@ -1100,6 +1190,7 @@ class CricketMatch {
       'innings_id',
       'inningsNo',
       'inningsNumber',
+      'innings_number',
       'innNo',
       'inningsNbr',
       'inningOrder',
@@ -1126,11 +1217,21 @@ class CricketMatch {
       for (var i = 0; i < inns.length; i++) MapEntry(i, inns[i]),
     ];
     indexed.sort((a, b) {
+      // PRIMARY — physically invariant: for ONE team a CLOSED innings (all out
+      // / declared) always precedes its in-progress one (you cannot begin the
+      // next innings until the current closes). This dominates the provider
+      // ordinal, so a feed that lists the live innings first AND numbers it by
+      // raw array index (`/app/live-scores`: 224/8#1 before 438/10#2) can never
+      // reverse the rendered order — the Home-hero `222/7 & 438/10*` poll bug.
+      final ac = a.value.isClosed;
+      final bc = b.value.isClosed;
+      if (ac != bc) return ac ? -1 : 1; // closed first
+      // SECONDARY — chronological provider ordinal, used to order MULTIPLE
+      // closed innings (or multiple open, which shouldn't happen) correctly.
       final an = a.value.inningsNumber;
       final bn = b.value.inningsNumber;
-      // Both have an explicit ordinal → chronological by ordinal.
       if (an != null && bn != null && an != bn) return an.compareTo(bn);
-      // Otherwise preserve original order (stable).
+      // Stable fallback: preserve original relative order.
       return a.key.compareTo(b.key);
     });
     return indexed.map((e) => e.value).toList(growable: false);
@@ -1165,13 +1266,101 @@ class CricketMatch {
     return _orderInnings(out);
   }
 
+  /// Derives the per-innings DECLARED marker from signals every feed carries —
+  /// the CORRECTED innings order plus the batting-team id — so it is never
+  /// fooled by a lying positional ordinal.
+  ///
+  /// In a MULTI-INNINGS (Test / first-class) match an innings that is CLOSED yet
+  /// NOT all out (1..9 wickets) can only have ended by a DECLARATION:
+  ///   • A NON-LAST innings of a team is physically closed (the team began a
+  ///     later innings), so a non-all-out close is a declaration.
+  ///   • A team's LAST innings is closed when the OTHER team is now batting
+  ///     (`battingTeamId` ≠ this team) — so its `d` shows while live without
+  ///     mis-declaring the in-progress innings or a successful run-chase.
+  /// Limited-overs matches (each side a single innings) are never touched, so a
+  /// T20 `154/8` never gains a spurious `d`. An explicit feed flag always wins.
+  static (List<InningsScore>, List<InningsScore>) _deriveDeclared(
+    List<InningsScore> t1,
+    List<InningsScore> t2, {
+    required String t1Id,
+    required String t2Id,
+    required String battingTeamId,
+    required bool finished,
+  }) {
+    final isMultiInnings = t1.where((i) => i.hasRuns).length > 1 ||
+        t2.where((i) => i.hasRuns).length > 1;
+    if (!isMultiInnings) return (t1, t2);
+
+    List<InningsScore> mark(List<InningsScore> list, String teamId) {
+      final scoredIdx = <int>[
+        for (var i = 0; i < list.length; i++)
+          if (list[i].hasRuns) i,
+      ];
+      if (scoredIdx.isEmpty) return list;
+      final lastScored = scoredIdx.last;
+      final otherTeamBatting = battingTeamId.isNotEmpty &&
+          teamId.isNotEmpty &&
+          battingTeamId != teamId &&
+          !finished;
+      return [
+        for (var i = 0; i < list.length; i++)
+          if (!list[i].hasRuns ||
+              list[i].declared ||
+              list[i].wickets == null ||
+              list[i].wickets! >= 10) // all out / already declared / no wkts
+            list[i]
+          else if (i != lastScored)
+            list[i].copyWith(declared: true) // earlier innings: physically closed
+          else if (otherTeamBatting)
+            list[i].copyWith(declared: true) // last innings, other side batting
+          else
+            list[i],
+      ];
+    }
+
+    return (mark(t1, t1Id), mark(t2, t2Id));
+  }
+
+  /// Keeps a DECLARED marker stable across a poll. The lightweight live-score
+  /// feed can momentarily omit `isDeclared`; a declared innings is CLOSED so its
+  /// runs/wickets are final — if a fresh innings matches a previously-declared
+  /// one on runs+wickets (and innings ordinal when both carry it) it is still
+  /// declared. Prevents the `d` from blinking out for one poll tick.
+  static List<InningsScore> _stickyDeclared(
+      List<InningsScore> prev, List<InningsScore> fresh) {
+    if (prev.isEmpty) return fresh;
+    return [
+      for (final f in fresh)
+        if (f.declared)
+          f
+        else
+          () {
+            for (final p in prev) {
+              if (!p.declared) continue;
+              final sameScore = p.runs == f.runs && p.wickets == f.wickets;
+              final ordinalsKnown =
+                  p.inningsNumber != null && f.inningsNumber != null;
+              final sameOrdinal = p.inningsNumber == f.inningsNumber;
+              if (sameScore && (!ordinalsKnown || sameOrdinal)) {
+                return f.copyWith(declared: true);
+              }
+            }
+            return f;
+          }(),
+    ];
+  }
+
   /// Restores a structured innings list previously written by [toCacheJson].
+  /// Re-applies [_orderInnings] so a list cached in a reversed/legacy order
+  /// (before deterministic ordering existed) is corrected on restore — a stale
+  /// cache can never resurrect the `215/7 & 438/10*` reversal.
   static List<InningsScore> _inningsFromCache(dynamic value) {
     if (value is! List || value.isEmpty) return const <InningsScore>[];
-    return value
+    final list = value
         .whereType<Map<String, dynamic>>()
         .map(InningsScore.fromJson)
-        .toList(growable: false);
+        .toList();
+    return _orderInnings(list);
   }
 
   /// Builds the legacy flat score string from the already-ordered structured

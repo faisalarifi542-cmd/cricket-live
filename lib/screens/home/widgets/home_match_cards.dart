@@ -559,7 +559,6 @@ class _CompactTeam extends StatelessWidget {
     final code = homeTeamCode(short, name);
     final isPlaceholder = code == 'TBC' || code == 'TBD' || code.isEmpty;
     final hasScore = innings.any((i) => i.hasRuns);
-    final multi = innings.where((i) => i.hasRuns).length > 1;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -604,11 +603,9 @@ class _CompactTeam extends StatelessWidget {
           // line, scaled to fit, two innings for a Test. Never truncates.
           TeamScoreView(
             innings: innings,
-            mode: multi
-                ? ScoreDisplayMode.cardMultiInnings
-                : ScoreDisplayMode.cardLimitedOvers,
-            mainSize: 15,
-            oversSize: 11,
+            mode: ScoreDisplayMode.compactCard,
+            mainSize: 18,
+            oversSize: 13,
             live: live,
             currentInningsIndex: currentInningsIndex,
             color: scoreColor,
@@ -805,13 +802,18 @@ class _CenterPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color.withValues(alpha: .55)),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontWeight: FontWeight.w800,
-          fontSize: 10.5,
-          letterSpacing: .5,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w800,
+            fontSize: 10.5,
+            letterSpacing: .5,
+          ),
         ),
       ),
     );
@@ -1005,9 +1007,12 @@ class _HomeLiveMatchCard extends StatelessWidget {
           'score=[${match.teamAScoreText} | ${match.teamBScoreText}] '
           'status=${match.statusText}');
     }
-    final note = match.statusText.isNotEmpty
-        ? match.statusText
-        : (match.resultText.isNotEmpty ? match.resultText : '');
+    // Single source of truth for the badge + phase label, so they can never
+    // contradict (no more "LIVE NOW" pill alongside "Day 1: Stumps" text).
+    final status = MatchStatusDisplay.of(context, match);
+    final phaseLabel = status.phaseLabel.isNotEmpty
+        ? homeShortStatus(status.phaseLabel, match)
+        : '';
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),
@@ -1016,33 +1021,22 @@ class _HomeLiveMatchCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _CardTopRow(
-            label: 'LIVE',
-            color: c.live,
-            live: true,
+            label: status.badge,
+            color: status.color,
+            // A stoppage (stumps/lunch/tea/…) is still a live match, but the
+            // pulsing dot is suppressed so the card does not read "live now".
+            live: status.subPhase == MatchSubPhase.live,
             title: _heroTitle(match),
             titleColor: c.cyan,
           ),
           const SizedBox(height: 6),
-          // Full team names + scores, with a centred LIVE NOW pill under VS.
+          // Full team names + scores, with the phase label (e.g. "Day 1
+          // Stumps", "Innings break", or the live status note) under VS.
           _CardTeamRow(
             match: match,
             showScore: true,
-            centerPill: _CenterPill(label: 'LIVE NOW', color: c.cyan),
+            centerPill: _CenterPill(label: phaseLabel, color: c.cyan),
           ),
-          if (note.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(
-              homeShortStatus(note, match),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.onImageText,
-                fontWeight: FontWeight.w600,
-                fontSize: 11.5,
-              ),
-            ),
-          ],
           const SizedBox(height: 8),
           const _CardDivider(),
           const SizedBox(height: 7),
@@ -1220,9 +1214,12 @@ class _HomeFinishedMatchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final result = match.resultText.isNotEmpty
-        ? match.resultText
-        : (match.statusText.isNotEmpty ? match.statusText : 'Match finished');
+    final result = formatResultText(
+      match.resultText.isNotEmpty
+          ? match.resultText
+          : (match.statusText.isNotEmpty ? match.statusText : 'Match finished'),
+      match,
+    );
     return _HomeCardShell(
       bgAsset: _HAsset.liveCardBg,
       onTap: () => onOpenMatch(match.id),

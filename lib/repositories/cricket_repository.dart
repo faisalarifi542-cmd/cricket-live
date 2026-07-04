@@ -7,6 +7,8 @@ import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/services/cricket_api_service.dart';
 import 'package:cricpro_flutter/services/commentary_cache.dart';
 import 'package:cricpro_flutter/services/persistent_cache.dart';
+import 'package:cricpro_flutter/upcoming_sort.dart';
+import 'package:cricpro_flutter/utils/match_classification.dart';
 
 class CricketRepository {
   CricketRepository({CricketApiService? service})
@@ -246,9 +248,34 @@ class CricketRepository {
     var matchesCount = 0;
     var scheduleCount = 0;
 
+    // Live/recent take PRIORITY over upcoming. A multi-day Test that is live
+    // (or just finished) is listed by the schedule feed as future "Day N"
+    // entries under the SAME match id, with a future start time and status
+    // "upcoming" + no score — so neither the model flags nor `classifyMatch`
+    // can tell it apart from a genuine fixture. Collect the live + recent ids
+    // first and exclude them, so a started/finished match can never reappear
+    // in Upcoming (the ZIM vs BAN "Day 2" bug).
+    final excludedIds = <String>{};
+    Future<void> collectExcluded(int tab) async {
+      try {
+        final res = await matchesForTab(tab, forceRefresh: forceRefresh);
+        for (final m in res.data) {
+          if (m.id.isNotEmpty) excludedIds.add(m.id);
+        }
+        anySucceeded = true;
+      } catch (_) {/* a feed failing must not block the upcoming merge */}
+    }
+
+    await Future.wait([collectExcluded(0), collectExcluded(2)]); // live, recent
+
     void addAll(List<CricketMatch> list) {
       for (final m in list) {
         if (m.id.isEmpty || m.isLive || m.isFinished) continue;
+        if (excludedIds.contains(m.id)) continue; // live/recent copy wins
+        // A schedule "Day N" (N>=2) entry is a later day of an already-started
+        // multi-day match (no live/recent copy may exist to exclude it by id),
+        // so it must never read as a fresh upcoming fixture.
+        if (isMultiDayContinuationEntry(m)) continue;
         if (seen.add(m.id)) merged.add(m);
       }
     }
@@ -274,27 +301,104 @@ class CricketRepository {
     if (!anySucceeded && lastError != null) throw lastError;
     if (kDebugMode) {
       debugPrint('CricProHomePoll: upcomingMerged matchesUpcoming=$matchesCount '
-          'scheduleUpcoming=$scheduleCount afterDedupe=${merged.length}');
+          'scheduleUpcoming=$scheduleCount excludedLiveRecent=${excludedIds.length} '
+          'afterDedupe=${merged.length}');
     }
     return ApiEnvelope(data: merged, meta: ApiMeta.fromJson(null));
   }
 
   /// Returns the schedule grouped by day so the Schedule screen can show
-  /// real, navigable date chips. Each [ScheduleDay] carries its label (as
-  /// returned by the API), a parsed [DateTime] when possible, and the list
-  /// of matches that start on that day.
+  /// real, navigable date chips.
+  ///
+  /// The Cricbuzz `/schedule/upcoming` feed only carries FUTURE "upcoming
+  /// series" days — it does NOT include matches that are live or that finished
+  /// today, so a live international fixture (e.g. IRE vs IND on its match day)
+  /// never appeared on the calendar while a late-night league game showed up
+  /// alone. To make Schedule a real calendar, we MERGE the schedule feed with
+  /// today's live / recent / upcoming match feeds, deduped by source match id
+  /// (the live/recent/upcoming version wins because it carries score + status).
+  ///
+  /// For a category tab (international/league/domestic/women) the schedule feed
+  /// is already filtered server-side; the merged-in live/recent/upcoming
+  /// matches are filtered client-side to the same category so the tab stays
+  /// correct. The Schedule screen regroups everything by the user's LOCAL date.
   Future<ApiEnvelope<List<ScheduleDay>>> scheduleByDay(
       {String type = 'upcoming', bool forceRefresh = false}) async {
+    // 1) Cricbuzz schedule-pages feed (server-side filtered by [type]). Cache
+    //    key is versioned (v2) so any stale single-match payload is bypassed.
     final response = await _cached<ApiEnvelope<List<Map<String, dynamic>>>>(
-      'schedule:days:$type',
+      'schedule:days:v2:$type',
       const Duration(minutes: 5),
       () => _service.scheduleDays(type: type),
       forceRefresh: forceRefresh,
     );
+    final scheduleDays =
+        response.data.map(ScheduleDay.fromJson).toList(growable: false);
+
+    // 2) Today's live / recent / upcoming matches (NOT in the schedule feed).
+    //    Best-effort: a failing feed must never blank the calendar.
+    final extras = <CricketMatch>[];
+    Future<void> addTab(int tab) async {
+      try {
+        final res = await matchesForTab(tab, forceRefresh: forceRefresh);
+        for (final m in res.data) {
+          if (m.id.isEmpty) continue;
+          if (_scheduleCategoryMatches(type, m)) extras.add(m);
+        }
+      } catch (_) {/* ignore — other sources still populate the calendar */}
+    }
+
+    // live (0), recent (2), upcoming (1).
+    await Future.wait([addTab(0), addTab(2), addTab(1)]);
+
+    // 3) Merge: live/recent/upcoming first (they carry score + status), then
+    //    the schedule-feed fixtures. Dedupe by match id (first seen wins).
+    final seen = <String>{};
+    final merged = <CricketMatch>[];
+    for (final m in extras) {
+      if (seen.add(m.id)) merged.add(m);
+    }
+    for (final day in scheduleDays) {
+      for (final m in day.matches) {
+        if (m.id.isEmpty) {
+          merged.add(m); // keep id-less fixtures (can't dedupe them)
+        } else if (seen.add(m.id)) {
+          merged.add(m);
+        }
+      }
+    }
+
+    // Return one bucket; the Schedule screen regroups by the user's LOCAL date
+    // (so a late-night UTC match lands under the correct local day). When the
+    // merge is empty, return no days so the screen shows its empty state rather
+    // than a blank date chip.
+    if (merged.isEmpty) {
+      return ApiEnvelope(data: const <ScheduleDay>[], meta: response.meta);
+    }
     return ApiEnvelope(
-      data: response.data.map(ScheduleDay.fromJson).toList(),
+      data: [ScheduleDay(label: '', date: null, matches: merged)],
       meta: response.meta,
     );
+  }
+
+  /// Whether [m] belongs in the schedule [type] tab. `all`/`upcoming` accept
+  /// everything; the category tabs reuse the shared [UpcomingSort] classifier
+  /// (and a simple women check) so the merged-in live/recent/upcoming matches
+  /// are filtered exactly like the server-filtered schedule feed.
+  bool _scheduleCategoryMatches(String type, CricketMatch m) {
+    switch (type) {
+      case 'international':
+        return UpcomingSort.isInternationalMatch(m);
+      case 'league':
+        return UpcomingSort.isMajorLeague(m);
+      case 'domestic':
+        return UpcomingSort.isDomesticOrOther(m);
+      case 'women':
+        final s = '${m.series} ${m.matchDesc} ${m.title}'.toLowerCase();
+        return s.contains('women');
+      default: // 'all', 'upcoming'
+        return true;
+    }
   }
 
   Future<ApiEnvelope<List<dynamic>>> news(

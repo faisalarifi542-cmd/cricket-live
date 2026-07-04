@@ -19,30 +19,8 @@ class _DetailAppBar extends StatelessWidget {
             child: Icon(Icons.arrow_back_rounded, color: c.text, size: 26),
           ),
           const Spacer(),
-          RichText(
-            text: TextSpan(
-              style: TextStyle(
-                fontSize: logoSize,
-                fontWeight: FontWeight.w900,
-                fontStyle: FontStyle.italic,
-                letterSpacing: -1,
-                height: 1,
-              ),
-              children: [
-                TextSpan(text: 'CRIC', style: TextStyle(color: c.text)),
-                TextSpan(
-                  text: 'PRO',
-                  style: TextStyle(
-                    color: c.cyan,
-                    shadows: [
-                      Shadow(
-                          color: c.cyan.withValues(alpha: .6), blurRadius: 16),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // Shared CRICPRO wordmark — same renderer as Home/Matches/More.
+          CricLogo(size: logoSize),
           const Spacer(),
           const _BellWithBadge(),
           const SizedBox(width: 6),
@@ -71,9 +49,9 @@ class _BellWithBadge extends StatelessWidget {
             top: 2,
             right: 2,
             child: Container(
-              width: 16,
-              height: 16,
-              alignment: Alignment.center,
+              // A dot-only unread indicator — never a fake hardcoded count.
+              width: 10,
+              height: 10,
               decoration: BoxDecoration(
                 color: c.live,
                 shape: BoxShape.circle,
@@ -83,14 +61,6 @@ class _BellWithBadge extends StatelessWidget {
                         BoxShadow(color: c.live.withValues(alpha: .6), blurRadius: 8),
                       ]
                     : null,
-              ),
-              child: const Text(
-                '3',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 9,
-                ),
               ),
             ),
           ),

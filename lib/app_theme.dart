@@ -323,6 +323,16 @@ extension CtxTheme on BuildContext {
   /// body sits above it, so content only needs a small breathing-room inset —
   /// never a large reserve to clear a floating nav/ad.
   double get mainBottomPadding => 20;
+
+  /// Bottom inset for the primary tab scroll views (Home, Matches, Schedule,
+  /// Series). The bottom bar stacks a sticky banner ad ABOVE the nav, so the
+  /// last card/button must clear nav (~64) + banner (~64) + the device safe
+  /// area + a 24px comfort gap. IMPORTANT: use `viewPaddingOf`, not `paddingOf`
+  /// — with `extendBody:false` the bottom bar consumes `paddingOf.bottom` (it
+  /// reads 0 in the body), so the safe area must come from the un-consumed
+  /// `viewPadding` or gesture-nav devices stay ~24-48px short and clip content.
+  double get mainScrollBottomInset =>
+      128 + 24 + MediaQuery.viewPaddingOf(this).bottom;
   double get detailBottomPadding => 32 + MediaQuery.paddingOf(this).bottom;
 
   double sp(double value) {

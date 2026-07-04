@@ -8,15 +8,14 @@
 // sizing, layout type, spacing and current-innings highlight — instead of one
 // generic FittedBox layout forced onto every screen. Rules enforced everywhere:
 //   • Limited-overs / single innings →   218/10  /  44.2 ov
-//   • Test / multi-innings, roomy (hero / match details):
-//         1st 362/10   87.1 ov
-//         2nd 391/10   96.2 ov          ← each innings on its own row,
-//                                          readable overs, never tiny.
-//   • Test / multi-innings, tight (matches card):
-//         1st 362/10
-//         2nd 391/10
-//         87.1 • 96.2 ov
-//   • Compact bar → single combined line `362/10 & 391/10` / `87.1 • 96.2 ov`.
+//   • Test / multi-innings (hero / cards / match details header) → ONE clean
+//     combined score line, premium cricket style, NEVER prefixed with `1st`/
+//     `2nd`:
+//         438/10 & 126/3*               ← score line (current innings starred)
+//         87.1 ov • 96.2 ov             ← overs line (roomy), or
+//         87.1 • 96.2 ov                ← overs line (tight cards / compact bar)
+//     Innings ordinal labels (`1st`/`2nd`) belong ONLY to the Scorecard tab
+//     headers (see `md_panels.dart`), never inline before a score value.
 //   • Scores NEVER ellipsize. Innings stay in chronological order (oldest
 //     first); the current/live innings is highlighted (brighter + a small `*`)
 //     but is NEVER reordered ahead of an earlier innings.
@@ -71,11 +70,16 @@ class TeamScoreView extends StatelessWidget {
   final bool live;
 
   /// Index, within this team's SCORED innings (oldest-first), of the innings to
-  /// highlight as the current/live one (gets the `*` + full brightness). `-1`
-  /// (default) means none — used for finished matches and for the team that is
-  /// NOT currently batting. Supplied by the call site from
-  /// `CricketMatch.currentScoredIndexForTeam`, so the star reflects the real
-  /// batting side rather than "the last innings of whichever team is live".
+  /// highlight as the current/live one (gets the `*` + full brightness).
+  ///
+  /// Supplied by the call site from `CricketMatch.currentScoredIndexForTeam`, so
+  /// the star reflects the real batting side. Special values:
+  ///   • `-1` (default, "auto"): when [live] and the score is multi-innings, the
+  ///     latest innings is starred — the standalone fallback when the caller only
+  ///     knows the match is live.
+  ///   • `kNoCurrentInnings` (-2): never star — used for the team that is NOT
+  ///     currently batting, so a live match never stars both teams.
+  /// The current innings is never reordered ahead of an earlier one.
   final int currentInningsIndex;
   final CrossAxisAlignment align;
   final TextAlign textAlign;
@@ -97,63 +101,150 @@ class TeamScoreView extends StatelessWidget {
         _ => Alignment.center,
       };
 
-  MainAxisAlignment get _rowMainAlign => switch (align) {
-        CrossAxisAlignment.start => MainAxisAlignment.start,
-        CrossAxisAlignment.end => MainAxisAlignment.end,
-        _ => MainAxisAlignment.center,
-      };
-
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final pres = TeamScorePresentation(innings);
+    final preset = scorePresetFor(mode, multi: pres.isMultiInnings);
 
     final mainColor =
         color ?? (live ? (c.isDark ? Colors.white : c.text) : c.cyan);
-    final ovColor = oversColor ?? c.cyan.withValues(alpha: .84);
+    // Overs read WHITE / near-white (low-contrast cyan on the blue stadium
+    // backdrop was hard to read). Only the small separator dot stays cyan.
+    final ovColor = oversColor ??
+        (c.isDark ? Colors.white.withValues(alpha: .92) : c.text);
+    final sepColor = c.cyan.withValues(alpha: c.isDark ? .9 : .8);
 
     if (!pres.hasScore) {
       if (placeholder.isEmpty) return const SizedBox.shrink();
+      // A side yet to bat must read as MUTED secondary text — never a big white
+      // score. Capped small and de-emphasised so it sits quietly under the code.
       return Text(
         placeholder,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         textAlign: textAlign,
         style: TextStyle(
-          color: c.onImageText,
+          color: c.onImageText.withValues(alpha: c.isDark ? .70 : .66),
           fontWeight: FontWeight.w600,
-          fontSize: oversSize + 1.5,
+          fontSize: oversSize.clamp(11.0, 14.5),
+          letterSpacing: .2,
         ),
       );
     }
 
-    // Multi-innings (Test / first-class) gets a dedicated layout per family so
-    // both innings + their overs stay readable — never squeezed onto one tiny
-    // FittedBox line. A single batted innings always uses the limited-overs
-    // layout regardless of the hinted mode.
+    // Multi-innings (Test / first-class): a per-innings STACKED layout with the
+    // overs inline on each row — premium and readable on small devices:
+    //     438/10 · 114.5 ov
+    //     288/9d* · 94.0 ov     (current innings starred; declared shows `d`)
+    // NO `1st`/`2nd` prefixes; the current/live innings is brighter + starred,
+    // earlier innings dimmed; order is chronological (never reversed). The
+    // compact score bar keeps the single combined line. A single batted innings
+    // always uses the limited-overs layout regardless of the hinted mode.
     if (pres.isMultiInnings) {
-      switch (mode.family) {
-        case ScoreLayoutFamily.hero:
-        case ScoreLayoutFamily.details:
-          return _stackedRows(context, pres, mainColor, ovColor, roomy: true);
-        case ScoreLayoutFamily.card:
-          return _stackedRows(context, pres, mainColor, ovColor, roomy: false);
-        case ScoreLayoutFamily.bar:
-          return _combinedLine(pres, mainColor, ovColor);
+      if (mode.family == ScoreLayoutFamily.bar) {
+        return _combinedLine(pres, preset, mainColor, ovColor);
       }
+      return _stackedInlineRows(pres, preset, mainColor, ovColor, sepColor);
     }
-    return _singleInnings(pres, mainColor, ovColor);
+    return _singleInnings(pres, preset, mainColor, ovColor);
+  }
+
+  // ── Multi-innings: stacked rows with inline overs (`438/10 · 114.5 ov`) ─────
+  Widget _stackedInlineRows(TeamScorePresentation pres, ScorePreset preset,
+      Color mainColor, Color ovColor, Color sepColor) {
+    final scored = pres.scored;
+    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex, live: live);
+    final hasCurrent = currentIdx >= 0;
+    final dim = mainColor.withValues(alpha: .62);
+    // Premium hierarchy enforced centrally by the preset: runs/wickets stay
+    // dominant, overs stay clearly readable and WHITE, and the score is small
+    // enough that the inline row fits a 360dp column without the FittedBox
+    // shrinking the overs into the unreadable range.
+    final scoreFont = mainSize.clamp(preset.scoreMin, preset.scoreMax);
+    final oversFont = oversSize.clamp(preset.oversMin, preset.oversMax);
+    final rowGap = preset.rowSpacing;
+
+    final rows = <Widget>[];
+    for (var i = 0; i < scored.length; i++) {
+      final inn = scored[i];
+      final isCurrent = i == currentIdx;
+      final scoreColor = (live && hasCurrent && !isCurrent) ? dim : mainColor;
+      final scoreText = inn.scoreText + (isCurrent ? '*' : '');
+      final overs = inn.oversText;
+      final spans = <InlineSpan>[
+        TextSpan(
+          text: scoreText,
+          style: TextStyle(
+            color: scoreColor,
+            fontWeight: preset.scoreWeight,
+            fontSize: scoreFont,
+            height: preset.scoreHeight,
+            letterSpacing: .2,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        if (overs.isNotEmpty) ...[
+          // The separator dot stays cyan (a deliberate accent); the overs
+          // NUMBER itself is white/near-white for contrast on the backdrop. A
+          // little letterSpacing gives the dot real breathing room without
+          // changing the rendered string.
+          TextSpan(
+            text: ' · ',
+            style: TextStyle(
+              color: sepColor,
+              fontWeight: FontWeight.w800,
+              fontSize: oversFont,
+              height: preset.oversHeight,
+              letterSpacing: 1.6,
+            ),
+          ),
+          TextSpan(
+            text: '$overs ov',
+            style: TextStyle(
+              color: ovColor,
+              fontWeight: preset.oversWeight,
+              fontSize: oversFont,
+              height: preset.oversHeight,
+              letterSpacing: .1,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ];
+      rows.add(Padding(
+        padding: EdgeInsets.only(top: i == 0 ? 0 : rowGap),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: _fitAlign,
+          child: Text.rich(
+            TextSpan(children: spans),
+            maxLines: 1,
+            softWrap: false,
+            textAlign: textAlign,
+          ),
+        ),
+      ));
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: align,
+      children: rows,
+    );
   }
 
   // ── Single innings / limited overs ─────────────────────────────────────────
-  Widget _singleInnings(
-      TeamScorePresentation pres, Color mainColor, Color ovColor) {
+  Widget _singleInnings(TeamScorePresentation pres, ScorePreset preset,
+      Color mainColor, Color ovColor) {
+    final scoreFont = mainSize.clamp(preset.scoreMin, preset.scoreMax);
+    final oversFont = oversSize.clamp(preset.oversMin, preset.oversMax);
     final mainStyle = TextStyle(
       color: mainColor,
-      fontWeight: FontWeight.w900,
-      fontSize: mainSize,
+      fontWeight: preset.scoreWeight,
+      fontSize: scoreFont,
       height: 1.02,
       letterSpacing: .2,
+      fontFeatures: const [FontFeature.tabularFigures()],
     );
     final oversLine = pres.oversLine(unitEach: !compactOvers);
     return Column(
@@ -181,9 +272,10 @@ class TeamScoreView extends StatelessWidget {
               softWrap: false,
               style: TextStyle(
                 color: ovColor,
-                fontWeight: FontWeight.w700,
-                fontSize: oversSize,
-                height: 1.05,
+                fontWeight: preset.oversWeight,
+                fontSize: oversFont,
+                height: preset.oversHeight,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -192,135 +284,18 @@ class TeamScoreView extends StatelessWidget {
     );
   }
 
-  // ── Multi-innings: stacked per-innings rows ────────────────────────────────
-  /// `roomy` (hero / details) renders each row as `1st  362/10   87.1 ov`.
-  /// Tight (matches card) splits into `1st 362/10` rows + one combined overs
-  /// line `87.1 • 96.2 ov` underneath so the score never has to shrink to fit
-  /// the overs alongside it.
-  Widget _stackedRows(BuildContext context, TeamScorePresentation pres,
-      Color mainColor, Color ovColor,
-      {required bool roomy}) {
-    final scored = pres.scored;
-    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex);
-    // Only dim earlier innings when THIS team has a live/current innings. The
-    // non-batting team (currentIdx == -1) keeps all innings at full strength.
-    final hasCurrent = currentIdx >= 0;
-    final dim = mainColor.withValues(alpha: .62);
-
-    // Readable floors so the overs never collapse into hidden metadata. The
-    // caller sizes per mode; we only clamp the overs/ordinal to stay legible.
-    final scoreFont = mainSize;
-    final oversFont = oversSize.clamp(11.0, 22.0);
-    final ordinalFont = (oversFont - 0.5).clamp(9.5, 14.0);
-
-    final rows = <Widget>[];
-    for (var i = 0; i < scored.length; i++) {
-      final inn = scored[i];
-      final isCurrent = i == currentIdx;
-      final scoreColor = (live && hasCurrent && !isCurrent) ? dim : mainColor;
-      final scoreText = inn.scoreText + (isCurrent ? '*' : '');
-      final ordinal = TeamScorePresentation.ordinal(i + 1);
-      final overs = inn.oversText;
-
-      final ordinalWidget = Text(
-        ordinal,
-        style: TextStyle(
-          color: ovColor.withValues(alpha: .9),
-          fontWeight: FontWeight.w800,
-          fontSize: ordinalFont,
-          height: 1.0,
-        ),
-      );
-      final scoreWidget = Text(
-        scoreText,
-        maxLines: 1,
-        softWrap: false,
-        style: TextStyle(
-          color: scoreColor,
-          fontWeight: FontWeight.w900,
-          fontSize: scoreFont,
-          height: 1.05,
-          letterSpacing: .2,
-        ),
-      );
-
-      final rowChildren = <Widget>[
-        ordinalWidget,
-        SizedBox(width: roomy ? 6 : 5),
-        scoreWidget,
-        if (roomy && overs.isNotEmpty) ...[
-          const SizedBox(width: 8),
-          Text(
-            '$overs ov',
-            maxLines: 1,
-            softWrap: false,
-            style: TextStyle(
-              color: ovColor,
-              fontWeight: FontWeight.w700,
-              fontSize: oversFont,
-              height: 1.05,
-            ),
-          ),
-        ],
-      ];
-
-      rows.add(Padding(
-        padding: EdgeInsets.only(top: i == 0 ? 0 : (roomy ? 3 : 2)),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: _fitAlign,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: _rowMainAlign,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: rowChildren,
-          ),
-        ),
-      ));
-    }
-
-    // Tight card: a single combined overs line beneath the score rows.
-    if (!roomy) {
-      final oversLine = pres.oversLine(unitEach: false);
-      if (oversLine.isNotEmpty) {
-        rows.add(Padding(
-          padding: EdgeInsets.only(top: gap + 1),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: _fitAlign,
-            child: Text(
-              oversLine,
-              maxLines: 1,
-              softWrap: false,
-              style: TextStyle(
-                color: ovColor,
-                fontWeight: FontWeight.w700,
-                fontSize: oversFont,
-                height: 1.05,
-              ),
-            ),
-          ),
-        ));
-      }
-    }
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: align,
-      children: rows,
-    );
-  }
-
-  // ── Multi-innings: single combined line (compact bar only) ─────────────────
-  Widget _combinedLine(
-      TeamScorePresentation pres, Color mainColor, Color ovColor) {
+  // ── Multi-innings: single combined line ────────────────────────────────────
+  Widget _combinedLine(TeamScorePresentation pres, ScorePreset preset,
+      Color mainColor, Color ovColor) {
+    final scoreFont = mainSize.clamp(preset.scoreMin, preset.scoreMax);
+    final oversFont = oversSize.clamp(preset.oversMin, preset.oversMax);
     final base = TextStyle(
       color: mainColor,
-      fontWeight: FontWeight.w900,
-      fontSize: mainSize,
+      fontWeight: preset.scoreWeight,
+      fontSize: scoreFont,
       height: 1.02,
       letterSpacing: .2,
+      fontFeatures: const [FontFeature.tabularFigures()],
     );
     final oversLine = pres.oversLine(unitEach: !compactOvers);
     return Column(
@@ -343,9 +318,10 @@ class TeamScoreView extends StatelessWidget {
               softWrap: false,
               style: TextStyle(
                 color: ovColor,
-                fontWeight: FontWeight.w700,
-                fontSize: oversSize,
-                height: 1.05,
+                fontWeight: preset.oversWeight,
+                fontSize: oversFont,
+                height: preset.oversHeight,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -354,12 +330,13 @@ class TeamScoreView extends StatelessWidget {
     );
   }
 
-  /// `362/10 & 391/10` with the current (last, live) innings full strength + a
-  /// small `*`, earlier innings dimmed — order preserved, never reversed.
+  /// `438/10 & 126/3*` with the current (last, live) innings full strength + a
+  /// small `*`, earlier innings dimmed — order preserved, never reversed. Uses
+  /// `Text.rich` so the whole combined string is a single discoverable Text.
   Widget _combinedScoreRich(
       TeamScorePresentation pres, TextStyle base, Color mainColor) {
     final scored = pres.scored;
-    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex);
+    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex, live: live);
     final hasCurrent = currentIdx >= 0;
     final dim = (live && hasCurrent) ? mainColor.withValues(alpha: .62) : mainColor;
     final spans = <TextSpan>[];
@@ -373,11 +350,104 @@ class TeamScoreView extends StatelessWidget {
         style: base.copyWith(color: isCurrent ? mainColor : dim),
       ));
     }
-    return RichText(
+    return Text.rich(
+      TextSpan(children: spans),
       maxLines: 1,
       softWrap: false,
       textAlign: textAlign,
-      text: TextSpan(children: spans),
     );
+  }
+}
+
+/// Centralized score typography preset — the single source of truth for score
+/// vs overs sizing/weight/spacing per context AND match type, so the same
+/// shared renderer looks right on the Home hero, live/upcoming cards, the
+/// Matches screen, Schedule and Match Details without per-screen patching.
+///
+/// Sizes are responsive BOUNDS: the call site passes a device-tuned target
+/// (`mainSize`/`oversSize`) and the renderer clamps it into `[min, max]`, so a
+/// white-ball hero score can never balloon and a Test card score can never
+/// shrink to an unreadable size. Overs never fall below `oversMin`.
+class ScorePreset {
+  const ScorePreset({
+    required this.scoreMin,
+    required this.scoreMax,
+    required this.oversMin,
+    required this.oversMax,
+    this.scoreWeight = FontWeight.w900,
+    this.oversWeight = FontWeight.w700,
+    this.scoreHeight = 1.1,
+    this.oversHeight = 1.08,
+    this.rowSpacing = 4,
+  });
+
+  final double scoreMin;
+  final double scoreMax;
+  final double oversMin;
+  final double oversMax;
+  final FontWeight scoreWeight;
+  final FontWeight oversWeight;
+  final double scoreHeight;
+  final double oversHeight;
+  final double rowSpacing;
+}
+
+/// Resolves the preset for a [ScoreDisplayMode] and match type. White-ball
+/// (single innings) and Test (multi-innings) get DIFFERENT presets so a T20
+/// hero score stays balanced while a Test shows two readable innings rows.
+///
+/// Targets (overs are WHITE everywhere, 13–15 except the tight compact/bar):
+///   • Home hero white-ball  → score 26–34, overs 13–15
+///   • Home hero Test        → score 17–20 per row, overs 13–15
+///   • Match list white-ball → score 22–26, overs 13–15
+///   • Match list Test       → score 18–22 per row, overs 13–15
+///   • Match details         → score 24–28 / Test 17–20, overs 13–15
+///   • Compact grid cell     → score 16–20 / Test 16–18, overs 12.5–14
+///   • Compact bar           → score 13–18, overs 12–14
+ScorePreset scorePresetFor(ScoreDisplayMode mode, {required bool multi}) {
+  switch (mode.family) {
+    case ScoreLayoutFamily.hero:
+      return multi
+          ? const ScorePreset(
+              scoreMin: 15,
+              scoreMax: 18,
+              oversMin: 12,
+              oversMax: 14,
+              rowSpacing: 6)
+          : const ScorePreset(
+              scoreMin: 26, scoreMax: 34, oversMin: 13, oversMax: 15);
+    case ScoreLayoutFamily.card:
+      return multi
+          ? const ScorePreset(
+              scoreMin: 18,
+              scoreMax: 22,
+              oversMin: 13,
+              oversMax: 15,
+              rowSpacing: 5)
+          : const ScorePreset(
+              scoreMin: 22, scoreMax: 26, oversMin: 13, oversMax: 15);
+    case ScoreLayoutFamily.details:
+      return multi
+          ? const ScorePreset(
+              scoreMin: 17,
+              scoreMax: 20,
+              oversMin: 13,
+              oversMax: 15,
+              rowSpacing: 6)
+          : const ScorePreset(
+              scoreMin: 24, scoreMax: 28, oversMin: 13, oversMax: 15);
+    case ScoreLayoutFamily.compact:
+      return multi
+          ? const ScorePreset(
+              scoreMin: 16,
+              scoreMax: 18,
+              oversMin: 12.5,
+              oversMax: 14,
+              rowSpacing: 4)
+          : const ScorePreset(
+              scoreMin: 16, scoreMax: 20, oversMin: 12.5, oversMax: 14);
+    case ScoreLayoutFamily.bar:
+      return const ScorePreset(
+          scoreMin: 13, scoreMax: 18, oversMin: 12, oversMax: 14);
   }
 }

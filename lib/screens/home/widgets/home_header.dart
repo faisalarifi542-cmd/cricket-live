@@ -7,7 +7,6 @@ class _HomeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.cric;
     final logoSize = context.w <= 400 ? 30.0 : 34.0;
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 2),
@@ -16,30 +15,10 @@ class _HomeHeader extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  fontSize: logoSize,
-                  fontWeight: FontWeight.w900,
-                  fontStyle: FontStyle.italic,
-                  letterSpacing: -1.2,
-                  height: 1.1,
-                ),
-                children: [
-                  TextSpan(text: 'CRIC', style: TextStyle(color: c.text)),
-                  TextSpan(
-                    text: 'PRO',
-                    style: TextStyle(
-                      color: c.cyan,
-                      shadows: [
-                        Shadow(
-                            color: c.cyan.withValues(alpha: .6), blurRadius: 18),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            // Shared CRICPRO wordmark — same renderer as Matches/Series/More so
+            // the logo is identical across every screen (no per-screen size/
+            // letterSpacing/glow divergence).
+            CricLogo(size: logoSize),
             const Spacer(),
             _NotificationButton(onTap: onBell),
           ],
@@ -49,8 +28,9 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
-/// Circular glass icon button used in the header. The notification button is a
-/// separate widget because it also paints the unread dot.
+/// Notification bell built on the shared [GlowIconButton] so it matches the
+/// bell used on Matches/Series/More, with a cyan unread dot overlaid to retain
+/// the Home screen's "new notifications" indicator.
 class _NotificationButton extends StatelessWidget {
   const _NotificationButton({required this.onTap});
 
@@ -59,59 +39,32 @@ class _NotificationButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 42,
-        height: 42,
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: c.isDark ? c.card.withValues(alpha: .42) : c.card,
-                border: Border.all(
-                    color: c.cyan.withValues(alpha: .75), width: 1.3),
-                boxShadow: c.isDark
-                    ? [
-                        BoxShadow(
-                          color: c.cyan.withValues(alpha: .14),
-                          blurRadius: 14,
-                          spreadRadius: -3,
-                        ),
-                      ]
-                    : null,
-              ),
-              alignment: Alignment.center,
-              child: Icon(Icons.notifications_none_rounded,
-                  color: c.text, size: 21),
-            ),
-            // Notification dot.
-            Positioned(
-              top: 9,
-              right: 10,
-              child: Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: c.cyan,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: c.bg, width: 1.5),
-                  boxShadow: [
-                    BoxShadow(
-                        color: c.cyan.withValues(alpha: .85), blurRadius: 7),
-                  ],
-                ),
-              ),
-            ),
-          ],
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GlowIconButton(
+          icon: Icons.notifications_none_rounded,
+          onTap: onTap,
         ),
-      ),
+        // Unread dot — cyan, bordered with the page bg so it punches through
+        // the circular button cleanly.
+        Positioned(
+          top: 2,
+          right: 2,
+          child: Container(
+            width: 9,
+            height: 9,
+            decoration: BoxDecoration(
+              color: c.cyan,
+              shape: BoxShape.circle,
+              border: Border.all(color: c.bg, width: 1.5),
+              boxShadow: [
+                BoxShadow(color: c.cyan.withValues(alpha: .85), blurRadius: 7),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

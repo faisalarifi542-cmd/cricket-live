@@ -175,7 +175,8 @@ class _ScheduleMatchCard extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 14),
-                  // Team row with glowing VS badge.
+                  // Team row with glowing VS badge. Live/finished matches show
+                  // the real score (clean multi-innings format) under each code.
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -184,6 +185,11 @@ class _ScheduleMatchCard extends StatelessWidget {
                           logoUrl: match.teamALogo,
                           shortName: match.teamAShort,
                           fullName: match.teamA,
+                          innings: match.teamAInnings,
+                          live: match.isLive,
+                          showScore: match.isLive || match.isFinished,
+                          currentInningsIndex:
+                              match.currentScoredIndexForTeam(isTeamA: true),
                         ),
                       ),
                       const _VsBadge(),
@@ -192,11 +198,21 @@ class _ScheduleMatchCard extends StatelessWidget {
                           logoUrl: match.teamBLogo,
                           shortName: match.teamBShort,
                           fullName: match.teamB,
-                          alignEnd: true,
+                          innings: match.teamBInnings,
+                          live: match.isLive,
+                          showScore: match.isLive || match.isFinished,
+                          currentInningsIndex:
+                              match.currentScoredIndexForTeam(isTeamA: false),
                         ),
                       ),
                     ],
                   ),
+                  // Live status / finished result line (e.g. "Day 4 · 2nd
+                  // Session · NZ lead by 299 runs").
+                  if (_statusLine(match).isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _ScheduleStatusLine(text: _statusLine(match), live: match.isLive),
+                  ],
                   const SizedBox(height: 14),
                   // Time + venue split panel.
                   _TimeVenuePanel(match: match),
@@ -204,6 +220,54 @@ class _ScheduleMatchCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// The live status / finished result line for the card. Empty for upcoming
+  /// matches (their info lives in the time/venue panel).
+  String _statusLine(CricketMatch match) {
+    if (match.isLive) {
+      return match.statusText.isNotEmpty ? match.statusText : match.resultText;
+    }
+    if (match.isFinished) {
+      return match.resultText.isNotEmpty ? match.resultText : match.statusText;
+    }
+    return '';
+  }
+}
+
+/// A premium one-line status/result strip under the team row. Uses a calm dark
+/// glass + subtle cyan border (NOT red) — red is reserved for the LIVE pill, so
+/// normal state text (lead/trail/session, results) never reads as an alert.
+class _ScheduleStatusLine extends StatelessWidget {
+  const _ScheduleStatusLine({required this.text, required this.live});
+
+  final String text;
+  final bool live;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: c.isDark ? c.card2.withValues(alpha: .42) : c.card2,
+        border: Border.all(color: c.cyan.withValues(alpha: c.isDark ? .35 : .25)),
+      ),
+      child: Text(
+        text,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: c.text,
+          fontWeight: FontWeight.w700,
+          fontSize: 12.5,
+          height: 1.25,
         ),
       ),
     );
@@ -401,13 +465,19 @@ class _CardTeam extends StatelessWidget {
     required this.logoUrl,
     required this.shortName,
     required this.fullName,
-    this.alignEnd = false,
+    this.innings = const <InningsScore>[],
+    this.live = false,
+    this.showScore = false,
+    this.currentInningsIndex = -1,
   });
 
   final String? logoUrl;
   final String shortName;
   final String fullName;
-  final bool alignEnd;
+  final List<InningsScore> innings;
+  final bool live;
+  final bool showScore;
+  final int currentInningsIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -420,37 +490,62 @@ class _CardTeam extends StatelessWidget {
       teamName: fullName,
       abbreviation: upper,
       color: c.cyan,
-      size: 50,
+      size: 44,
     );
-    // Short-code only: show the big team code (e.g. `TSK`, `SFU`) and never the
-    // tiny truncated full name — "Texas S..." / "San Fra..." looked unfinished.
-    final texts = Column(
-      crossAxisAlignment:
-          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+    final scored = innings.where((i) => i.hasRuns).toList();
+    // Logo-ABOVE, centred column (same visual language as Home/Matches) so the
+    // score uses the FULL team-column width instead of being squeezed beside
+    // the logo — this is what was miniaturising the Schedule Test score. The
+    // shared `TeamScoreView` (card preset) renders the premium stacked rows.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
+        logo,
+        const SizedBox(height: 7),
         Text(
           upper,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           softWrap: false,
-          textAlign: alignEnd ? TextAlign.right : TextAlign.left,
+          textAlign: TextAlign.center,
           style: TextStyle(
             color: c.text,
             fontWeight: FontWeight.w900,
             fontSize: 18,
           ),
         ),
+        if (showScore && scored.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          TeamScoreView(
+            innings: innings,
+            mode: scored.length > 1
+                ? ScoreDisplayMode.cardMultiInnings
+                : ScoreDisplayMode.cardLimitedOvers,
+            mainSize: 18,
+            oversSize: 13,
+            live: live,
+            currentInningsIndex: currentInningsIndex,
+            align: CrossAxisAlignment.center,
+            textAlign: TextAlign.center,
+            color: live ? (c.isDark ? Colors.white : c.text) : c.cyan,
+            compactOvers: true,
+          ),
+        ] else if (showScore && live) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Yet to bat',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: c.muted,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
+        ],
       ],
-    );
-
-    final children = alignEnd
-        ? [Expanded(child: texts), const SizedBox(width: 10), logo]
-        : [logo, const SizedBox(width: 10), Expanded(child: texts)];
-    return Row(
-      mainAxisAlignment:
-          alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
-      children: children,
     );
   }
 }
@@ -465,7 +560,7 @@ class _VsBadge extends StatelessWidget {
     // but the diagonal streak + glow deliberately overflow well beyond it via
     // Clip.none so the VS reads as a wide broadcast centerpiece, not a button.
     return SizedBox(
-      width: 64,
+      width: 46,
       height: 66,
       child: Stack(
         alignment: Alignment.center,
@@ -596,7 +691,10 @@ class _TimeVenuePanel extends StatelessWidget {
             child: _InfoBlock(
               icon: Icons.access_time_rounded,
               primary: _timeLine(match),
-              secondary: '(Local Time)',
+              // A live (often multi-day) match shows its START date/time here —
+              // label it "Started" so it never reads as the selected schedule
+              // date. Upcoming matches keep the local-time note.
+              secondary: match.isLive ? 'Started' : '(Local Time)',
               maxPrimaryLines: 2,
             ),
           ),
@@ -629,32 +727,15 @@ class _TimeVenuePanel extends StatelessWidget {
     );
   }
 
+  // Routes the card's time line through the shared `formatMatchDateTime` so it
+  // shows "Today"/"Tomorrow" exactly like Series Overview and Match Details —
+  // fixing the cross-screen inconsistency where the same match read "Today" on
+  // Series Overview but "May 30" on Schedule. Falls back to the status/start
+  // text when no date is parseable.
   String _timeLine(CricketMatch match) {
-    final dt = match.startDateTime;
-    if (dt == null) {
-      return match.statusText.isNotEmpty ? match.statusText : match.startTime;
-    }
-    final local = dt.toLocal();
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    var hour = local.hour % 12;
-    if (hour == 0) hour = 12;
-    final ampm = local.hour >= 12 ? 'PM' : 'AM';
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '${months[local.month - 1]} ${local.day} • '
-        '${hour.toString().padLeft(2, '0')}:$mm $ampm';
+    final formatted = formatMatchDateTime(match.startDateTime);
+    if (formatted.isNotEmpty) return formatted;
+    return match.statusText.isNotEmpty ? match.statusText : match.startTime;
   }
 
   (String, String) _splitVenue(String venue) {

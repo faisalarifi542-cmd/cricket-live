@@ -108,6 +108,7 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
             isLast: widget.isLast,
             child: MDBallChip(
               label: ballLabel,
+              type: type,
               wicket: type == 'wicket',
               boundary: type == 'four' || type == 'six',
               size: switch (type) {
@@ -351,6 +352,7 @@ class _OverCard extends StatelessWidget {
               for (final ball in balls)
                 _BallBubble(
                     label: str(apiMap(ball)['result']),
+                    type: str(apiMap(ball)['type'] ?? apiMap(ball)['event']),
                     wicket: truthy(apiMap(ball)['isWicket']),
                     boundary: truthy(apiMap(ball)['isBoundary']))
             ],
@@ -363,15 +365,16 @@ class _OverCard extends StatelessWidget {
 
 class _BallBubble extends StatelessWidget {
   const _BallBubble(
-      {required this.label, this.wicket = false, this.boundary = false});
+      {required this.label, this.type = '', this.wicket = false, this.boundary = false});
 
   final String label;
+  final String type;
   final bool wicket;
   final bool boundary;
 
   @override
   Widget build(BuildContext context) {
-    return MDBallChip(label: label, wicket: wicket, boundary: boundary);
+    return MDBallChip(label: label, type: type, wicket: wicket, boundary: boundary);
   }
 }
 

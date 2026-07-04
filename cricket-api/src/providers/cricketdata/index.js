@@ -18,6 +18,15 @@ export class CricketDataProvider extends BaseProvider {
     super('cricketdata', 3); // lowest priority
   }
 
+  /** CricketData is only usable with an API key configured. */
+  isConfigured() {
+    return !!config.providers.cricketdata.apiKey;
+  }
+
+  configReason() {
+    return this.isConfigured() ? null : 'missing_api_key';
+  }
+
   #params(extra = {}) {
     return { params: { apikey: config.providers.cricketdata.apiKey, ...extra } };
   }

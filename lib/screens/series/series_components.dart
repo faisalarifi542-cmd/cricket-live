@@ -4,6 +4,7 @@ import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/api_models.dart';
 import 'package:cricpro_flutter/components.dart';
 import 'package:cricpro_flutter/screens/series/series_premium.dart';
+import 'package:cricpro_flutter/utils/team_format.dart';
 
 /// Shared premium building blocks for the Series module (list + details).
 /// All widgets follow the CricPro dark-navy/cyan glassmorphism design.
@@ -12,7 +13,12 @@ import 'package:cricpro_flutter/screens/series/series_premium.dart';
 // Series view model — derives premium display fields from API data.
 // ---------------------------------------------------------------------------
 
-enum SeriesStatus { ongoing, upcoming, completed }
+/// [unknown] = the series has no reliable start/end date AND no definitive
+/// provider status, so it cannot be honestly placed in Ongoing/Upcoming/
+/// Completed. Such series surface ONLY under the "All" filter (filterSeries
+/// never matches them to a specific status facet) — this is what keeps undated
+/// editions out of the Upcoming filter.
+enum SeriesStatus { ongoing, upcoming, completed, unknown }
 
 enum SeriesCategory { international, league, domestic, women }
 
@@ -56,6 +62,7 @@ class SeriesView {
         SeriesStatus.ongoing => 'Ongoing',
         SeriesStatus.upcoming => 'Upcoming',
         SeriesStatus.completed => 'Completed',
+        SeriesStatus.unknown => 'TBD',
       };
 
   String get categoryLabel => switch (category) {
@@ -110,20 +117,112 @@ class SeriesView {
   factory SeriesView.fromApi(ApiSeries series) {
     final start = _parseDate(series.startDate);
     final end = _parseDate(series.endDate);
+    final cleanName = cleanSeriesText(series.name);
+    // Prefer the provider's teams array; when it carries fewer than two teams
+    // (common for tour series that omit it), derive the participating nations
+    // from the series title so the card shows real teams instead of TBD vs TBD.
+    var teams = _teamsFromApi(series.teams);
+    if (teams.length < 2) {
+      teams = _mergeTeams(teams, _teamsFromTitle(cleanName));
+    }
     return SeriesView(
       id: series.id,
-      name: cleanSeriesText(series.name),
-      status: _normalizeStatus(series.status, start, end),
-      category: _categoryFor(series.name, series.format),
+      name: cleanName,
+      status: classifySeriesStatus(series.status, start, end),
+      category: seriesCategoryOf(series.name, series.format,
+          backendCategory: series.category),
       startDate: start,
       endDate: end,
       formats: _formatsFromText('${series.format ?? ''} ${series.name}'),
       formatLabel: (series.format ?? '').trim(),
       matchCount: series.matchCount,
-      host: series.country,
-      teams: _teamsFromApi(series.teams),
+      // Host: prefer the backend country/host; otherwise derive it from a
+      // bilateral "X tour of Y" title (the host is Y). Tournaments/leagues that
+      // don't yield a host stay null so the card hides the location item.
+      host: ((series.country ?? '').trim().isNotEmpty)
+          ? series.country!.trim()
+          : _seriesHostFromTitle(cleanName),
+      teams: teams,
     );
   }
+
+  /// True for bilateral series where we have two real participating sides; used
+  /// to decide between a two-team layout and a tournament/trophy layout so the
+  /// card never reads as a single fixture with TBD placeholders.
+  bool get isBilateral => teams.length >= 2;
+
+  /// Real participating-team count derived from the provider's teams array
+  /// (only padded to two from the title when the provider gives fewer). Used
+  /// by multi-team tournament/league cards for the "N Teams" metadata and the
+  /// "+N" logo-strip overflow. Never a fabricated value.
+  int get teamCount => teams.length;
+}
+
+/// Filters a series list by category and status. A null facet means "All".
+/// Final list = category ∩ status, mirroring the Cricbuzz Series tabs combined
+/// with the app's Ongoing/Upcoming/Completed segments. Pure + testable.
+List<SeriesView> filterSeries(
+  List<SeriesView> all,
+  SeriesCategory? category,
+  SeriesStatus? status,
+) {
+  return all
+      .where((s) => category == null || s.category == category)
+      .where((s) => status == null || s.status == status)
+      .toList(growable: false);
+}
+
+/// Sorts a series list into the canonical display order: Ongoing first, then
+/// Upcoming, then Completed (`unknown`/TBD tails last). Within each section:
+///   • Ongoing — series with live matches ([SeriesView.liveCount] > 0) first,
+///     then the rest by start date descending (most-recently-started first).
+///   • Upcoming — by start date ascending (soonest first).
+///   • Completed — by end date descending (most-recently-finished first).
+/// Undated series keep their relative input order within their section. Pure +
+/// testable; does not mutate the input.
+List<SeriesView> sortSeriesByStatus(List<SeriesView> all) {
+  int sectionRank(SeriesStatus s) => switch (s) {
+        SeriesStatus.ongoing => 0,
+        SeriesStatus.upcoming => 1,
+        SeriesStatus.completed => 2,
+        SeriesStatus.unknown => 3,
+      };
+  final sorted = [...all]..sort((a, b) {
+      final sa = sectionRank(a.status);
+      final sb = sectionRank(b.status);
+      if (sa != sb) return sa.compareTo(sb);
+      switch (a.status) {
+        case SeriesStatus.ongoing:
+          // Live matches first (descending liveCount), then start date desc.
+          final liveCmp = b.liveCount.compareTo(a.liveCount);
+          if (liveCmp != 0) return liveCmp;
+          return _nullLastDesc(a.startDate, b.startDate);
+        case SeriesStatus.upcoming:
+          return _nullLastAsc(a.startDate, b.startDate);
+        case SeriesStatus.completed:
+          return _nullLastDesc(a.endDate, b.endDate);
+        case SeriesStatus.unknown:
+          return 0;
+      }
+    });
+  return sorted;
+}
+
+/// Ascending comparator that keeps null/undated values AFTER dated ones (so an
+/// undated upcoming series never jumps ahead of a dated one).
+int _nullLastAsc(DateTime? a, DateTime? b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return a.compareTo(b);
+}
+
+/// Descending comparator (most-recent first) that keeps null values last.
+int _nullLastDesc(DateTime? a, DateTime? b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return b.compareTo(a);
 }
 
 class SeriesTeamRef {
@@ -244,11 +343,41 @@ DateTime? _parseDate(dynamic value) {
   return null;
 }
 
-/// Normalizes a series status using the backend's status text first, then the
-/// date window. Mirrors the backend `computeSeriesStatus` rules so a finished
-/// edition (endDate in the past) is never shown as Upcoming — unless the API
-/// explicitly says it is live/ongoing.
-SeriesStatus _normalizeStatus(String? raw, DateTime? start, DateTime? end) {
+/// Strips a [DateTime] to its LOCAL calendar day (midnight, no time-of-day) so
+/// status is decided by DATE, not by the hour. Without this a series starting
+/// later *today* reads as Upcoming, and an edition that ended earlier today
+/// reads as still-ongoing — both wrong on the Series filters.
+DateTime _localDay(DateTime d) {
+  final l = d.toLocal();
+  return DateTime(l.year, l.month, l.day);
+}
+
+/// Central, testable series-status classifier. Compares at LOCAL-DATE
+/// granularity (time-of-day ignored). Rules, in strict priority:
+///   1. Ongoing  — a genuine live match ([liveCount] > 0).
+///   2. Completed — real [end] date's day is BEFORE today (a past end date
+///      ALWAYS wins, even over a stale provider "ongoing"/"upcoming" string).
+///   3. Upcoming — real [start] date's day is AFTER today.
+///   4. Ongoing  — today falls within [start]..[end] inclusive, or only a start
+///      day is known and it is today/past.
+///   5. No usable dates → provider text (done / live / upcoming).
+///   6. No usable dates AND no DEFINITIVE provider status (live/completed) →
+///      Unknown. This is the Afghanistan/IPL case: an edition the upcoming-
+///      biased backend feeds dropped. A bare "upcoming" string with NO dates is
+///      treated as Unknown (NOT Upcoming), so undated series can never pollute
+///      the Upcoming filter — they surface only under "All". Logged in debug.
+/// [now] is injectable for tests.
+SeriesStatus classifySeriesStatus(
+  String? raw,
+  DateTime? start,
+  DateTime? end, {
+  int liveCount = 0,
+  DateTime? now,
+}) {
+  final today = _localDay(now ?? DateTime.now());
+  final startDay = start == null ? null : _localDay(start);
+  final endDay = end == null ? null : _localDay(end);
+
   final low = (raw ?? '').toLowerCase();
   final saysLive = low.contains('live') ||
       low.contains('ongoing') ||
@@ -257,45 +386,113 @@ SeriesStatus _normalizeStatus(String? raw, DateTime? start, DateTime? end) {
       low.contains('finish') ||
       low.contains('result') ||
       low.contains('concluded');
-  if (saysLive) return SeriesStatus.ongoing;
-  if (saysDone) return SeriesStatus.completed;
 
-  final now = DateTime.now();
-  if (end != null && end.isBefore(now)) return SeriesStatus.completed;
-  if (start != null && start.isAfter(now)) return SeriesStatus.upcoming;
-  if (start != null &&
-      end != null &&
-      !start.isAfter(now) &&
-      !end.isBefore(now)) {
+  // 1. A genuinely live match (real-time signal) always wins.
+  if (liveCount > 0) return SeriesStatus.ongoing;
+
+  // 2-4. Real series dates are authoritative and beat any stale provider text.
+  if (endDay != null && endDay.isBefore(today)) return SeriesStatus.completed;
+  if (startDay != null && startDay.isAfter(today)) return SeriesStatus.upcoming;
+  if (startDay != null &&
+      endDay != null &&
+      !startDay.isAfter(today) &&
+      !endDay.isBefore(today)) {
     return SeriesStatus.ongoing;
   }
-  if (start != null && !start.isAfter(now)) return SeriesStatus.ongoing;
-  return SeriesStatus.upcoming;
+  // Only one real date known but it doesn't put the series in the past/future:
+  // a started-and-not-ended series is ongoing.
+  if (startDay != null && !startDay.isAfter(today)) return SeriesStatus.ongoing;
+  if (endDay != null && !endDay.isBefore(today) && startDay == null) {
+    return SeriesStatus.ongoing;
+  }
+
+  // 5. No usable dates — only a DEFINITIVE provider signal may classify it.
+  //    (A "upcoming"/"scheduled" string is NOT definitive without a real start
+  //    date, so it deliberately falls through to Unknown below.)
+  if (saysDone) return SeriesStatus.completed;
+  if (saysLive) return SeriesStatus.ongoing;
+
+  // 6. No dates and no definitive status → Unknown (All-only; never Upcoming).
+  assert(() {
+    // ignore: avoid_print
+    print('[series] classifySeriesStatus: no dates / no definitive status for '
+        '"$raw" → Unknown (shown only under All).');
+    return true;
+  }());
+  return SeriesStatus.unknown;
 }
 
-SeriesCategory _categoryFor(String name, String? format) {
+/// Resolves a series' Cricbuzz-style category. Priority:
+///   1. Women override — a women's title/format always belongs in the Women tab
+///      (Cricbuzz's Women tab cross-cuts international/league/domestic).
+///   2. Authoritative [backendCategory] from the API (the category feed the
+///      series was listed under) when recognized.
+///   3. Name/format heuristic fallback.
+/// Testable; used by [SeriesView.fromApi].
+SeriesCategory seriesCategoryOf(String name, String? format,
+    {String? backendCategory}) {
   final text = '${format ?? ''} $name'.toLowerCase();
-  if (text.contains('women') || text.contains(' w ') || text.contains('-w ')) {
-    return SeriesCategory.women;
+  final womenTitle = text.contains('women') ||
+      RegExp(r'\bwomen').hasMatch(text) ||
+      text.contains(' w ') ||
+      text.endsWith(' w') ||
+      text.contains('-w ');
+
+  // 1. Women override wins regardless of the backend bucket.
+  if (womenTitle) return SeriesCategory.women;
+
+  // 2. Trust the backend category feed when it gives a clear bucket.
+  final back = (backendCategory ?? '').toLowerCase();
+  if (back.isNotEmpty) {
+    if (back.contains('women')) return SeriesCategory.women;
+    if (back.contains('league') || back.contains('t20 league')) {
+      return SeriesCategory.league;
+    }
+    if (back.contains('domestic')) return SeriesCategory.domestic;
+    if (back.contains('international')) return SeriesCategory.international;
   }
+
+  // 3. Heuristic fallback from the name/format.
   if (text.contains('premier league') ||
       text.contains('ipl') ||
       text.contains('psl') ||
       text.contains('bbl') ||
       text.contains('cpl') ||
+      text.contains('mlc') ||
+      text.contains('major league cricket') ||
       text.contains('the hundred') ||
+      text.contains('super smash') ||
+      text.contains('blast') ||
       text.contains(' t10') ||
       text.contains('league')) {
     return SeriesCategory.league;
   }
   if (text.contains('ranji') ||
       text.contains('county') ||
+      text.contains('sheffield shield') ||
+      text.contains('plunket shield') ||
+      text.contains('vijay hazare') ||
+      text.contains('syed mushtaq') ||
       text.contains('domestic') ||
-      text.contains('shield') ||
-      text.contains('trophy') && !text.contains('tour')) {
+      text.contains('first-class') ||
+      text.contains('first class')) {
     return SeriesCategory.domestic;
   }
+  // Tours, bilateral series, World Cups, Champions Trophy, Asia Cup, etc.
   return SeriesCategory.international;
+}
+
+/// For a bilateral "X tour of Y" title, the HOST nation is Y (the second team
+/// in title order). Returns null for non-tour titles (tournaments / leagues /
+/// World Cups) where a host can't be reliably derived from the name — the card
+/// then hides the location item rather than showing a guessed value.
+String? _seriesHostFromTitle(String title) {
+  if (!RegExp(r'\btour of\b', caseSensitive: false).hasMatch(title)) {
+    return null;
+  }
+  final teams = seriesTeamsFromTitle(title);
+  if (teams.length < 2) return null;
+  return teams[1].name;
 }
 
 List<SeriesTeamRef> _teamsFromApi(List<dynamic> raw) {
@@ -306,14 +503,53 @@ List<SeriesTeamRef> _teamsFromApi(List<dynamic> raw) {
     if (name.isEmpty) continue;
     final shortName = apiString(
         map['shortName'] ?? map['short_name'] ?? map['teamShortName']);
-    final logo = apiString(map['logoUrl'] ?? map['logo_url'] ?? map['logo']);
+    // Resolve the logo through the SAME admin→local→api→initials order the rest
+    // of the app uses (resolveTeamLogoUrl), instead of the raw provider URL — so
+    // an admin-configured logo wins on Series cards too.
+    final resolved = resolveTeamLogoUrl(map);
     teams.add(SeriesTeamRef(
       name: name,
       shortName: shortName.isEmpty ? name : shortName,
-      logoUrl: logo.isEmpty ? null : logo,
+      logoUrl: resolved,
     ));
   }
   return teams;
+}
+
+/// Builds team refs from nations parsed out of the series TITLE (used only when
+/// the provider omits/doesn't fully populate the teams array). Logos still go
+/// through [resolveTeamLogoUrl] so admin logos win and known nations fall back
+/// to their local flag via TeamLogoWidget.
+List<SeriesTeamRef> _teamsFromTitle(String title) {
+  return [
+    for (final t in seriesTeamsFromTitle(title))
+      SeriesTeamRef(
+        name: t.name,
+        shortName: t.code,
+        logoUrl: resolveTeamLogoUrl(<String, dynamic>{
+          'name': t.name,
+          'teamName': t.name,
+          'shortName': t.code,
+        }),
+      ),
+  ];
+}
+
+/// Keeps provider teams first, then fills up to two slots from the title-derived
+/// teams (skipping any whose code already appears), so we never duplicate a side
+/// or overwrite richer provider data.
+List<SeriesTeamRef> _mergeTeams(
+    List<SeriesTeamRef> primary, List<SeriesTeamRef> extra) {
+  final out = [...primary];
+  final seen = primary
+      .map((t) => t.shortName.toUpperCase())
+      .where((s) => s.isNotEmpty)
+      .toSet();
+  for (final t in extra) {
+    if (out.length >= 2) break;
+    if (seen.add(t.shortName.toUpperCase())) out.add(t);
+  }
+  return out;
 }
 
 List<String> _formatsFromText(String raw) {
@@ -460,6 +696,7 @@ class SeriesListCard extends StatelessWidget {
       SeriesStatus.ongoing => (c.success, true),
       SeriesStatus.upcoming => (c.cyan, false),
       SeriesStatus.completed => (c.muted, false),
+      SeriesStatus.unknown => (c.muted, false),
     };
     final phone = context.w <= 430;
     final tight = context.w <= 360;
@@ -469,6 +706,10 @@ class SeriesListCard extends StatelessWidget {
             ? '${series.matchCount} Matches'
             : '');
     final dateLine = series.shortDateRange;
+    // Host/location is optional: shown only when known and not a placeholder,
+    // otherwise the metadata item is hidden (never a wrong/guessed value).
+    final hostLine =
+        (series.host != null && !isPlaceholderText(series.host)) ? series.host!.trim() : '';
     final left = series.teams.isNotEmpty ? series.teams.first : null;
     final right = series.teams.length > 1 ? series.teams[1] : null;
     final logoSize = tight ? 46.0 : (phone ? 52.0 : 56.0);
@@ -540,7 +781,7 @@ class SeriesListCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Row 1 — status badge (left) and date range (right).
+                  // Row 1 — status badge (left) and favourite star (right).
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -551,23 +792,10 @@ class SeriesListCard extends StatelessWidget {
                         dense: true,
                       ),
                       const Spacer(),
-                      if (dateLine.isNotEmpty)
-                        Flexible(
-                          child: Text(
-                            dateLine,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                              color: c.onImageText,
-                              fontWeight: FontWeight.w700,
-                              fontSize: tight ? 10.5 : 11.5,
-                            ),
-                          ),
-                        ),
+                      _FavoriteStar(seriesId: series.id),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   // Centered series title.
                   Text(
                     series.cleanName,
@@ -581,53 +809,60 @@ class SeriesListCard extends StatelessWidget {
                       height: 1.12,
                     ),
                   ),
-                  if (formatLine.isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Text(
-                      formatLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: c.onImageText,
-                        fontWeight: FontWeight.w600,
-                        fontSize: tight ? 11.5 : 12.5,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: 12),
-                  // Teams flanking the glowing VS centerpiece.
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: PremiumTeamColumn(
-                          name: left?.name ?? 'TBD',
-                          short: left?.shortName ?? 'TBD',
-                          logo: left?.logoUrl,
-                          logoSize: logoSize,
-                          codeSize: codeSize,
-                          accent: c.cyan,
-                          showFullName: false,
+                  // Centre block represents the SERIES, not a single fixture:
+                  // two real teams for bilateral series flanking a small, quiet
+                  // VS badge (not the large glowing match-screen VS), or a
+                  // tournament emblem otherwise — never a TBD-vs-TBD placeholder.
+                  if (series.isBilateral)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: PremiumTeamColumn(
+                            name: left!.name,
+                            short: left.shortName,
+                            logo: left.logoUrl,
+                            logoSize: logoSize,
+                            codeSize: codeSize,
+                            accent: c.cyan,
+                            showFullName: false,
+                          ),
                         ),
-                      ),
-                      PremiumVsBadge(
-                        width: tight ? 46 : 52,
-                        height: tight ? 30 : 34,
-                        intensity: .9,
-                      ),
-                      Expanded(
-                        child: PremiumTeamColumn(
-                          name: right?.name ?? 'TBD',
-                          short: right?.shortName ?? 'TBD',
-                          logo: right?.logoUrl,
-                          logoSize: logoSize,
-                          codeSize: codeSize,
-                          accent: c.warning,
-                          showFullName: false,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            'v',
+                            style: TextStyle(
+                              fontSize: tight ? 11 : 12,
+                              color: Colors.white24,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: .5,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        Expanded(
+                          child: PremiumTeamColumn(
+                            name: right!.name,
+                            short: right.shortName,
+                            logo: right.logoUrl,
+                            logoSize: logoSize,
+                            codeSize: codeSize,
+                            accent: c.warning,
+                            showFullName: false,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    _SeriesEmblem(team: left, size: logoSize),
+                  const SizedBox(height: 12),
+                  // Compact metadata row: date range • format/count • host.
+                  // Each item is hidden when its value is unavailable.
+                  _SeriesMetaRow(
+                    date: dateLine,
+                    format: formatLine,
+                    host: hostLine,
                   ),
                   const SizedBox(height: 12),
                   // Full-width "View Series" action.
@@ -638,6 +873,167 @@ class SeriesListCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Favourite star shown top-right of a Series card. Tapping toggles the
+/// filled/outline state locally so the control is interactive and matches the
+/// target design. It deliberately keeps its own lightweight state and does not
+/// touch any other system (scores, logos, nav) — a future persistent
+/// favourites store can be wired in here without changing the card layout.
+class _FavoriteStar extends StatefulWidget {
+  const _FavoriteStar({required this.seriesId});
+
+  final String seriesId;
+
+  @override
+  State<_FavoriteStar> createState() => _FavoriteStarState();
+}
+
+class _FavoriteStarState extends State<_FavoriteStar> {
+  bool _on = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    return GestureDetector(
+      onTap: () => setState(() => _on = !_on),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: Icon(
+          _on ? Icons.star_rounded : Icons.star_border_rounded,
+          size: 24,
+          color: _on ? c.warning : c.onImageText.withValues(alpha: .7),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact 3-item metadata row under the teams: calendar/date range •
+/// cricket-ball/format • location-pin/host. Items with an empty value are
+/// dropped entirely (no wrong/placeholder data), and thin dividers separate
+/// only the items that actually render. Each label is flexible + ellipsised so
+/// the row never overflows on small (360dp) devices.
+class _SeriesMetaRow extends StatelessWidget {
+  const _SeriesMetaRow({
+    required this.date,
+    required this.format,
+    required this.host,
+  });
+
+  final String date;
+  final String format;
+  final String host;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final tight = context.w <= 360;
+    final items = <(IconData, String)>[
+      if (date.isNotEmpty) (Icons.calendar_today_rounded, date),
+      if (format.isNotEmpty) (Icons.sports_cricket, format),
+      if (host.isNotEmpty) (Icons.location_on_rounded, host),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    final children = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      if (i != 0) {
+        children.add(Container(
+          width: 1,
+          height: 14,
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          color: c.onImageText.withValues(alpha: .3),
+        ));
+      }
+      children.add(Flexible(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(items[i].$1, size: tight ? 12 : 13, color: c.cyan),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                items[i].$2,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.onImageText,
+                  fontWeight: FontWeight.w600,
+                  fontSize: tight ? 10.5 : 11.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: children,
+    );
+  }
+}
+
+/// Centerpiece for TOURNAMENT / LEAGUE series (World Cups, MLC, etc.) where two
+/// opposing nations can't be derived. Shows a trophy emblem — and a single
+/// representative team logo when one is available — instead of a misleading
+/// TBD-vs-TBD fixture.
+class _SeriesEmblem extends StatelessWidget {
+  const _SeriesEmblem({required this.team, required this.size});
+
+  final SeriesTeamRef? team;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final crest = Container(
+      width: size + 6,
+      height: size + 6,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: c.warning.withValues(alpha: .14),
+        border: Border.all(color: c.warning.withValues(alpha: .55)),
+        boxShadow: c.isDark
+            ? [
+                BoxShadow(
+                  color: c.warning.withValues(alpha: .3),
+                  blurRadius: 16,
+                  spreadRadius: -3,
+                ),
+              ]
+            : null,
+      ),
+      alignment: Alignment.center,
+      child: Icon(Icons.emoji_events_rounded,
+          color: c.warning, size: (size + 6) * .5),
+    );
+    final t = team;
+    if (t == null) {
+      return Center(child: crest);
+    }
+    // One representative side known: show it alongside the trophy.
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Flexible(
+          child: PremiumTeamColumn(
+            name: t.name,
+            short: t.shortName,
+            logo: t.logoUrl,
+            logoSize: size,
+            codeSize: 15,
+            accent: c.cyan,
+            showFullName: false,
+          ),
+        ),
+        const SizedBox(width: 18),
+        crest,
+      ],
     );
   }
 }

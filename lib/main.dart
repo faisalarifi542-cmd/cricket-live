@@ -186,11 +186,33 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
           );
         });
         NotificationService.instance.syncAllTags();
+        // Apply backend notification preference defaults (stream ON, others
+        // opt-in) — only affects categories the user hasn't explicitly chosen.
+        NotificationSettingsService.instance
+            .applyConfigDefaults(_notificationDefaultsFromConfig(response.data));
         setState(() => _appConfig = config);
         _maybeShowColdStartAppOpen();
       }
     } catch (_) {
       // The app can still render with built-in defaults when config is unavailable.
+    }
+  }
+
+  /// Extracts notifications.preferences.defaults (category key -> bool) from the
+  /// raw /app/config payload. Returns an empty map if absent/malformed.
+  Map<String, bool> _notificationDefaultsFromConfig(dynamic data) {
+    try {
+      final root = data is Map ? data['notifications'] : null;
+      final prefs = root is Map ? root['preferences'] : null;
+      final defaults = prefs is Map ? prefs['defaults'] : null;
+      if (defaults is! Map) return const {};
+      final out = <String, bool>{};
+      defaults.forEach((k, v) {
+        if (k is String && v is bool) out[k] = v;
+      });
+      return out;
+    } catch (_) {
+      return const {};
     }
   }
 
@@ -270,6 +292,17 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
     final matchId = apiString(data['matchId'] ?? data['match_id']);
     final newsId = apiString(data['newsId'] ?? data['news_id']);
     final seriesId = apiString(data['seriesId'] ?? data['series_id']);
+    // Record the notification open (anonymous; fire-and-forget).
+    AnalyticsService.instance.notificationOpen(
+      type.isEmpty ? 'unknown' : type,
+      id: matchId.isNotEmpty
+          ? matchId
+          : newsId.isNotEmpty
+              ? newsId
+              : seriesId.isNotEmpty
+                  ? seriesId
+                  : null,
+    );
     if (type == 'live_stream' && matchId.isNotEmpty) {
       navigator.push(MaterialPageRoute<void>(
           builder: (_) => LivePlayerScreen(matchId: matchId)));

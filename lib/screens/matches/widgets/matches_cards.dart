@@ -119,7 +119,7 @@ class _MatchCardShell extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(11, 7, 11, 7),
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 10),
               child: child,
             ),
           ],
@@ -131,40 +131,59 @@ class _MatchCardShell extends StatelessWidget {
 
 /// Top row shared by all cards: status badge + series name, then date/time.
 class _CardTopRow extends StatelessWidget {
-  const _CardTopRow({required this.match, required this.kind});
+  const _CardTopRow({
+    required this.match,
+    required this.kind,
+    this.badgeLabel,
+    this.pulsing,
+  });
 
   final CricketMatch match;
   final _CardKind kind;
+
+  /// Optional override of the badge word (e.g. STUMPS/LUNCH for a paused live
+  /// match). When null the kind's default (LIVE/UPCOMING/FINISHED) is used.
+  final String? badgeLabel;
+
+  /// Optional override of the live pulsing-dot behaviour.
+  final bool? pulsing;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _StatusBadge(kind: kind),
+        _StatusBadge(kind: kind, labelOverride: badgeLabel, pulsing: pulsing),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             shortSeriesTitle(match.series),
-            maxLines: 1,
+            // Allow the title two lines so important comps aren't cut to an
+            // ugly one-line "Women's T20 WC 20…"; width is still constrained
+            // by Expanded so it can never overflow.
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: c.cyan,
               fontWeight: FontWeight.w800,
               fontSize: 12.5,
               letterSpacing: .1,
+              height: 1.15,
             ),
           ),
         ),
         const SizedBox(width: 7),
-        Text(
-          _dateTimeLabel(match),
-          maxLines: 1,
-          style: TextStyle(
-            color: c.muted,
-            fontWeight: FontWeight.w700,
-            fontSize: 10.5,
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Text(
+            _dateTimeLabel(match),
+            maxLines: 1,
+            style: TextStyle(
+              color: c.muted,
+              fontWeight: FontWeight.w700,
+              fontSize: 10.5,
+            ),
           ),
         ),
       ],
@@ -175,18 +194,29 @@ class _CardTopRow extends StatelessWidget {
 enum _CardKind { live, upcoming, finished }
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.kind});
+  const _StatusBadge({required this.kind, this.labelOverride, this.pulsing});
 
   final _CardKind kind;
+
+  /// When set, overrides the default badge word (e.g. `STUMPS`/`LUNCH`/`TEA`
+  /// for a paused live match) while keeping the kind's color/glow behaviour.
+  final String? labelOverride;
+
+  /// When false, suppresses the pulsing live dot for a paused live match
+  /// (stumps/lunch/tea/…) so the badge does not read "live now" while the note
+  /// says "Day 1 Stumps". Defaults to pulsing for a live kind.
+  final bool? pulsing;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final (label, color, filled) = switch (kind) {
+    final (defaultLabel, color, filled) = switch (kind) {
       _CardKind.live => ('LIVE', c.live, true),
       _CardKind.upcoming => ('UPCOMING', c.cyan, false),
       _CardKind.finished => ('FINISHED', c.success, true),
     };
+    final label = labelOverride ?? defaultLabel;
+    final showDot = (pulsing ?? (kind == _CardKind.live)) && kind == _CardKind.live;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -201,7 +231,7 @@ class _StatusBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (kind == _CardKind.live) ...[
+          if (showDot) ...[
             Container(
               width: 6,
               height: 6,
@@ -253,7 +283,7 @@ class _TeamBlock extends StatelessWidget {
     // Secondary line uses the women-compacted name and is hidden when it just
     // echoes the code, so compact cards aren't cluttered by "New Zealand Women"
     // sitting under "NZ W".
-    final displayName = compactTeamName(name);
+    final displayName = shortenTeamName(compactTeamName(name));
     final showName = !isPlaceholder &&
         displayName.isNotEmpty &&
         displayName.toUpperCase() != upper.toUpperCase();
@@ -316,8 +346,8 @@ class _TeamBlock extends StatelessWidget {
             mode: innings.where((i) => i.hasRuns).length > 1
                 ? ScoreDisplayMode.cardMultiInnings
                 : ScoreDisplayMode.cardLimitedOvers,
-            mainSize: 16,
-            oversSize: 11.5,
+            mainSize: 22,
+            oversSize: 14,
             live: live,
             currentInningsIndex: currentInningsIndex,
             color: live ? (c.isDark ? Colors.white : c.text) : c.text,
@@ -336,7 +366,7 @@ class _TeamBlock extends StatelessWidget {
 class _VsCenterpiece extends StatelessWidget {
   const _VsCenterpiece();
 
-  static const double visualWidth = 124;
+  static const double visualWidth = 100;
   static const double visualHeight = 48;
   static const double badgeWidth = 50;
   static const double badgeHeight = 30;
@@ -443,7 +473,8 @@ class _VenueRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final text = venue.trim().isEmpty ? 'Venue TBC' : venue.trim();
+    final short = shortVenue(venue);
+    final text = short.isEmpty ? 'Venue TBC' : short;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -459,12 +490,17 @@ class _VenueRow extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            maxLines: 1,
+            // Allow up to 2 lines so a long stadium name (e.g. "KSCA Hubli
+            // Cricket Ground") wraps instead of truncating mid-word to "KSCA
+            // Hubli Cricket Gro…" — the venue row shares width with the CTA
+            // button, so one line cuts too aggressively.
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: c.muted,
               fontWeight: FontWeight.w600,
               fontSize: 12,
+              height: 1.2,
             ),
           ),
         ),
@@ -582,7 +618,7 @@ class _DualActionBar extends StatelessWidget {
           ],
           Expanded(
             child: _DualSegment(
-              label: 'View Match',
+              label: 'Match Center',
               asset: _MAsset.iconViewStats,
               icon: Icons.bar_chart_rounded,
               onTap: onViewMatch,
@@ -756,8 +792,12 @@ class _LiveCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final note = match.statusText.isNotEmpty
-        ? shortMatchStatus(match.statusText, match, keepUnits: true)
+    // Single source of truth for the badge + phase note, so a paused live match
+    // (stumps/lunch/tea/…) shows STUMPS/LUNCH/TEA instead of a generic LIVE
+    // while the note says "Day 1 Stumps" — no more contradictory labels.
+    final status = MatchStatusDisplay.of(context, match);
+    final note = status.phaseLabel.isNotEmpty
+        ? shortMatchStatus(status.phaseLabel, match, keepUnits: true)
         : '';
     return _MatchCardShell(
       bg: _MAsset.cardBgLive,
@@ -767,8 +807,13 @@ class _LiveCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _CardTopRow(match: match, kind: _CardKind.live),
-          const SizedBox(height: 4),
+          _CardTopRow(
+            match: match,
+            kind: _CardKind.live,
+            badgeLabel: status.badge,
+            pulsing: status.subPhase == MatchSubPhase.live,
+          ),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -847,7 +892,7 @@ class _UpcomingCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _CardTopRow(match: match, kind: _CardKind.upcoming),
-          const SizedBox(height: 6),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -878,7 +923,7 @@ class _UpcomingCard extends StatelessWidget {
               Expanded(child: _VenueRow(venue: match.venue)),
               const SizedBox(width: 10),
               _ActionButton(
-                label: 'View Match',
+                label: 'Match Center',
                 asset: _MAsset.iconViewStats,
                 icon: Icons.bar_chart_rounded,
                 onTap: onViewMatch,
@@ -934,8 +979,16 @@ class _CountdownState extends State<_Countdown> {
       final m = (diff.inMinutes % 60).toString().padLeft(2, '0');
       final s = (diff.inSeconds % 60).toString().padLeft(2, '0');
       primary = '${h}h : ${m}m : ${s}s';
+    } else if (start != null) {
+      // Start is known but not in the future (e.g. a stale "upcoming" entry for
+      // a match that already began). Show the local start time, NEVER a raw
+      // epoch fallback.
+      primary = _localStartLabel(start);
     } else {
-      primary = widget.fallback.isNotEmpty ? widget.fallback : 'Starting soon';
+      // No parsed start: only show the textual fallback if it isn't a raw
+      // timestamp/epoch value leaking from the feed.
+      final fb = widget.fallback.trim();
+      primary = looksLikeRawTimestamp(fb) || fb.isEmpty ? 'Match yet to begin' : fb;
     }
     return Column(
       children: [
@@ -977,9 +1030,12 @@ class _FinishedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final result = match.resultText.isNotEmpty
-        ? match.resultText
-        : (match.statusText.isNotEmpty ? match.statusText : 'Match finished');
+    final result = formatResultText(
+      match.resultText.isNotEmpty
+          ? match.resultText
+          : (match.statusText.isNotEmpty ? match.statusText : 'Match finished'),
+      match,
+    );
     return _MatchCardShell(
       bg: _MAsset.cardBgFinished,
       remoteKey: 'match_card_finished_bg',
@@ -989,7 +1045,7 @@ class _FinishedCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _CardTopRow(match: match, kind: _CardKind.finished),
-          const SizedBox(height: 6),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -1025,7 +1081,7 @@ class _FinishedCard extends StatelessWidget {
               Expanded(child: _VenueRow(venue: match.venue)),
               const SizedBox(width: 10),
               _ActionButton(
-                label: 'View Match',
+                label: 'Match Center',
                 asset: _MAsset.iconViewStats,
                 icon: Icons.bar_chart_rounded,
                 onTap: onViewMatch,
@@ -1064,13 +1120,13 @@ class _ResultBadge extends StatelessWidget {
         ],
       ),
       child: Text(
-        result.toUpperCase(),
+        result,
         textAlign: TextAlign.center,
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: c.success,
-          fontWeight: FontWeight.w900,
+          fontWeight: FontWeight.w800,
           fontSize: 12,
           height: 1.2,
           letterSpacing: .2,
@@ -1084,11 +1140,29 @@ class _ResultBadge extends StatelessWidget {
 // Date helper
 // ---------------------------------------------------------------------------
 
+const _kMonths = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+/// Local "Jun 22 • 02:30 AM" for a known start [DateTime].
+String _localStartLabel(DateTime dt) {
+  final l = dt.toLocal();
+  var hour = l.hour % 12;
+  if (hour == 0) hour = 12;
+  final ampm = l.hour >= 12 ? 'PM' : 'AM';
+  final mm = l.minute.toString().padLeft(2, '0');
+  return '${_kMonths[l.month - 1]} ${l.day} • '
+      '${hour.toString().padLeft(2, '0')}:$mm $ampm';
+}
+
 /// Formats a match start as "Jun 7 • 03:30 PM" (12-hour), matching the target.
 String _dateTimeLabel(CricketMatch match) {
   final dt = match.startDateTime?.toLocal();
   if (dt == null) {
-    return match.statusText.isNotEmpty ? match.statusText : match.startTime;
+    // Never leak a raw epoch `startTime` into the corner date.
+    if (match.statusText.isNotEmpty) return match.statusText;
+    return looksLikeRawTimestamp(match.startTime) ? '' : match.startTime;
   }
   const months = [
     'Jan',

@@ -163,23 +163,24 @@ class _SeriesMatchCard extends StatelessWidget {
               ),
               SizedBox(
                 width: phone ? 66 : 74,
-                child: Column(
-                  children: [
-                    PremiumTeamColumn(
-                      name: match.teamB,
-                      short: match.teamBShort,
-                      logo: match.teamBLogo,
-                      logoSize: logoSize,
-                      codeSize: phone ? 15 : 16,
-                      accent: c.warning,
-                    ),
-                    const SizedBox(height: 6),
-                    _MatchRightNote(match: match),
-                  ],
+                child: PremiumTeamColumn(
+                  name: match.teamB,
+                  short: match.teamBShort,
+                  logo: match.teamBLogo,
+                  logoSize: logoSize,
+                  codeSize: phone ? 15 : 16,
+                  accent: c.warning,
                 ),
               ),
             ],
           ),
+          // Match note (countdown / result) as a centered full-width row BELOW
+          // both team columns, so the two columns are equal height and the VS
+          // badge + date/venue centre column stays vertically balanced (the old
+          // layout had the note only under the right team, making that column
+          // taller and the left logo sit higher than the right block).
+          const SizedBox(height: 8),
+          _MatchRightNote(match: match),
         ],
       ),
     );

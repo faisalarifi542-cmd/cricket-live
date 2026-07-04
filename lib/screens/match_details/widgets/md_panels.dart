@@ -179,23 +179,68 @@ class _MatchTabErrorCard extends StatelessWidget {
   }
 }
 
-class _RefreshStatusRow extends StatelessWidget {
+/// "Updated X ago" row that actually TICKS — recomputes the relative label
+/// every second while visible so it never freezes at "Updated just now" until
+/// the next rebuild. Also reflects stale/offline states when the caller passes
+/// the flags (plumbed from the repository's [ApiEnvelope.isStale]).
+class _RefreshStatusRow extends StatefulWidget {
   const _RefreshStatusRow({
     required this.lastUpdatedAt,
     required this.onRefresh,
+    this.isStale = false,
+    this.isOffline = false,
   });
 
   final DateTime? lastUpdatedAt;
   final Future<void> Function() onRefresh;
 
+  /// True when the last response was served from stale cache (a refresh is
+  /// retrying). Shows "Stale data, retrying".
+  final bool isStale;
+
+  /// True when there is no network and the data came from offline cache.
+  /// Shows "Offline cache".
+  final bool isOffline;
+
+  @override
+  State<_RefreshStatusRow> createState() => _RefreshStatusRowState();
+}
+
+class _RefreshStatusRowState extends State<_RefreshStatusRow> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Tick every second so the relative label stays accurate while the row is
+    // visible. Stopped on dispose to avoid leaking / rebuilding off-screen.
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String get _label {
+    if (widget.isOffline) return 'Offline cache';
+    if (widget.isStale) return 'Stale data, retrying';
+    final last = widget.lastUpdatedAt;
+    if (last == null) return 'Pull to refresh';
+    final delta = DateTime.now().difference(last);
+    if (delta.inSeconds < 10) return 'Updated just now';
+    if (delta.inSeconds < 60) return 'Updated ${delta.inSeconds}s ago';
+    if (delta.inMinutes < 60) return 'Updated ${delta.inMinutes}m ago';
+    return 'Updated ${(delta.inMinutes / 60).floor()}h '
+        '${delta.inMinutes % 60}m ago';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final label = lastUpdatedAt == null
-        ? 'Pull to refresh'
-        : DateTime.now().difference(lastUpdatedAt!).inSeconds < 10
-            ? 'Updated just now'
-            : 'Updated ${DateTime.now().difference(lastUpdatedAt!).inSeconds}s ago';
-    return MDUpdatedRow(label: label, onRefresh: () => onRefresh());
+    return MDUpdatedRow(label: _label, onRefresh: () => widget.onRefresh());
   }
 }
 
@@ -794,6 +839,65 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
   }
 }
 
+/// Compact legend explaining the Overs ball-chip colours/types: dot, 4, 6, W,
+/// and the extras (Wd/Nb/B/Lb), plus the missing-ball placeholder. Renders small
+/// MDBallChip samples alongside labels so the key matches the real chips.
+class _BallLegend extends StatelessWidget {
+  const _BallLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    const samples = <(String, String)>[
+      // (label, type)
+      ('0', 'dot'),
+      ('4', 'four'),
+      ('6', 'six'),
+      ('W', 'wicket'),
+      ('Wd', 'wide'),
+      ('Nb', 'no_ball'),
+      ('B', 'bye'),
+      ('Lb', 'leg_bye'),
+    ];
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (final s in samples) ...[
+          MDBallChip(label: s.$1, type: s.$2, size: 22),
+          const SizedBox(width: 2),
+          Text(
+            s.$1 == '0'
+                ? 'Dot'
+                : s.$1 == 'W'
+                    ? 'Wkt'
+                    : s.$1,
+            style: TextStyle(
+              color: c.muted,
+              fontWeight: FontWeight.w700,
+              fontSize: 10.5,
+            ),
+          ),
+        ],
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const MDBallChip(label: '', type: '', size: 22),
+            const SizedBox(width: 6),
+            Text('No data',
+                style: TextStyle(
+                  color: c.muted,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 10.5,
+                )),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _OversPanel extends StatelessWidget {
   const _OversPanel({required this.data});
 
@@ -812,6 +916,10 @@ class _OversPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // A compact colour legend so the ball chips are self-explanatory and a
+        // dot ball (•) is never confused with a missing/unknown delivery (–).
+        const _BallLegend(),
+        const SizedBox(height: 12),
         if (overs.isNotEmpty) ...[
           _LastTenOversCard(overs: overs),
           const SizedBox(height: 12),

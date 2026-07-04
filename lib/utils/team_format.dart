@@ -171,6 +171,64 @@ String teamCodeOf(String short, String name) {
   return n.toUpperCase();
 }
 
+/// Best-effort extraction of the two participating teams from a SERIES title
+/// when the provider omits a teams array (common for tour/bilateral series):
+///   "Afghanistan Tour Of India 2026"      -> Afghanistan (AFG), India (IND)
+///   "Australia tour of Bangladesh 2026"   -> Australia (AUS), Bangladesh (BAN)
+///   "Sri Lanka Women U19 tour of India"   -> Sri Lanka W U19, India W U19
+/// Scans the title for KNOWN nation names only (never invents a team), in order
+/// of appearance, and applies a Women / U19 suffix when the title indicates it.
+/// Returns up to two `(name, code)` pairs; empty when no known nation is found.
+List<({String name, String code})> seriesTeamsFromTitle(String title) {
+  final raw = title.trim();
+  if (raw.isEmpty) return const [];
+  final lower = raw.toLowerCase();
+  // Shared variant suffix derived once from the whole title (tour series almost
+  // always share it across both sides, e.g. both Women, both U19).
+  final isWomen = RegExp(r"\bwomen'?s?\b").hasMatch(lower);
+  final isU19 = RegExp(r'\bu-?19\b').hasMatch(lower);
+  String suffixName = '';
+  String suffixCode = '';
+  if (isWomen) {
+    suffixName += ' Women';
+    suffixCode += ' W';
+  }
+  if (isU19) {
+    suffixName += ' U19';
+    suffixCode += ' U19';
+  }
+
+  // Longest names first so "united states of america" wins over "united states".
+  final names = _kNameToCode.keys.toList()
+    ..sort((a, b) => b.length.compareTo(a.length));
+  final hits = <({int at, String base})>[];
+  final usedCodes = <String>{};
+  for (final n in names) {
+    final code = _kNameToCode[n]!;
+    if (usedCodes.contains(code)) continue;
+    final at = lower.indexOf(RegExp(r'\b' + RegExp.escape(n) + r'\b'));
+    if (at >= 0) {
+      hits.add((at: at, base: n));
+      usedCodes.add(code);
+    }
+  }
+  hits.sort((a, b) => a.at.compareTo(b.at));
+  return [
+    for (final h in hits.take(2))
+      () {
+        // Title-case the matched nation for display, then append the suffix.
+        final display = h.base
+            .split(' ')
+            .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+            .join(' ');
+        return (
+          name: '$display$suffixName'.trim(),
+          code: '${_kNameToCode[h.base]}$suffixCode'.trim(),
+        );
+      }(),
+  ];
+}
+
 /// Collapses verbose women's-team names so compact cards stay tidy:
 /// "India Women" -> "India W", "New Zealand Women" -> "New Zealand W".
 String compactTeamName(String name) {
@@ -185,6 +243,43 @@ String compactTeamName(String name) {
     return '${s.substring(0, s.length - cut.length).trim()} W';
   }
   return s;
+}
+
+/// Common long city/region prefixes in franchise names, mapped to their broadcast
+/// short form so a long club name fits without an ugly mid-word ellipsis.
+const Map<String, String> _kCityPrefixShort = {
+  'los angeles': 'LA',
+  'san francisco': 'SF',
+  'new york': 'NY',
+  'washington': 'DC',
+  'seattle': 'Seattle',
+  'texas': 'Texas',
+  'sunrisers': 'Sunrisers',
+};
+
+/// Shortens a long club/franchise name so it fits a compact card line instead of
+/// truncating to "Los Angeles Kni…". Abbreviates a known long city prefix
+/// ("Los Angeles Knight Riders" -> "LA Knight Riders"); if still too long the
+/// trailing words collapse to initials ("LA KR"). Names already short, country
+/// names and unknown long names are returned unchanged (the caller may ellipsize).
+String shortenTeamName(String name, {int maxLen = 16}) {
+  final n = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (n.length <= maxLen) return n;
+  final lower = n.toLowerCase();
+  for (final entry in _kCityPrefixShort.entries) {
+    if (lower.startsWith('${entry.key} ')) {
+      final rest = n.substring(entry.key.length).trim();
+      final candidate = '${entry.value} $rest';
+      if (candidate.length <= maxLen) return candidate;
+      final initials = rest
+          .split(' ')
+          .where((w) => w.isNotEmpty)
+          .map((w) => w[0].toUpperCase())
+          .join();
+      return '${entry.value} $initials';
+    }
+  }
+  return n;
 }
 
 /// Known long competition titles mapped to compact forms so list/hero cards
@@ -261,8 +356,41 @@ String shortMatchStatus(String status, CricketMatch match,
   s = s.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
   // Tidy any stray " )" / " •" leftovers.
   s = s.replaceAll(RegExp(r'\s+\)'), ')').replaceAll(RegExp(r'•\s*$'), '').trim();
+  // Finally, un-cram any compressed team code the feed embedded directly
+  // ("RSAW won" -> "RSA W won").
+  s = _spaceTeamCodes(s, match);
   return s;
 }
+
+/// Replaces a cramped team code the feed embeds in status/result strings
+/// (`RSAW`, `INDA`, `NZW`) with its spaced, professional form (`RSA W`,
+/// `IND A`, `NZ W`). Only codes that map to one of THIS match's teams are
+/// touched, matched whole-word and case-insensitively, so full result
+/// sentences ("South Africa Women won by 6 wickets") pass through unchanged.
+String _spaceTeamCodes(String input, CricketMatch match) {
+  var s = input;
+  for (final team in <(String, String)>[
+    (match.teamAShort, match.teamA),
+    (match.teamBShort, match.teamB),
+  ]) {
+    final pro = teamCodeOf(team.$1, team.$2); // e.g. "RSA W"
+    if (!pro.contains(' ')) continue; // only variant codes can be cramped
+    final cramped = pro.replaceAll(' ', ''); // "RSAW"
+    if (cramped.length < 3 || cramped == pro) continue;
+    s = s.replaceAllMapped(
+      RegExp(r'\b' + RegExp.escape(cramped) + r'\b', caseSensitive: false),
+      (_) => pro,
+    );
+  }
+  return s;
+}
+
+/// Professional result text for a finished match. Keeps the provider's full
+/// result when it gives one ("South Africa Women won by 6 wickets") and only
+/// un-crams an embedded team code ("RSAW won" -> "RSA W won"). NEVER invents a
+/// winning margin the feed didn't supply.
+String formatResultText(String result, CricketMatch match) =>
+    _spaceTeamCodes(result.trim(), match);
 
 /// Match format with broadcast casing: `odi` -> `ODI`, `t20i` -> `T20I`,
 /// `test` -> `Test`. Unknown short tokens are upper-cased; longer labels are
@@ -307,16 +435,23 @@ String fixTossGrammar(String raw) {
 /// long "Stadium, City" string would otherwise be trimmed mid-word. Returns ''
 /// for placeholder venues so callers can hide the row instead of showing junk.
 String shortVenue(String venue) {
-  final v = venue.trim();
-  if (v.isEmpty) return '';
-  final lower = v.toLowerCase();
-  if (lower == 'venue tbd' ||
-      lower == 'venue tbc' ||
-      lower == 'tbd' ||
-      lower == 'tbc' ||
-      lower == 'unknown' ||
-      lower == 'null') {
-    return '';
+  var v = venue.trim();
+  if (v.isEmpty || isPlaceholderText(v)) return '';
+  // Drop a trailing ", City" / ", City, Country" so the distinctive stadium
+  // name leads and never gets ellipsized mid-word
+  // ("Emirates Old Trafford, Manchester" -> "Emirates Old Trafford").
+  final comma = v.indexOf(',');
+  if (comma > 0) v = v.substring(0, comma).trim();
+  // When the remaining name is still long, strip a generic trailing descriptor
+  // so the recognisable part shows ("Rangiri Dambulla International Stadium" ->
+  // "Rangiri Dambulla"). Short names ("Grand Prairie Stadium") are kept intact.
+  if (v.length > 22) {
+    final stripped = v.replaceFirst(
+      RegExp(r'\s+International(\s+Cricket)?\s+(Stadium|Ground)$',
+          caseSensitive: false),
+      '',
+    );
+    if (stripped.trim().length >= 4) v = stripped.trim();
   }
   return v;
 }
@@ -332,6 +467,15 @@ String compactPlayerName(String name, {int maxLen = 14}) {
   final initial = parts.first.isNotEmpty ? parts.first[0].toUpperCase() : '';
   final last = parts.last;
   return '$initial. $last';
+}
+
+/// True when a string is a raw epoch/timestamp-like number (≥ 6 consecutive
+/// digits, e.g. `1782073800000`) that must NEVER be shown to the user as
+/// score/status/time text. Used to guard fallbacks that would otherwise leak a
+/// provider's raw `start_time` millis into a card.
+bool looksLikeRawTimestamp(String? value) {
+  final v = (value ?? '').trim();
+  return v.length >= 6 && RegExp(r'^\d+$').hasMatch(v);
 }
 
 /// True for placeholder/junk metadata strings that should never be shown

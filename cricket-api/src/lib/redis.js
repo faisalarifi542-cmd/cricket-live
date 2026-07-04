@@ -170,21 +170,34 @@ export const KEYS = Object.freeze({
 });
 
 export async function cacheGet(key) {
-  const data = await getRedis().get(key);
-  return data ? JSON.parse(data) : null;
+  try {
+    const data = await getRedis().get(key);
+    return data ? JSON.parse(data) : null;
+  } catch (err) {
+    logger.warn(`Cache get failed for ${key} (treating as miss): ${err.message}`);
+    return null;
+  }
 }
 
 export async function cacheSet(key, value, ttl) {
   const serialized = JSON.stringify(value);
-  if (ttl) {
-    await getRedis().setex(key, ttl, serialized);
-  } else {
-    await getRedis().set(key, serialized);
+  try {
+    if (ttl) {
+      await getRedis().setex(key, ttl, serialized);
+    } else {
+      await getRedis().set(key, serialized);
+    }
+  } catch (err) {
+    logger.warn(`Cache set failed for ${key} (ignored): ${err.message}`);
   }
 }
 
 export async function cacheDel(key) {
-  await getRedis().del(key);
+  try {
+    await getRedis().del(key);
+  } catch (err) {
+    logger.warn(`Cache del failed for ${key} (ignored): ${err.message}`);
+  }
 }
 
 // In-flight fetch dedupe. When a cache key is expired/missing and many requests

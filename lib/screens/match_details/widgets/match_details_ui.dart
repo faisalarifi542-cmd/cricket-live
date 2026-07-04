@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cricpro_flutter/app_theme.dart';
 import 'package:cricpro_flutter/components.dart';
 import 'package:cricpro_flutter/models/cricket_match.dart';
+import 'package:cricpro_flutter/utils/match_status.dart';
 import 'package:cricpro_flutter/utils/team_format.dart';
 import 'package:cricpro_flutter/widgets/remote_or_local_image.dart';
 import 'package:cricpro_flutter/widgets/team_score_view.dart';
@@ -690,14 +691,17 @@ class MatchHeroScoreCard extends StatelessWidget {
     final m = match;
     final isLive = m.isLive;
     final isFinished = m.isFinished;
-    final (statusLabel, statusColor) = isLive
-        ? ('LIVE', c.live)
-        : isFinished
-            ? ('RESULT', c.success)
-            : ('UPCOMING', c.cyan);
-    final rawStatus = m.statusText.isNotEmpty
-        ? m.statusText
-        : (m.resultText.isNotEmpty ? m.resultText : m.series);
+    // Single source of truth for the badge + status note, so the header never
+    // shows a generic LIVE pill alongside "Day 1: Stumps" — a paused live match
+    // reads STUMPS/LUNCH/TEA/INN BREAK and the note carries the same phase.
+    final status = MatchStatusDisplay.of(context, m);
+    final statusLabel = status.badge;
+    final statusColor = status.color;
+    final rawStatus = status.phaseLabel.isNotEmpty
+        ? status.phaseLabel
+        : (m.statusText.isNotEmpty
+            ? m.statusText
+            : (m.resultText.isNotEmpty ? m.resultText : m.series));
     // Shorten long-name equations: "Sri Lanka Women need 150 runs" -> "SL W
     // need 150". Series fallback is left as-is (no team names to compress).
     final statusText = (m.statusText.isNotEmpty || m.resultText.isNotEmpty)
@@ -764,7 +768,10 @@ class MatchHeroScoreCard extends StatelessWidget {
                     MDStatusPill(
                       label: statusLabel,
                       color: statusColor,
-                      live: isLive,
+                      // Suppress the pulsing "live now" dot for a stoppage
+                      // (stumps/lunch/tea/…) so the pill does not read "live
+                      // now" while the note says "Day 1 Stumps".
+                      live: status.subPhase == MatchSubPhase.live,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -1171,6 +1178,7 @@ class MDBallChip extends StatelessWidget {
     this.wicket = false,
     this.boundary = false,
     this.size = 34,
+    this.type = '',
   });
 
   final String label;
@@ -1178,14 +1186,29 @@ class MDBallChip extends StatelessWidget {
   final bool boundary;
   final double size;
 
+  /// Server-normalized ball type when known (`wicket`/`six`/`four`/`dot`/
+  /// `wide`/`no_ball`/`noball`/`bye`/`leg_bye`/`legbye`/`extra`/`run`). When
+  /// empty, the chip falls back to the [label]/[wicket]/[boundary] signals.
+  /// Trusting the server type stops a wide (runs:1) being mislabelled "1" and
+  /// lets extras get their own colour/label.
+  final String type;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     final raw = label.trim();
-    final isDot = raw == '0' || raw == '.' || raw.toLowerCase() == 'dot';
-    final isW = wicket || raw.toLowerCase() == 'w';
-    final isSix = raw == '6';
-    final isFour = raw == '4';
+    final t = type.toLowerCase();
+    final isMissing = raw.isEmpty && t.isEmpty; // no data for this ball at all
+    final isDot = t == 'dot' || raw == '0' || raw == '.' || raw.toLowerCase() == 'dot';
+    final isW = wicket || t == 'wicket' || raw.toLowerCase() == 'w';
+    final isSix = t == 'six' || raw == '6';
+    final isFour = t == 'four' || raw == '4';
+    final isWide = t == 'wide';
+    final isNoBall = t == 'no_ball' || t == 'noball' || t == 'no-ball';
+    final isBye = t == 'bye';
+    final isLegBye = t == 'leg_bye' || t == 'legbye' || t == 'leg-bye';
+    final isExtra = isWide || isNoBall || isBye || isLegBye || t == 'extra';
+
     final Color color;
     if (isW) {
       color = const Color(0xffff2d45);
@@ -1193,18 +1216,40 @@ class MDBallChip extends StatelessWidget {
       color = const Color(0xff38f28b);
     } else if (isFour || boundary) {
       color = c.cyan;
+    } else if (isExtra) {
+      color = c.warning; // extras read amber, distinct from runs/dot
     } else if (isDot) {
       color = c.muted;
+    } else if (isMissing) {
+      color = c.muted.withValues(alpha: .5); // a missing ball is faintest
     } else {
       color = c.cyan; // numbered runs use the cyan accent
     }
-    final display = isDot
-        ? '•'
-        : isW
-            ? 'W'
-            : raw.isEmpty
-                ? '•'
-                : raw;
+
+    // Short chip text. A MISSING ball (empty result, no type) renders as a
+    // dashed `–` so it is never confused with a real DOT ball (`•`).
+    final String display;
+    if (isMissing) {
+      display = '–';
+    } else if (isWide) {
+      display = 'Wd';
+    } else if (isNoBall) {
+      display = 'Nb';
+    } else if (isBye) {
+      display = 'B';
+    } else if (isLegBye) {
+      display = 'Lb';
+    } else if (isExtra) {
+      display = '+';
+    } else if (isDot) {
+      display = '•';
+    } else if (isW) {
+      display = 'W';
+    } else if (raw.isNotEmpty) {
+      display = raw;
+    } else {
+      display = '–';
+    }
     final filled = isW || isSix || isFour;
 
     // Opaque base so the timeline line behind the marker is fully hidden.
@@ -1215,16 +1260,21 @@ class MDBallChip extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: filled ? color : opaqueBase,
+        // Extras use an amber FILLED base so they stand out like W/6/4; a dot
+        // keeps the outlined style; a missing ball is a faint dashed outline.
+        color: (filled || isExtra) ? color : opaqueBase,
         border: Border.all(
-          color: color.withValues(alpha: filled ? 1 : .85),
-          width: 1.6,
+          // A missing ball gets a dashed look via a thinner, fainter border.
+          color: isMissing
+              ? c.muted.withValues(alpha: .35)
+              : color.withValues(alpha: (filled || isExtra) ? 1 : .85),
+          width: isMissing ? 1 : 1.6,
         ),
-        boxShadow: c.isDark
+        boxShadow: c.isDark && (filled || isExtra)
             ? [
                 BoxShadow(
-                  color: color.withValues(alpha: filled ? .5 : .28),
-                  blurRadius: filled ? 9 : 6,
+                  color: color.withValues(alpha: filled ? .5 : .4),
+                  blurRadius: filled ? 9 : 7,
                   spreadRadius: -1,
                 ),
               ]
@@ -1242,9 +1292,11 @@ class MDBallChip extends StatelessWidget {
           : Text(
               display,
               style: TextStyle(
-                color: Colors.white,
+                // Extras are short text on an amber fill → white; a missing
+                // ball's `–` reads muted so it stays de-emphasised.
+                color: isMissing ? c.muted : Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: size * .44,
+                fontSize: size * (isExtra ? .38 : .44),
                 height: 1,
               ),
             ),

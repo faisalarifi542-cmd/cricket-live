@@ -1095,6 +1095,7 @@ class ApiSeries {
     this.country,
     this.matchCount,
     this.teams = const [],
+    this.category,
   });
   final String id;
   final String name;
@@ -1105,6 +1106,10 @@ class ApiSeries {
   final String? country;
   final int? matchCount;
   final List<dynamic> teams;
+
+  /// Authoritative Cricbuzz category when the backend provides it
+  /// (international / domestic / league / women); null otherwise.
+  final String? category;
   factory ApiSeries.fromJson(dynamic value) {
     final json = apiMap(value);
     final id = cleanText(json['seriesId'] ??
@@ -1162,6 +1167,13 @@ class ApiSeries {
       matchCount: apiInt(
           json['matchCount'] ?? json['totalMatches'] ?? json['matchesCount']),
       teams: apiList(json['teams']),
+      category: apiString(
+                  json['category'] ?? json['seriesCategory'] ?? json['type'],
+                  '')
+              .isEmpty
+          ? null
+          : apiString(
+              json['category'] ?? json['seriesCategory'] ?? json['type']),
     );
   }
 }

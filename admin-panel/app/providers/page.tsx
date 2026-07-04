@@ -65,7 +65,11 @@ function ProvidersInner() {
     try {
       const res = await providersApi.test(p.id);
       toast.dismiss(t);
-      toast[res.status === 'healthy' ? 'success' : 'error'](`Provider ${p.name}: ${res.status}`);
+      // 'up' and 'limited' are both usable; only 'down'/'misconfigured' are errors.
+      const good = res.status === 'healthy' || res.status === 'up' || res.status === 'limited';
+      const note = (res as { capability_note?: string }).capability_note;
+      const label = note ? `Provider ${p.name}: ${res.status} — ${note}` : `Provider ${p.name}: ${res.status}`;
+      toast[good ? 'success' : 'error'](label);
       reload();
     } catch (err) {
       toast.dismiss(t);
