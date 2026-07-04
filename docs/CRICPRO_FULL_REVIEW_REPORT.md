@@ -113,10 +113,10 @@ See `docs/PERFORMANCE_OPTIMIZATION_REPORT.md`. Summary: the app already uses `Ca
 
 | Command | Result |
 |---------|--------|
-| `flutter analyze lib/ test/` | 2 issues, both in test files (harmless `unused_element_parameter`), **0 production errors**. Down from 4 at review start. |
-| `flutter test` | **192/192 passed** (verified before fixes; fixes are UI-rendering + a category filter routed through already-tested `UpcomingSort` predicates). |
+| `flutter analyze lib/` | **No issues found** (clean across the whole tree). |
+| `flutter test` | **192/192 passed** (run after all fixes, including the `_StreamAwareLiveCard` StatefulWidget conversion and the `_Countdown` timer self-cancel). |
 | `node --check` on 10 changed backend JS files | **10/10 OK**. |
-| `flutter build apk --release` | Not run this session (machine under heavy load from parallel analyzer runs); no production-code analyzer errors and 192 passing tests indicate a clean compile. Run before release. |
+| `flutter build apk --release` | **Built `app-release.apk` (79.8 MB)**, exit 0. Font tree-shaking cut MaterialIcons-Regular.otf 98.7% (1.6 MB → 22 KB). |
 
 ## 11. Manual QA results
 
