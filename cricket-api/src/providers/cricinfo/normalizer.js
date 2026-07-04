@@ -15,6 +15,8 @@
 
 // --- small utilities -------------------------------------------------------
 
+import { derivePhase } from '../../lib/match-phase.js';
+
 function iso(value) {
   if (!value) return null;
   try {
@@ -130,6 +132,7 @@ export function normalizeEvent(ev, seriesId = '', seriesName = '') {
   const battingComp = comps.find((c) =>
     (c.linescores || []).some((l) => l.isCurrent || l.isBatting),
   );
+  const coarseStatus = mapState(status, statusText);
   return {
     match_id: String(ev?.id || ev?.competitionId || ''),
     series_id: String(seriesId || ''),
@@ -137,7 +140,8 @@ export function normalizeEvent(ev, seriesId = '', seriesName = '') {
     match_format: mapFormat(ev?.class?.eventType || ev?.eventType),
     match_type: ev?.class?.generalClassCard || ev?.class?.name || '',
     match_desc: ev?.title || ev?.name || '',
-    status: mapState(status, statusText),
+    status: coarseStatus,
+    phase: derivePhase(coarseStatus, statusText),
     status_text: statusText,
     short_status: ev?.fullStatus?.type?.shortDetail || ev?.status || '',
     team1: comps[0] ? teamFromCompetitor(comps[0]) : { id: '', name: '', short_name: '' },
@@ -204,6 +208,7 @@ export function normalizeMatchDetail(raw) {
       })),
   });
 
+  const coarseStatus = mapState(status, statusText);
   return {
     match_id: String(header.id || comp.id || ''),
     series_id: String(league.id || ''),
@@ -211,7 +216,8 @@ export function normalizeMatchDetail(raw) {
     match_format: mapFormat(comp?.class?.eventType || comp?.class?.name),
     match_type: comp?.class?.generalClassCard || comp?.class?.name || '',
     match_desc: header.title || header.name || '',
-    status: mapState(status, statusText),
+    status: coarseStatus,
+    phase: derivePhase(coarseStatus, statusText),
     status_text: statusText,
     team1: comps[0] ? teamWithInnings(comps[0]) : { id: '', name: '', short_name: '', innings: [] },
     team2: comps[1] ? teamWithInnings(comps[1]) : { id: '', name: '', short_name: '', innings: [] },

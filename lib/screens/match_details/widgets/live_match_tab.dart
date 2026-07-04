@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -155,8 +157,16 @@ class _MatchStateHelper {
     final status =
         _liveStr(data['status'] ?? data['state'] ?? data['match_status'])
             .toLowerCase();
-    if (_isFinishedStatus(status)) return _MatchState.finished;
-    if (_isLiveStatus(status)) return _MatchState.live;
+    // The backend now sends a fine-grained `phase` (stumps/lunch/tea/drinks/
+    // rain/innings_break/live/upcoming/completed/...). Treat any live-family
+    // phase as live so a stumps/lunch/tea match never falls through to the
+    // "Live data will appear once the match starts" upcoming view.
+    final phase = _liveStr(data['phase'] ?? data['matchPhase']).toLowerCase();
+    if (_isFinishedStatus(status) || phase == 'completed' ||
+        phase == 'abandoned' || phase == 'no_result' || phase == 'cancelled') {
+      return _MatchState.finished;
+    }
+    if (_isLiveStatus(status) || _isLivePhase(phase)) return _MatchState.live;
 
     // Status was inconclusive — fall back to the data we actually have. A
     // populated result string with no live miniscore means the match is over.
@@ -183,12 +193,15 @@ class _MatchStateHelper {
       s.contains('no_result') ||
       s.contains('tie');
 
+  /// Past-tense / terminal result phrases only. Deliberately does NOT match a
+  /// bare "win"/"won" so a live chase status like "India need 50 to win" is
+  /// never classified as finished.
   static bool _looksLikeResult(String text) {
     final t = text.toLowerCase();
-    return t.contains('won') ||
-        t.contains('win') ||
-        t.contains('draw') ||
-        t.contains('tie') ||
+    return t.contains('won by') ||
+        t.contains('won the') ||
+        t.contains('match tied') ||
+        t.contains('match drawn') ||
         t.contains('abandon') ||
         t.contains('no result');
   }
@@ -313,6 +326,12 @@ class _LiveMatchActiveView extends StatelessWidget {
             items: comms.take(6).toList(),
             onViewMore: onViewMoreCommentary,
           ),
+        const SizedBox(height: 14),
+        _LiveFooter(
+          isLive: true,
+          lastUpdatedAt:
+              _parseLastUpdated(lc) ?? _parseLastUpdated(summary),
+        ),
       ],
     );
   }
@@ -441,7 +460,12 @@ class _LiveMatchResultView extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 14),
-        const _LiveFooter(isLive: false, finished: true),
+        _LiveFooter(
+          isLive: false,
+          finished: true,
+          lastUpdatedAt:
+              _parseLastUpdated(liveCenter) ?? _parseLastUpdated(summary),
+        ),
       ],
     );
   }
@@ -1369,6 +1393,9 @@ class _BallBubble extends StatelessWidget {
       case _BallKind.dot:
         fill = c.border;
         break;
+      case _BallKind.extra:
+        fill = c.warning; // amber — extras read distinct from runs/dot
+        break;
     }
     return Container(
       width: size,
@@ -1389,7 +1416,8 @@ class _BallBubble extends StatelessWidget {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w900,
-                fontSize: size * 0.43,
+                // Extras labels are 2 chars (Wd/Nb/Lb) — shrink so they fit.
+                fontSize: size * (outcome.kind == _BallKind.extra ? 0.36 : 0.43),
               ),
             ),
     );
@@ -1668,26 +1696,102 @@ int? _liveRuns(Map<String, dynamic> row) {
   return int.tryParse(v.toString().trim());
 }
 
-class _LiveFooter extends StatelessWidget {
-  const _LiveFooter({required this.isLive, this.finished = false});
+/// Parses the `last_updated` timestamp off a live-center / summary payload so
+/// the Live-tab footer can show a real "Updated X ago" instead of a fake
+/// "Updated just now". Accepts ISO strings and epoch millis. Returns null when
+/// no usable timestamp is present (the footer then shows no freshness claim).
+DateTime? _parseLastUpdated(Map<String, dynamic>? data) {
+  if (data == null) return null;
+  final raw = data['last_updated'] ??
+      data['lastUpdated'] ??
+      data['updated_at'] ??
+      data['updatedAt'];
+  if (raw == null) return null;
+  if (raw is num) {
+    final ms = raw.toInt();
+    // Heuristic: seconds vs millis. Anything > 1e12 is milliseconds.
+    final v = ms > 1000000000000 ? ms : ms * 1000;
+    return DateTime.fromMillisecondsSinceEpoch(v, isUtc: true).toLocal();
+  }
+  final s = raw.toString().trim();
+  if (s.isEmpty) return null;
+  final parsed = DateTime.tryParse(s);
+  if (parsed != null) return parsed.toLocal();
+  final asInt = int.tryParse(s);
+  if (asInt != null) {
+    final ms = asInt > 1000000000000 ? asInt : asInt * 1000;
+    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true).toLocal();
+  }
+  return null;
+}
+
+class _LiveFooter extends StatefulWidget {
+  const _LiveFooter({
+    required this.isLive,
+    this.finished = false,
+    this.lastUpdatedAt,
+  });
 
   final bool isLive;
   final bool finished;
 
+  /// Real timestamp the live data was last fetched. When null and not finished,
+  /// the footer shows no freshness claim rather than a fake "Updated just now".
+  final DateTime? lastUpdatedAt;
+
+  @override
+  State<_LiveFooter> createState() => _LiveFooterState();
+}
+
+class _LiveFooterState extends State<_LiveFooter> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only tick while we have a real timestamp to age (and the match is live,
+    // not finished). Keeps the relative label accurate without rebuilding a
+    // finished match's footer every second.
+    if (!widget.finished && widget.lastUpdatedAt != null) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String get _freshnessLabel {
+    final last = widget.lastUpdatedAt;
+    if (last == null) return ''; // honest: no timestamp → no freshness claim
+    final delta = DateTime.now().difference(last);
+    if (delta.isNegative) return 'Updated just now';
+    if (delta.inSeconds < 10) return 'Updated just now';
+    if (delta.inSeconds < 60) return 'Updated ${delta.inSeconds}s ago';
+    if (delta.inMinutes < 60) return 'Updated ${delta.inMinutes}m ago';
+    return 'Updated ${(delta.inMinutes / 60).floor()}h '
+        '${delta.inMinutes % 60}m ago';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final label = widget.finished ? 'Match completed' : _freshnessLabel;
     return Row(
       children: [
         Icon(
-          finished ? Icons.check_circle_rounded : Icons.schedule_rounded,
-          color: finished ? c.success : c.muted,
+          widget.finished ? Icons.check_circle_rounded : Icons.schedule_rounded,
+          color: widget.finished ? c.success : c.muted,
           size: 14,
         ),
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            finished ? 'Match completed' : 'Updated just now',
+            label,
             style: TextStyle(
               color: c.muted,
               fontWeight: FontWeight.w700,
@@ -1695,7 +1799,7 @@ class _LiveFooter extends StatelessWidget {
             ),
           ),
         ),
-        if (isLive && !finished) ...[
+        if (widget.isLive && !widget.finished) ...[
           Icon(Icons.sensors_rounded, color: c.cyan, size: 16),
           const SizedBox(width: 6),
           Text(
@@ -1710,9 +1814,9 @@ class _LiveFooter extends StatelessWidget {
           Container(
             width: 8,
             height: 8,
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               shape: BoxShape.circle,
-              color: c.success,
+              color: Colors.green,
             ),
           ),
         ],
@@ -1993,7 +2097,7 @@ class _LiveEmptyState extends StatelessWidget {
 // Outcome model + helpers
 // ---------------------------------------------------------------------------
 
-enum _BallKind { wicket, boundary, runs, dot }
+enum _BallKind { wicket, boundary, runs, dot, extra }
 
 class _BallOutcome {
   const _BallOutcome(this.kind, this.label);
@@ -2002,7 +2106,37 @@ class _BallOutcome {
   final String label;
 }
 
+/// Maps a server extra type (wide/no_ball/bye/leg_bye/...) to the short label
+/// the Overs + Commentary tabs use (Wd/Nb/B/Lb), or null when [type] is not an
+/// extra. Keeps the Live-tab recent-over bubbles consistent with the other tabs
+/// so a wide with runs:1 reads "Wd" in amber, not a cyan "1".
+_BallOutcome? _extraOutcome(String type) {
+  switch (type) {
+    case 'wide':
+      return const _BallOutcome(_BallKind.extra, 'Wd');
+    case 'no_ball':
+    case 'noball':
+    case 'no-ball':
+      return const _BallOutcome(_BallKind.extra, 'Nb');
+    case 'bye':
+      return const _BallOutcome(_BallKind.extra, 'B');
+    case 'leg_bye':
+    case 'legbye':
+    case 'leg-bye':
+      return const _BallOutcome(_BallKind.extra, 'Lb');
+    case 'extra':
+      return const _BallOutcome(_BallKind.extra, '+');
+    default:
+      return null;
+  }
+}
+
 _BallOutcome _ballOutcome(Map<String, dynamic> row) {
+  // Server-normalized extra type takes precedence so a wide (runs:1) is never
+  // mis-read as a 1-run delivery. The normalized full-comm row carries `event`.
+  final type = _liveStr(row['event'] ?? row['type']).toLowerCase();
+  final extra = _extraOutcome(type);
+  if (extra != null) return extra;
   if (_truthyLive(row['is_wicket'])) {
     return const _BallOutcome(_BallKind.wicket, 'W');
   }
@@ -2023,6 +2157,8 @@ _BallOutcome _ballOutcome(Map<String, dynamic> row) {
 /// (`{ over, value, type }`).
 _BallOutcome _ballOutcomeFromLiveCenter(Map<String, dynamic> row) {
   final type = _liveStr(row['type']).toLowerCase();
+  final extra = _extraOutcome(type);
+  if (extra != null) return extra;
   final value = _liveStr(row['value']);
   switch (type) {
     case 'wicket':
@@ -2429,7 +2565,35 @@ bool _isLiveStatus(String status) {
   return s == 'live' ||
       s == 'inprogress' ||
       s == 'in_progress' ||
-      s == 'progress';
+      s == 'progress' ||
+      // Live stoppages are still live (the match is paused, not over). Mirrors
+      // CricketMatch.isLive so the Live tab never drops a stumps/lunch/tea/
+      // innings-break/rain match into the "starts soon" upcoming view.
+      s == 'stumps' ||
+      s == 'lunch' ||
+      s == 'tea' ||
+      s == 'drinks' ||
+      s == 'rain' ||
+      s == 'rain_delay' ||
+      s == 'innings_break' ||
+      s == 'inningsbreak';
+}
+
+/// Backend `phase` live-family values (stumps/lunch/tea/drinks/rain/innings_break
+/// are live matches paused mid-play). Mirrors CricketMatch.isLive.
+bool _isLivePhase(String phase) {
+  switch (phase) {
+    case 'live':
+    case 'stumps':
+    case 'lunch':
+    case 'tea':
+    case 'drinks':
+    case 'rain':
+    case 'innings_break':
+      return true;
+    default:
+      return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

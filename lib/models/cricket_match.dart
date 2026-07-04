@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cricpro_flutter/api_models.dart';
 
@@ -288,6 +287,28 @@ class CricketMatch {
   static CricketMatch? knownSummary(String matchId) =>
       matchId.isEmpty ? null : _summaryRegistry[matchId];
 
+  /// Cap the instant-open registries so they can't grow unbounded across a
+  /// long session (one entry per match id ever parsed, never evicted before).
+  /// 200 covers a full day's schedule with headroom; oldest entries (by
+  /// insertion order) are dropped first.
+  static const int _registryCap = 200;
+
+  static void _rememberPhase(String id, MatchPhase phase) {
+    if (id.isEmpty) return;
+    _phaseRegistry[id] = phase;
+    if (_phaseRegistry.length > _registryCap) {
+      _phaseRegistry.remove(_phaseRegistry.keys.first);
+    }
+  }
+
+  static void _rememberSummary(String id, CricketMatch match) {
+    if (id.isEmpty || !match._hasRealTeams) return;
+    _summaryRegistry[id] = match;
+    if (_summaryRegistry.length > _registryCap) {
+      _summaryRegistry.remove(_summaryRegistry.keys.first);
+    }
+  }
+
   bool get _hasRealTeams =>
       (teamA.isNotEmpty && teamA != 'TBD') ||
       (teamB.isNotEmpty && teamB != 'TBD');
@@ -443,14 +464,14 @@ class CricketMatch {
     );
     // Keep the instant-open registries warm across cold starts.
     if (id.isNotEmpty) {
-      _phaseRegistry[id] = isLive
-          ? MatchPhase.live
-          : isFinished
-              ? MatchPhase.finished
-              : MatchPhase.upcoming;
-      if (match._hasRealTeams) {
-        _summaryRegistry[id] = match;
-      }
+      _rememberPhase(
+          id,
+          isLive
+              ? MatchPhase.live
+              : isFinished
+                  ? MatchPhase.finished
+                  : MatchPhase.upcoming);
+      _rememberSummary(id, match);
     }
     return match;
   }
@@ -617,21 +638,6 @@ class CricketMatch {
     final result = _str(
         json, const ['result', 'resultText', 'short_status', 'shortStatus'],
         fallback: '');
-    // Diagnostic: a live match that parsed to an EMPTY score means the JSON
-    // shape for this endpoint isn't covered by `_scoreMap`/`_team`. Dump the
-    // top-level keys + any score-shaped values (NO urls/keys/headers) so the
-    // real field names are visible in a device log, then we extend the parser.
-    if (kDebugMode && isLive && t1Score.isEmpty && t2Score.isEmpty) {
-      final id = _str(json, const ['match_id', 'matchId', 'id'], fallback: '');
-      final scoreKeys = json.keys
-          .where((k) => k.toLowerCase().contains('score') ||
-              k.toLowerCase().contains('inn'))
-          .toList();
-      debugPrint('CricProHomeScoreMap: LIVE match $id parsed EMPTY score. '
-          'topKeys=${json.keys.toList()} scoreKeys=$scoreKeys '
-          'score=${json['score']} team1=${json['team1']} '
-          'team2=${json['team2']}');
-    }
     // Which team is batting now + the global current-innings ordinal. These are
     // the reliable "who is batting" signals the feeds carry (home + live both
     // emit `curr_bat_team_id`; live also emits `current_innings`). They drive
@@ -657,25 +663,13 @@ class CricketMatch {
     // Remember the coarse phase so Match Details can pick the right initial tab
     // before its detail summary loads (no Info-tab flash on live/finished opens).
     if (id.isNotEmpty) {
-      _phaseRegistry[id] = isLive
-          ? MatchPhase.live
-          : isFinished
-              ? MatchPhase.finished
-              : MatchPhase.upcoming;
-    }
-    // TEMP DIAGNOSTIC (innings order / current-star investigation): dump the
-    // PARSED, ordered innings + the batting signals for any live match so the
-    // real per-endpoint fields for NZ/ENG (and every match) are visible in a
-    // device log. Remove once the order/star reports are confirmed in the wild.
-    if (kDebugMode && isLive) {
-      String dump(List<InningsScore> inns) => inns
-          .map((i) =>
-              '${i.scoreText}@${i.oversText}ov#${i.inningsNumber ?? '-'}')
-          .join(', ');
-      debugPrint('CricProInnings[$id] '
-          'A=${t1.short}(id=${t1.id}) [${dump(t1InningsD)}] '
-          'B=${t2.short}(id=${t2.id}) [${dump(t2InningsD)}] '
-          'battingTeamId=$battingTeamId currentInningsId=$currentInningsId');
+      _rememberPhase(
+          id,
+          isLive
+              ? MatchPhase.live
+              : isFinished
+                  ? MatchPhase.finished
+                  : MatchPhase.upcoming);
     }
     final match = CricketMatch(
       id: id,
@@ -724,9 +718,7 @@ class CricketMatch {
     // Cache the last-known good summary so Match Details can render real teams
     // immediately and never regress to "TBD vs TBD" on a thin detail payload.
     // Only store when teams are real, so a placeholder can't clobber good data.
-    if (id.isNotEmpty && match._hasRealTeams) {
-      _summaryRegistry[id] = match;
-    }
+    _rememberSummary(id, match);
     return match;
   }
 

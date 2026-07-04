@@ -4,6 +4,7 @@
  */
 
 import { getCricbuzzImageUrl, getTeamLogoUrl, getMatchImageUrl } from '../../lib/image-helper.js';
+import { derivePhase } from '../../lib/match-phase.js';
 
 /**
  * Normalize the /api/home response into categorized match lists.
@@ -31,6 +32,8 @@ export function normalizeHomeMatchList(raw, filterType = 'live') {
 }
 
 function normalizeHomeMatchSummary(info, score) {
+  const status = normalizeHomeState(info.state);
+  const statusText = info.status || info.stateTitle || '';
   return {
     match_id: String(info.matchId || ''),
     series_id: String(info.seriesId || ''),
@@ -38,8 +41,9 @@ function normalizeHomeMatchSummary(info, score) {
     match_format: normalizeFormat(info.matchFormat),
     match_type: info.matchType || '',
     match_desc: info.matchDesc || '',
-    status: normalizeHomeState(info.state),
-    status_text: info.status || info.stateTitle || '',
+    status,
+    phase: derivePhase(status, statusText),
+    status_text: statusText,
     short_status: info.shortStatus || '',
     team1: normalizeTeamShort(info.team1),
     team2: normalizeTeamShort(info.team2),
@@ -132,6 +136,8 @@ export function normalizeMatchSummary(m, seriesData = {}) {
   const originalSeriesId = String(m.seriesId || seriesInfo.seriesId || '');
   const originalSeriesName = m.seriesName || seriesInfo.seriesName || '';
 
+  const status = normalizeStatus(m.state || m.status);
+  const statusText = m.status || m.stateTitle || '';
   return {
     match_id: String(m.matchId),
     series_id: originalSeriesId,
@@ -141,8 +147,9 @@ export function normalizeMatchSummary(m, seriesData = {}) {
     match_format: normalizeFormat(m.matchFormat),
     match_type: m.matchType || '',
     match_desc: m.matchDesc || '',
-    status: normalizeStatus(m.state || m.status),
-    status_text: m.status || m.stateTitle || '',
+    status,
+    phase: derivePhase(status, statusText),
+    status_text: statusText,
     short_status: m.shortStatus || '',
     team1: normalizeTeamShort(m.team1),
     team2: normalizeTeamShort(m.team2),
@@ -269,6 +276,10 @@ export function normalizeMatchDetail(raw) {
     match_type: header.matchType || '',
     match_number: header.matchNumber || '',
     status: derivedStatus,
+    phase: derivePhase(
+      derivedStatus,
+      score.customStatus || mini.status || header.status || header.stateTitle || '',
+    ),
     status_text: score.customStatus || mini.status || header.status || header.stateTitle || '',
     team1: normalizeTeamFull(team1Raw, team1ScoreData.inngs.length > 0 ? team1ScoreData : null),
     team2: normalizeTeamFull(team2Raw, team2ScoreData.inngs.length > 0 ? team2ScoreData : null),

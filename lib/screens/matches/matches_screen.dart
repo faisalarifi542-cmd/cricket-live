@@ -344,7 +344,9 @@ class _MatchesScreenState extends State<MatchesScreen>
     return [
       match.id,
       match.status,
+      match.phase,
       match.statusText,
+      match.resultText,
       match.teamAScoreText,
       match.teamBScoreText,
     ].join('|');

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { BaseProvider } from '../base-provider.js';
 import config from '../../config/index.js';
 import logger from '../../lib/logger.js';
+import { derivePhase } from '../../lib/match-phase.js';
 
 const client = axios.create({
   baseURL: config.providers.cricketdata.baseUrl,
@@ -187,30 +188,38 @@ export class CricketDataProvider extends BaseProvider {
   // --- Internal normalizers ---
 
   #normalizeMatchList(matches, filter) {
-    return matches.map((m) => ({
-      match_id: String(m.id || ''),
-      series_id: String(m.series_id || ''),
-      series_name: m.series || '',
-      match_format: (m.matchType || '').toLowerCase(),
-      status: this.#mapStatus(m.status, m.matchStarted, m.matchEnded),
-      status_text: m.status || '',
-      team1: { id: String(m.teamInfo?.[0]?.id || ''), name: m.teamInfo?.[0]?.name || m.teams?.[0] || '', short_name: m.teamInfo?.[0]?.shortname || '' },
-      team2: { id: String(m.teamInfo?.[1]?.id || ''), name: m.teamInfo?.[1]?.name || m.teams?.[1] || '', short_name: m.teamInfo?.[1]?.shortname || '' },
-      venue: { name: m.venue || '', city: '', country: '' },
-      start_time: m.dateTimeGMT || m.date || null,
-      score: this.#extractScore(m.score || []),
-      last_updated: new Date().toISOString(),
-    }));
+    return matches.map((m) => {
+      const status = this.#mapStatus(m.status, m.matchStarted, m.matchEnded);
+      const statusText = m.status || '';
+      return {
+        match_id: String(m.id || ''),
+        series_id: String(m.series_id || ''),
+        series_name: m.series || '',
+        match_format: (m.matchType || '').toLowerCase(),
+        status,
+        phase: derivePhase(status, statusText),
+        status_text: statusText,
+        team1: { id: String(m.teamInfo?.[0]?.id || ''), name: m.teamInfo?.[0]?.name || m.teams?.[0] || '', short_name: m.teamInfo?.[0]?.shortname || '' },
+        team2: { id: String(m.teamInfo?.[1]?.id || ''), name: m.teamInfo?.[1]?.name || m.teams?.[1] || '', short_name: m.teamInfo?.[1]?.shortname || '' },
+        venue: { name: m.venue || '', city: '', country: '' },
+        start_time: m.dateTimeGMT || m.date || null,
+        score: this.#extractScore(m.score || []),
+        last_updated: new Date().toISOString(),
+      };
+    });
   }
 
   #normalizeMatchDetail(m) {
+    const status = this.#mapStatus(m.status, m.matchStarted, m.matchEnded);
+    const statusText = m.status || '';
     return {
       match_id: String(m.id || ''),
       series_id: String(m.series_id || ''),
       series_name: m.series || '',
       match_format: (m.matchType || '').toLowerCase(),
-      status: this.#mapStatus(m.status, m.matchStarted, m.matchEnded),
-      status_text: m.status || '',
+      status,
+      phase: derivePhase(status, statusText),
+      status_text: statusText,
       team1: { id: String(m.teamInfo?.[0]?.id || ''), name: m.teamInfo?.[0]?.name || '', short_name: m.teamInfo?.[0]?.shortname || '', innings: [] },
       team2: { id: String(m.teamInfo?.[1]?.id || ''), name: m.teamInfo?.[1]?.name || '', short_name: m.teamInfo?.[1]?.shortname || '', innings: [] },
       venue: { name: m.venue || '', city: '', country: '' },
