@@ -729,7 +729,7 @@ class _DualSegment extends StatelessWidget {
 /// Resolves (async) whether a Watch Live button should be shown for a live
 /// match, then renders the live card. Preserves the original stream-aware
 /// behaviour from the previous implementation.
-class _StreamAwareLiveCard extends StatelessWidget {
+class _StreamAwareLiveCard extends StatefulWidget {
   const _StreamAwareLiveCard({
     required this.match,
     required this.matchId,
@@ -743,20 +743,53 @@ class _StreamAwareLiveCard extends StatelessWidget {
   final ValueChanged<String> onWatchLive;
 
   @override
+  State<_StreamAwareLiveCard> createState() => _StreamAwareLiveCardState();
+}
+
+class _StreamAwareLiveCardState extends State<_StreamAwareLiveCard> {
+  // One repository per card, created once rather than per build, so the
+  // inflight-dedup and any result caching survive the 10s poll rebuilds.
+  final CricketRepository _repository = CricketRepository();
+  Future<bool>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveStreams();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StreamAwareLiveCard old) {
+    super.didUpdateWidget(old);
+    // Re-resolve only when the match identity changes. A score-only poll update
+    // for the same match must not re-fire the /match/:id/streams request.
+    if (old.match.id != widget.match.id) {
+      _resolveStreams();
+    }
+  }
+
+  void _resolveStreams() {
+    if (widget.matchId.isEmpty) {
+      _future = null;
+      return;
+    }
+    _future = widget.match.hasStreamInfo
+        ? _repository.shouldShowWatchLiveForMatch(widget.match)
+        : _repository.hasPlayableStreams(widget.matchId);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (matchId.isEmpty) {
+    if (widget.matchId.isEmpty) {
       return _LiveCard(
-        match: match,
+        match: widget.match,
         watchState: _WatchState.none,
-        onViewMatch: onViewMatch,
+        onViewMatch: widget.onViewMatch,
         onWatchLive: () {},
       );
     }
-    final future = match.hasStreamInfo
-        ? CricketRepository().shouldShowWatchLiveForMatch(match)
-        : CricketRepository().hasPlayableStreams(matchId);
     return FutureBuilder<bool>(
-      future: future,
+      future: _future,
       builder: (context, snapshot) {
         final state = snapshot.connectionState == ConnectionState.waiting
             ? _WatchState.pending
@@ -764,10 +797,10 @@ class _StreamAwareLiveCard extends StatelessWidget {
                 ? _WatchState.available
                 : _WatchState.none);
         return _LiveCard(
-          match: match,
+          match: widget.match,
           watchState: state,
-          onViewMatch: onViewMatch,
-          onWatchLive: () => onWatchLive(matchId),
+          onViewMatch: widget.onViewMatch,
+          onWatchLive: () => widget.onWatchLive(widget.matchId),
         );
       },
     );
@@ -955,10 +988,25 @@ class _CountdownState extends State<_Countdown> {
   @override
   void initState() {
     super.initState();
-    if (widget.start != null) {
-      _timer = Timer.periodic(
-          const Duration(seconds: 1), (_) => mounted ? setState(() {}) : null);
-    }
+    _startTicking();
+  }
+
+  void _startTicking() {
+    final start = widget.start?.toLocal();
+    // No start time → static label, no timer. Start already in the past
+    // (e.g. a stale upcoming entry for a match that has begun) → the label is
+    // the local start time and never changes, so no timer either.
+    if (start == null || !start.isAfter(DateTime.now())) return;
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      // Once the countdown reaches zero, stop ticking — the widget then shows
+      // a static local-start label and never needs to rebuild again.
+      if (!start.isAfter(DateTime.now())) {
+        _timer?.cancel();
+        _timer = null;
+      }
+      setState(() {});
+    });
   }
 
   @override
