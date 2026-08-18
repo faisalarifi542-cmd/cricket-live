@@ -1,13 +1,93 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 
 const env = (key, fallback) => process.env[key] ?? fallback;
 const int = (key, fallback) => parseInt(env(key, fallback), 10);
 const bool = (key, fallback) => env(key, String(fallback)) === 'true';
 
+// SEC-2: JWT_SECRET must never fall back to a value that is committed to this
+// repository. A hardcoded default is a full admin-authentication bypass: the
+// signing key is public, so anyone can forge a `typ: 'admin_access'` token and
+// clear adminAuth (src/admin/auth.js:127) with every RBAC permission.
+//
+// Rules:
+//   production  — a missing / known-placeholder / too-short secret is FATAL.
+//                 We refuse to boot rather than serve requests that accept
+//                 forged tokens (fail closed).
+//   development — an explicitly set secret is honoured (weak ones only warn, so
+//                 local DX is unchanged). If none is set we generate a random
+//                 per-process secret: tokens then stop surviving a restart, but
+//                 no published constant is ever a valid signing key.
+const MIN_JWT_SECRET_LENGTH = 32;
+// Values that have shipped in this repo or its docs, so they must be treated as
+// publicly known. Keep in sync with .env.example.
+const KNOWN_PLACEHOLDER_SECRETS = new Set([
+  'dev-secret-change-in-production',
+  'change-this-to-a-long-random-secret',
+  'changeme',
+  'secret',
+]);
+// Length alone does not make a secret strong. These patterns catch long-but-
+// worthless values, including the real one this repo's own .env shipped with:
+// `change-this-to-a-very-long-random-string-in-production-$(date +%s)` — 66
+// chars, so it passes the length gate, but dotenv does NOT perform command
+// substitution, so `$(date +%s)` stayed literal and the value is fully guessable.
+const PLACEHOLDER_SECRET_PATTERNS = [
+  { re: /change[-_ ]?(this|me)/i, why: 'still contains a "change-this/change-me" placeholder marker' },
+  { re: /\$\(|\$\{|%[A-Z_]+%/, why: 'contains an UNEXPANDED shell/template substitution (e.g. $(date +%s)) — dotenv does not evaluate these, so the literal text is the secret' },
+  { re: /^(your|example|sample|dummy|test|placeholder)[-_]/i, why: 'looks like an example value' },
+];
+
+export function resolveJwtSecret(isProd) {
+  const raw = process.env.JWT_SECRET;
+  const secret = typeof raw === 'string' ? raw.trim() : '';
+  const patternHit = PLACEHOLDER_SECRET_PATTERNS.find((p) => p.re.test(secret));
+  const problem = !secret
+    ? 'is not set'
+    : KNOWN_PLACEHOLDER_SECRETS.has(secret.toLowerCase())
+      ? 'is a publicly-known placeholder value'
+      : patternHit
+        ? patternHit.why
+        : secret.length < MIN_JWT_SECRET_LENGTH
+          ? `is shorter than the ${MIN_JWT_SECRET_LENGTH}-character minimum`
+          : null;
+
+  if (!problem) return secret;
+
+  if (isProd) {
+    throw new Error(
+      `FATAL: JWT_SECRET ${problem}. Refusing to start in production — admin ` +
+        'tokens would be forgeable. Generate one with:\n' +
+        "  node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"\n" +
+        'then set JWT_SECRET in the environment (see cricket-api/.env.example).',
+    );
+  }
+
+  if (!secret) {
+    // Dev with nothing configured: ephemeral key, never a published constant.
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[config] JWT_SECRET is not set — generated a random secret for this ' +
+        'process. Admin sessions will not survive a restart. Set JWT_SECRET in ' +
+        'cricket-api/.env to make them persist.',
+    );
+    return crypto.randomBytes(48).toString('base64url');
+  }
+
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[config] JWT_SECRET ${problem}. This is tolerated in development but is a ` +
+      'fatal error when NODE_ENV=production.',
+  );
+  return secret;
+}
+
+const isProdEnv = env('NODE_ENV', 'development') === 'production';
+
 const config = Object.freeze({
   env: env('NODE_ENV', 'development'),
   isDev: env('NODE_ENV', 'development') === 'development',
-  isProd: env('NODE_ENV', 'development') === 'production',
+  isProd: isProdEnv,
 
   server: {
     port: int('PORT', 5000),
@@ -32,7 +112,7 @@ const config = Object.freeze({
   },
 
   auth: {
-    jwtSecret: env('JWT_SECRET', 'dev-secret-change-in-production'),
+    jwtSecret: resolveJwtSecret(isProdEnv),
     jwtExpiresIn: env('JWT_EXPIRES_IN', '7d'),
     apiKeyHeader: env('API_KEY_HEADER', 'x-api-key'),
   },
