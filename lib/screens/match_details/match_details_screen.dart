@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +11,7 @@ import 'package:cricpro_flutter/models/api_response.dart';
 import 'package:cricpro_flutter/models/cricket_match.dart';
 import 'package:cricpro_flutter/repositories/cricket_repository.dart';
 import 'package:cricpro_flutter/services/commentary_cache.dart';
+import 'package:cricpro_flutter/utils/json_diff.dart';
 import 'package:cricpro_flutter/utils/team_format.dart';
 import 'package:cricpro_flutter/widgets/minimized_score_bar.dart';
 import 'package:cricpro_flutter/services/floating_score_overlay_service.dart';
@@ -646,7 +646,12 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
 
   bool _jsonChanged(Map<String, dynamic>? oldData, Map<String, dynamic> next) {
     if (oldData == null) return true;
-    return jsonEncode(oldData) != jsonEncode(next);
+    // PERF: was `jsonEncode(oldData) != jsonEncode(next)`. That serialised both
+    // payloads in full — including the accumulated commentary list — on every
+    // call, and this runs twice per 5s poll (:579, :581) = 4 encodes / 5s on the
+    // main isolate. jsonDeepEquals walks the structures and bails on the first
+    // difference with no allocation. Same verdict, minus the string building.
+    return !jsonDeepEquals(oldData, next);
   }
 
   bool _isLiveMatchData(Map<String, dynamic>? data) {
