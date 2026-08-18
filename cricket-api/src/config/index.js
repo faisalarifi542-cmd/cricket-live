@@ -5,6 +5,31 @@ const env = (key, fallback) => process.env[key] ?? fallback;
 const int = (key, fallback) => parseInt(env(key, fallback), 10);
 const bool = (key, fallback) => env(key, String(fallback)) === 'true';
 
+/**
+ * Resolve the Fastify `trustProxy` option (RL-1).
+ *
+ * Unset -> `true`, preserving today's behaviour for the documented
+ * CloudPanel/nginx deployment. Explicit `false`/`0`/`no` disables it. Anything
+ * else is passed through verbatim so operators can supply a hop count ("1") or
+ * a CIDR/IP allowlist ("10.0.0.0/8,192.168.0.1"), which is what you actually
+ * want when the app is directly internet-facing.
+ */
+export function trustProxySetting(raw = process.env.TRUST_PROXY) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return true;
+  const value = String(raw).trim();
+  const lowered = value.toLowerCase();
+  if (['false', '0', 'no', 'off'].includes(lowered)) return false;
+  if (['true', '1', 'yes', 'on'].includes(lowered)) {
+    // "1" is ambiguous: Fastify reads a number as a hop count. Honour the
+    // boolean reading for the words, and the hop count for the digit.
+    return lowered === '1' ? 1 : true;
+  }
+  // Numeric hop count.
+  if (/^\d+$/.test(value)) return Number(value);
+  // CIDR / comma-separated allowlist — hand straight to Fastify.
+  return value;
+}
+
 // SEC-2: JWT_SECRET must never fall back to a value that is committed to this
 // repository. A hardcoded default is a full admin-authentication bypass: the
 // signing key is public, so anyone can forge a `typ: 'admin_access'` token and
@@ -119,6 +144,16 @@ const config = Object.freeze({
     max: int('RATE_LIMIT_MAX', 100),
     timeWindow: int('RATE_LIMIT_WINDOW_MS', 60000),
   },
+
+  // RL-1: `trustProxy` was hardcoded `true`, so `req.ip` came from a
+  // client-supplied X-Forwarded-For on any deployment not fronted by a proxy
+  // that overwrites it — which lets a caller forge the IP used for rate-limit
+  // buckets, blocklist checks and audit logs. Default stays `true` because the
+  // documented deployment IS behind CloudPanel/nginx (and flipping it would
+  // silently make every client look like 127.0.0.1), but it is now tunable:
+  // set TRUST_PROXY to `false`, or to the proxy hop count / CIDR list that
+  // Fastify accepts, e.g. TRUST_PROXY=1 or TRUST_PROXY=10.0.0.0/8.
+  trustProxy: trustProxySetting(),
 
   providers: {
     cricbuzz: {

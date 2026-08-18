@@ -13,6 +13,7 @@ import logger from './lib/logger.js';
 import { shutdownRedis } from './lib/redis.js';
 import { shutdownDb } from './lib/db.js';
 import { httpRequestDuration, httpRequestTotal } from './lib/metrics.js';
+import { rateLimitKey } from './lib/rate-limit-key.js';
 import { registerWebSocket, shutdownGateway } from './websocket/gateway.js';
 import { startPhase1bWarmers, stopPhase1bWarmers } from './lib/phase1b-warmers.js';
 import providerManager from './providers/provider-manager.js';
@@ -23,6 +24,7 @@ import {
   apiSecurityMiddleware,
   apiSecurityResponseLog,
   corsOriginDelegate,
+  resolveCorsCredentials,
 } from './lib/api-security.js';
 import {
   sqlInjectionProtection,
@@ -49,7 +51,7 @@ import analyticsRoutes from './routes/analytics.js';
 async function buildServer() {
   const fastify = Fastify({
     logger: false, // use Winston instead
-    trustProxy: true,
+    trustProxy: config.trustProxy,
     routerOptions: {
       caseSensitive: true,
       maxParamLength: 200,
@@ -65,7 +67,16 @@ async function buildServer() {
   // (api_allowed_origins) plus the configured admin panel origin and localhost
   // in development. Requests without an Origin header (mobile apps / servers)
   // are allowed here and validated via X-API-Key in apiSecurityMiddleware.
-  await fastify.register(cors, {
+  // CORS-1: `credentials` must be decided per request, not pinned to `true`.
+  // The origin delegate reflects any origin while the security mode is not
+  // 'enforce' (default 'monitor'), and reflected-origin + credentials tells the
+  // browser that ANY site may read authenticated responses. Public reads stay
+  // open; only credentialed cross-origin calls are restricted to the allowlist.
+  //
+  // Registered with @fastify/cors's delegate form (a function returning a
+  // per-request resolver) so this stays global — wrapping it in an encapsulated
+  // plugin would silently stop applying CORS to routes registered elsewhere.
+  const baseCorsOptions = {
     origin: corsOriginDelegate,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: [
@@ -78,7 +89,12 @@ async function buildServer() {
       'X-Bundle-Id',
       'X-Device-Id',
     ],
-    credentials: true,
+  };
+  await fastify.register(cors, () => (req, callback) => {
+    resolveCorsCredentials(req.headers.origin || null)
+      // Fail closed on credentials, but never break CORS entirely.
+      .catch(() => false)
+      .then((credentials) => callback(null, { ...baseCorsOptions, credentials }));
   });
 
   await fastify.register(cookie);
@@ -118,7 +134,11 @@ async function buildServer() {
   await fastify.register(rateLimit, {
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.timeWindow,
-    keyGenerator: (req) => req.headers[config.auth.apiKeyHeader] || req.ip,
+    // RL-1: bucket by IP, namespaced by a hash of the presented key. The old
+    // `apiKey || ip` collapsed every app install (they all ship the same public
+    // key) into ONE global counter, and let anyone reset their bucket by
+    // rotating the header. See lib/rate-limit-key.js.
+    keyGenerator: (req) => rateLimitKey(req, { apiKeyHeader: config.auth.apiKeyHeader }),
     errorResponseBuilder: (req, context) => ({
       error: 'Rate limit exceeded',
       limit: context.max,

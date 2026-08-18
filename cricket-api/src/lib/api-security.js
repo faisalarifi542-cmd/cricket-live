@@ -255,7 +255,13 @@ export async function isOriginAllowed(origin) {
 /** CORS delegate for @fastify/cors. Never throws.
  *  In non-enforce mode it allows all origins (preserves the previous allow-all
  *  behavior so the rollout doesn't break browser clients). In enforce mode it
- *  only allows approved origins (admin panel, dev localhost, api_allowed_origins). */
+ *  only allows approved origins (admin panel, dev localhost, api_allowed_origins).
+ *
+ *  CORS-1: allowing the origin is NOT the same as allowing credentials. See
+ *  resolveCorsCredentials below — `credentials: true` is now granted only to
+ *  allowlisted origins, so a hostile page can still read public data (unchanged
+ *  monitor-mode behaviour) but can no longer make *credentialed* cross-origin
+ *  calls that ride a victim's cookies. */
 export function corsOriginDelegate(origin, cb) {
   getSecurityMode()
     .then((mode) => {
@@ -263,6 +269,33 @@ export function corsOriginDelegate(origin, cb) {
       return isOriginAllowed(origin).then((ok) => cb(null, ok));
     })
     .catch(() => cb(null, false));
+}
+
+/**
+ * Decide whether `Access-Control-Allow-Credentials: true` may be sent (CORS-1).
+ *
+ * The registration pairs `credentials: true` with an origin delegate that
+ * reflects ANY origin whenever the security mode is not 'enforce' — and the
+ * default mode is 'monitor'. Reflected-origin + credentials is the classic
+ * dangerous CORS combination: it tells the browser that any site may read
+ * authenticated responses.
+ *
+ * Why this was P2 and not P1 here: the admin panel sends a `Bearer` token
+ * (admin-panel/lib/api.ts) rather than relying on ambient cookies, and the only
+ * cookie is the refresh token, which is httpOnly + sameSite=lax (admin/auth.js)
+ * — so `lax` already blocks it on cross-site subrequests. This closes the hole
+ * properly instead of depending on those two mitigations staying true.
+ *
+ * Requests with no Origin (mobile apps, server-to-server) are unaffected: the
+ * browser CORS model does not apply to them, and they are validated by API key.
+ */
+export async function resolveCorsCredentials(origin) {
+  if (!origin) return true; // non-browser caller; nothing to protect against here
+  try {
+    return await isOriginAllowed(origin);
+  } catch {
+    return false; // fail closed
+  }
 }
 
 // ====================================================
