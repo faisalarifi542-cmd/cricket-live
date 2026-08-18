@@ -1628,10 +1628,11 @@ function normalizeSeriesTeamsFromSeriesData(raw, seriesId) {
   };
 }
 
-function fetchPointsTableInCleanProcess(seriesId, seriesSlug) {
-  const url = `https://www.cricbuzz.com/cricket-series/${seriesId}/${seriesSlug || ''}/points-table`.replace(/\/+points-table$/, '/points-table');
-  const script = String.raw`
-const https = require('node:https');
+// Source text executed INSIDE the clean child process (see
+// buildPointsTableCleanProcessScript). Exported only so the SEC-1 regression
+// test can exercise the exact same text production ships, instead of a copy
+// that could drift. Deliberately self-contained: no require(), no imports.
+export const POINTS_TABLE_CHILD_HELPERS = String.raw`
 function decodeNextPayloadText(html = '') {
   return String(html)
     .replace(/\\\"/g, '"')
@@ -1665,6 +1666,41 @@ function extractJsonObjectAt(text, startIndex) {
   }
   return null;
 }
+// SEC-1: the scraped payload is DATA, never code. cricbuzz.com HTML is remote
+// input we do not control, so anything that is not strict JSON is discarded in
+// favour of the caller's empty-table fallback. Never hand this text to a
+// code-evaluation sink -- a lenient *parser* (e.g. JSON5) is the only
+// acceptable escalation if unquoted keys ever genuinely need supporting.
+// (points-table-no-eval.test.js scans this file for those sinks.)
+function renderPointsTablePayload(objectText, fallbackJson) {
+  if (!objectText) return fallbackJson;
+  try {
+    return JSON.stringify(JSON.parse(objectText));
+  } catch (jsonErr) {
+    return fallbackJson;
+  }
+}
+// Full untrusted-HTML -> stdout-line transformation. The response handler does
+// nothing but call this, so the SEC-1 regression test can drive the real
+// production code path with a fixture instead of a network response.
+function renderPointsTableFromHtml(html, fallbackJson) {
+  const text = decodeNextPayloadText(html);
+  const keyIndex = text.indexOf('"pointsTableData":');
+  if (keyIndex === -1) return fallbackJson;
+  return renderPointsTablePayload(extractJsonObjectAt(text, text.indexOf('{', keyIndex)), fallbackJson);
+}
+`;
+
+export function buildPointsTableCleanProcessScript(seriesId, seriesSlug) {
+  const url = `https://www.cricbuzz.com/cricket-series/${seriesId}/${seriesSlug || ''}/points-table`.replace(/\/+points-table$/, '/points-table');
+  // Precomputed in the parent so the child never builds it: byte-identical to
+  // the previous inline JSON.stringify({...}) output, preserving key order.
+  const fallbackJson = JSON.stringify({
+    seriesId: String(seriesId),
+    pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }],
+    source: 'cricbuzz',
+  });
+  return `const https = require('node:https');\n${POINTS_TABLE_CHILD_HELPERS}\nconst POINTS_TABLE_FALLBACK = ${JSON.stringify(fallbackJson)};\n` + String.raw`
 https.get(${JSON.stringify(url)}, {
   headers: {
     'User-Agent': ${JSON.stringify(BROWSER_HEADERS['User-Agent'])},
@@ -1677,35 +1713,17 @@ https.get(${JSON.stringify(url)}, {
   res.setEncoding('utf8');
   res.on('data', (chunk) => { data += chunk; });
   res.on('end', () => {
-    const text = decodeNextPayloadText(data);
-    const key = '"pointsTableData":';
-    const keyIndex = text.indexOf(key);
-    if (keyIndex === -1) {
-      console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
-      return;
-    }
-    const objectText = extractJsonObjectAt(text, text.indexOf('{', keyIndex));
-    if (!objectText) {
-      console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
-      return;
-    }
-    try {
-      const parsed = JSON.parse(objectText);
-      console.log(JSON.stringify(parsed));
-    } catch (jsonErr) {
-      try {
-        const parsed = new Function('return (' + objectText + ');')();
-        console.log(JSON.stringify(parsed));
-      } catch (evalErr) {
-        console.log(JSON.stringify({ seriesId: ${JSON.stringify(String(seriesId))}, pointsTable: [{ groupName: 'Points Table', pointsTableInfo: [] }], source: 'cricbuzz' }));
-      }
-    }
+    console.log(renderPointsTableFromHtml(data, POINTS_TABLE_FALLBACK));
   });
 }).on('error', (err) => {
   console.error(err.message);
   process.exit(1);
 });
 `;
+}
+
+function fetchPointsTableInCleanProcess(seriesId, seriesSlug) {
+  const script = buildPointsTableCleanProcessScript(seriesId, seriesSlug);
   const result = spawnSync(process.execPath, ['-e', script], {
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
@@ -1735,16 +1753,15 @@ function extractEmbeddedNextObject(html, key) {
   try {
     return JSON.parse(objectText);
   } catch (err) {
-    try {
-      return new Function(`return (${objectText});`)();
-    } catch (evalErr) {
-      logger.debug({
-        msg: 'Failed to parse embedded Next payload object',
-        key,
-        error: evalErr.message,
-      });
-      return null;
-    }
+    // SEC-1: scraped cricbuzz HTML is untrusted DATA. A malformed slice is
+    // discarded (callers already handle null by falling back to HTML table
+    // parsing); it is never evaluated as code.
+    logger.debug({
+      msg: 'Failed to parse embedded Next payload object',
+      key,
+      error: err.message,
+    });
+    return null;
   }
 }
 
