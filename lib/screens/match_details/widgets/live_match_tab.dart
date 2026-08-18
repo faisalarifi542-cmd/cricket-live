@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -327,11 +325,7 @@ class _LiveMatchActiveView extends StatelessWidget {
             onViewMore: onViewMoreCommentary,
           ),
         const SizedBox(height: 14),
-        _LiveFooter(
-          isLive: true,
-          lastUpdatedAt:
-              _parseLastUpdated(lc) ?? _parseLastUpdated(summary),
-        ),
+        const _LiveFooter(isLive: true),
       ],
     );
   }
@@ -460,12 +454,7 @@ class _LiveMatchResultView extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 14),
-        _LiveFooter(
-          isLive: false,
-          finished: true,
-          lastUpdatedAt:
-              _parseLastUpdated(liveCenter) ?? _parseLastUpdated(summary),
-        ),
+        const _LiveFooter(isLive: false, finished: true),
       ],
     );
   }
@@ -1696,91 +1685,32 @@ int? _liveRuns(Map<String, dynamic> row) {
   return int.tryParse(v.toString().trim());
 }
 
-/// Parses the `last_updated` timestamp off a live-center / summary payload so
-/// the Live-tab footer can show a real "Updated X ago" instead of a fake
-/// "Updated just now". Accepts ISO strings and epoch millis. Returns null when
-/// no usable timestamp is present (the footer then shows no freshness claim).
-DateTime? _parseLastUpdated(Map<String, dynamic>? data) {
-  if (data == null) return null;
-  final raw = data['last_updated'] ??
-      data['lastUpdated'] ??
-      data['updated_at'] ??
-      data['updatedAt'];
-  if (raw == null) return null;
-  if (raw is num) {
-    final ms = raw.toInt();
-    // Heuristic: seconds vs millis. Anything > 1e12 is milliseconds.
-    final v = ms > 1000000000000 ? ms : ms * 1000;
-    return DateTime.fromMillisecondsSinceEpoch(v, isUtc: true).toLocal();
-  }
-  final s = raw.toString().trim();
-  if (s.isEmpty) return null;
-  final parsed = DateTime.tryParse(s);
-  if (parsed != null) return parsed.toLocal();
-  final asInt = int.tryParse(s);
-  if (asInt != null) {
-    final ms = asInt > 1000000000000 ? asInt : asInt * 1000;
-    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true).toLocal();
-  }
-  return null;
-}
-
 class _LiveFooter extends StatefulWidget {
   const _LiveFooter({
     required this.isLive,
     this.finished = false,
-    this.lastUpdatedAt,
   });
 
   final bool isLive;
   final bool finished;
-
-  /// Real timestamp the live data was last fetched. When null and not finished,
-  /// the footer shows no freshness claim rather than a fake "Updated just now".
-  final DateTime? lastUpdatedAt;
 
   @override
   State<_LiveFooter> createState() => _LiveFooterState();
 }
 
 class _LiveFooterState extends State<_LiveFooter> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    // Only tick while we have a real timestamp to age (and the match is live,
-    // not finished). Keeps the relative label accurate without rebuilding a
-    // finished match's footer every second.
-    if (!widget.finished && widget.lastUpdatedAt != null) {
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  String get _freshnessLabel {
-    final last = widget.lastUpdatedAt;
-    if (last == null) return ''; // honest: no timestamp → no freshness claim
-    final delta = DateTime.now().difference(last);
-    if (delta.isNegative) return 'Updated just now';
-    if (delta.inSeconds < 10) return 'Updated just now';
-    if (delta.inSeconds < 60) return 'Updated ${delta.inSeconds}s ago';
-    if (delta.inMinutes < 60) return 'Updated ${delta.inMinutes}m ago';
-    return 'Updated ${(delta.inMinutes / 60).floor()}h '
-        '${delta.inMinutes % 60}m ago';
-  }
-
+  // NOTE: freshness ("Updated X ago") is intentionally NOT shown here. The
+  // Match Details header row (`MDUpdatedRow`) is the single authoritative
+  // freshness source, seeded on the first successful load and shown on EVERY
+  // tab. This footer is now a pure live/finished *status* line so the Live tab
+  // never shows two timestamps that disagree (the reported "Pull to refresh" vs
+  // "Updated just now" inconsistency).
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final label = widget.finished ? 'Match completed' : _freshnessLabel;
+    final label = widget.finished
+        ? 'Match completed'
+        : (widget.isLive ? 'Live coverage' : '');
     return Row(
       children: [
         Icon(

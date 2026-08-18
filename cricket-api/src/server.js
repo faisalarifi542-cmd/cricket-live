@@ -350,9 +350,13 @@ async function start() {
     // Log resolved provider config + reset in-memory health for this fresh
     // process (each PM2 worker records its own runtime order; a restarted
     // process must never inherit a stale "down").
-    providerManager.logStartupConfig().catch((err) => {
-      logger.warn({ msg: 'Provider startup config log failed', error: err.message });
-    });
+    if (typeof providerManager.logStartupConfig === 'function') {
+      providerManager.logStartupConfig().catch((err) => {
+        logger.warn({ msg: 'Provider startup config log failed', error: err.message });
+      });
+    } else {
+      logger.warn({ msg: 'providerManager.logStartupConfig missing — likely incomplete deploy' });
+    }
 
     // Phase 1b — start in-process cache warmers a moment after the server is up
     // (so Redis/DB connections are ready). Master kill switch: ENABLE_PHASE1B_WARMING.

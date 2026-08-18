@@ -72,9 +72,10 @@ class ProviderManager {
     }
     try {
       const rows = await query(
-        `SELECT provider_type, priority, is_active
+        `SELECT provider_type, priority, is_active, role
            FROM api_providers
-          ORDER BY priority ASC, id ASC`,
+          ORDER BY CASE WHEN (role IS NULL OR role = '') THEN 'fallback' ELSE role END = 'primary' DESC,
+                   priority ASC, id ASC`,
       );
       const active = rows.filter(
         (r) => Number(r.is_active) === 1 && this.byType.has(r.provider_type),
@@ -193,14 +194,18 @@ class ProviderManager {
       const state = typeof p.healthState === 'function'
         ? p.healthState()
         : (p.healthy ? 'up' : 'down');
+      const capabilities = typeof p.getCapabilities === 'function'
+        ? p.getCapabilities()
+        : {};
       return {
         name: p.name,
         priority: p.priority,
         healthy: p.healthy,
         available: p.isAvailable(),
         configured,
-        state, // 'up' | 'down' | 'misconfigured' (admin route may refine to 'limited'/'disabled')
+        state, // 'up' | 'down' | 'limited' | 'misconfigured' | 'disabled'
         reason,
+        capabilities,
         consecutiveFailures: p.consecutiveFailures,
         lastFailure: p.lastFailure ? new Date(p.lastFailure).toISOString() : null,
       };

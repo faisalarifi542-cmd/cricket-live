@@ -64,10 +64,11 @@ class SeriesNewAssets {
   static const bottomNavActive = '$core/bottom_nav_active_tab_base.png';
 
   // --- Tournament sheet (purple cup card) -----------------------------------
-  // Clean watermark-free background — the original sheet1 asset carried a baked-
-  // in "VERIFIED BY 17 PIXELS" stock-design watermark (visible on tournament
-  // cards like the Women's T20 World Cup). The clean file keeps the purple-panel
-  // aesthetic with NO baked text; the trophy is overlaid by Flutter separately.
+  // NOTE: earlier comments here claimed a baked-in "VERIFIED BY N PIXELS"
+  // watermark. That was a MISDIAGNOSIS — no such text is in these assets. The
+  // text seen on cards was Flutter's DEBUG RenderFlex "OVERFLOWED BY N PIXELS"
+  // stripe (fixed in series_poster_cards.dart CTA rows). The `_clean.png` files
+  // are kept (harmless, already bundled); the trophy is overlaid by Flutter.
   static const tournamentBg = '$tournament/sheet1_tournament_asset_01_clean.png';
   static const tournamentTrophy = '$tournament/sheet1_tournament_asset_06.png';
   static const tournamentBurst = '$tournament/sheet1_tournament_asset_04.png';
@@ -80,7 +81,8 @@ class SeriesNewAssets {
   static const bilateralShield = '$bilateral/sheet2_bilateral_asset_10.png';
 
   // --- League sheet (cyber stadium + neon batsman) --------------------------
-  // Clean watermark-free background for the same reason as [tournamentBg].
+  // See the tournament note above re: the "watermark" (a debug overflow stripe,
+  // not a baked-in asset). Clean bg kept as-is.
   static const leagueBg = '$league/sheet3_league_asset_01_clean.png';
   static const leagueBgAlt = '$league/sheet3_league_asset_02.png';
   static const leagueBatsman = '$league/sheet3_league_asset_05.png';

@@ -2,10 +2,10 @@ import { query } from '../lib/db.js';
 
 export const DEFAULT_PROVIDER = {
   slug: 'webcrichd-cricbuzz',
-  name: 'WebCricHD Cricbuzz API',
+  name: 'Cricbuzz',
   providerType: 'cricbuzz',
   baseUrl: 'https://api.webcrichd.co',
-  description: 'Primary app cricket data API powered by the Cricbuzz provider inside cricket-api.',
+  description: 'Primary cricket data provider powered by Cricbuzz API.',
   priority: 1,
   timeoutMs: 8000,
   rateLimitPerMinute: 60,
@@ -40,6 +40,7 @@ export async function ensureProviderSchema() {
       timeout_ms INT DEFAULT 8000,
       rate_limit_per_minute INT DEFAULT 60,
       is_active TINYINT(1) DEFAULT 1,
+      role VARCHAR(32) DEFAULT 'fallback',
       health_status VARCHAR(30) DEFAULT 'unknown',
       last_success_at DATETIME NULL,
       last_failure_at DATETIME NULL,
@@ -57,9 +58,25 @@ export async function ensureProviderSchema() {
   await add('timeout_ms', `timeout_ms INT DEFAULT 8000 AFTER priority`);
   await add('rate_limit_per_minute', `rate_limit_per_minute INT DEFAULT 60 AFTER timeout_ms`);
   await add('health_status', `health_status VARCHAR(30) DEFAULT 'unknown' AFTER is_active`);
+  await add('role', `role VARCHAR(32) DEFAULT 'fallback' AFTER is_active`);
   await add('last_success_at', `last_success_at DATETIME NULL AFTER health_status`);
   await add('last_failure_at', `last_failure_at DATETIME NULL AFTER last_success_at`);
   await add('metadata', `metadata JSON NULL AFTER last_failure_at`);
+
+  // Migrate existing rows: if role column was just added (empty/NULL), populate
+  // from metadata.role. Keep the JSON field in sync for backward compat but the
+  // dedicated `role` column is the source of truth for runtime ordering.
+  if (names.has('metadata') && !names.has('role')) {
+    try {
+      await query(
+        `UPDATE api_providers
+           SET role = COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.role')), ''), 'fallback')
+         WHERE role IS NULL OR role = ''`,
+      );
+    } catch {
+      // metadata column might be NULL or malformed — fallback is already the default
+    }
+  }
 }
 
 export async function ensureDefaultProvider() {
@@ -72,8 +89,8 @@ export async function ensureDefaultProvider() {
   await query(
     `INSERT INTO api_providers
        (slug, name, provider_type, base_url, description, priority, timeout_ms,
-        rate_limit_per_minute, is_active, health_status, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
+        rate_limit_per_minute, is_active, role, health_status, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'primary', 'unknown', ?)
      ON DUPLICATE KEY UPDATE id = id`,
     [
       DEFAULT_PROVIDER.slug,
@@ -103,8 +120,8 @@ export async function ensureCricinfoProvider() {
   await query(
     `INSERT INTO api_providers
        (slug, name, provider_type, base_url, description, priority, timeout_ms,
-        rate_limit_per_minute, is_active, health_status, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'unknown', ?)
+        rate_limit_per_minute, is_active, role, health_status, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'fallback', 'unknown', ?)
      ON DUPLICATE KEY UPDATE id = id`,
     [
       CRICINFO_PROVIDER.slug,

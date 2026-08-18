@@ -125,6 +125,12 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
     _pollTimer?.cancel();
     _recoveryTimer?.cancel();
     _scrollController.dispose();
+    // Each match opens as a NEW pushed route, so the in-initState clearMatch
+    // never runs for it — without this, every match browsed this session keeps
+    // its accumulated commentary in memory until the app restarts.
+    if (_initializedMatchId != null && _initializedMatchId!.isNotEmpty) {
+      CommentaryCache.instance.clearMatch(_initializedMatchId!);
+    }
     super.dispose();
   }
 
@@ -167,6 +173,14 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
     final response =
         await _repository.matchDetail(_matchId, forceRefresh: forceRefresh);
     _summaryData = response.data;
+    // Seed the freshness timestamp on the FIRST successful load so every tab
+    // shows a consistent "Updated X ago" from the outset — not "Pull to refresh"
+    // on the Live tab while other tabs read "Updated just now". Prefer the
+    // server's own `meta.lastUpdated` (never fake freshness); only fall back to
+    // "now" when the envelope carries no timestamp.
+    _lastUpdatedAt = response.meta.lastUpdated ?? _lastUpdatedAt ?? DateTime.now();
+    _isOffline = false;
+    _isStale = response.meta.isStale;
     _maybeApplyInitialTab(response.data);
     _configurePolling(response.data);
     return response;
@@ -316,6 +330,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
           !_tabData.containsKey(_scoreTab)) {
         _loadTab(_scoreTab).then((_) {
           if (mounted) setState(() {});
+        }, onError: (_) {
+          // Preload only — the Live tab falls back to live-center data.
         });
       }
       return;
@@ -335,6 +351,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
           !_tabData.containsKey(_scoreTab)) {
         _loadTab(_scoreTab).then((_) {
           if (mounted) setState(() {});
+        }, onError: (_) {
+          // Preload only — the Live tab falls back to live-center data.
         });
       }
     });
@@ -392,6 +410,8 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
     if (value == 1 && _matchId.isNotEmpty && !_tabData.containsKey(2)) {
       _loadTab(2).then((_) {
         if (mounted) setState(() {});
+      }, onError: (_) {
+        // Preload only — the Live tab falls back to live-center data.
       });
     }
   }
@@ -524,11 +544,12 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
       _isStale = summary.meta.isStale;
       final currentTab = tab;
       final previousTabData = _tabData[currentTab];
-      // Refresh the visible tab's own payload. Live(1)/Scorecard(2) and
-      // Info(0)/Squad(3) via _loadTab; Commentary(4)/Overs(5) refresh their
-      // dedicated repo calls so those tabs do not freeze during live play.
+      // Refresh the visible tab's own payload. Info(0)/Live(1)/Scorecard(2)
+      // via _loadTab; Commentary(4)/Overs(5) refresh their dedicated repo
+      // calls so those tabs do not freeze during live play. Squad(3) is
+      // static during a match, so force-refetching it every 5s is pure waste.
       ApiEnvelope<Map<String, dynamic>>? tabResponse;
-      if (currentTab <= 3) {
+      if (currentTab <= _scoreTab) {
         tabResponse = await _loadTab(currentTab, forceRefresh: true);
         // The Live tab's commentary preview reads from the accumulated
         // commentary feed (fresher than the merged live-center, which lags

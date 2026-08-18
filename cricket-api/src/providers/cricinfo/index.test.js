@@ -7,6 +7,7 @@ import providerManager from '../provider-manager.js';
 import { BaseProvider } from '../base-provider.js';
 import {
   ProviderIncompleteData,
+  ProviderFeatureNotSupported,
   isProviderSentinel,
   isUsableResult,
 } from '../provider-results.js';
@@ -204,4 +205,166 @@ test('healthState reflects up / down transitions for cricinfo', () => {
   assert.equal(provider.isConfigured(), true, 'cricinfo needs no API key');
   provider.healthy = false;
   assert.equal(provider.healthState(), 'down');
+});
+
+// --- 7. Points table from the ESPN /standings endpoint ----------------------
+
+test('getPointsTable serves a Cricbuzz-shaped table from /standings', async () => {
+  const provider = new CricinfoProvider();
+  const standings = {
+    id: '77',
+    name: 'League',
+    children: [
+      {
+        name: 'Group A',
+        standings: {
+          entries: [
+            {
+              team: { id: '10', displayName: 'Team A', abbreviation: 'TA', logos: [] },
+              stats: [
+                { name: 'rank', value: 1, displayValue: '1' },
+                { name: 'matchesPlayed', value: 4, displayValue: '4' },
+                { name: 'matchesWon', value: 3, displayValue: '3' },
+                { name: 'matchPoints', value: 6, displayValue: '6' },
+                { name: 'netrr', value: 1.2, displayValue: '1.200' },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+  };
+  await withClientStub(
+    { getStandings: async () => standings },
+    async () => {
+      const table = await provider.getPointsTable('77');
+      assert.ok(isUsableResult(table), 'points table should be usable');
+      assert.equal(table.rows.length, 1);
+      assert.equal(table.rows[0].teamName, 'Team A');
+      assert.equal(table.rows[0].points, 6);
+      assert.equal(table.source, 'espn-cricinfo');
+    },
+  );
+});
+
+test('getPointsTable returns a sentinel when ESPN exposes no standings', async () => {
+  const provider = new CricinfoProvider();
+  await withClientStub(
+    {
+      getStandings: async () => ({ id: '77', children: [] }),
+      getSeriesScoreboard: async () => ({}),
+    },
+    async () => {
+      const table = await provider.getPointsTable('77');
+      assert.ok(table instanceof ProviderIncompleteData, 'expected incomplete sentinel');
+      assert.equal(isUsableResult(table), false);
+    },
+  );
+});
+
+// --- 8. Player info from the v3 athlete endpoint ----------------------------
+
+test('getPlayerInfo resolves an unknown-to-cache id via the v3 athlete endpoint', async () => {
+  const provider = new CricinfoProvider();
+  const athlete = {
+    athlete: {
+      id: '348026',
+      displayName: 'John Campbell',
+      fullName: 'John Dillon Campbell',
+      displayDOB: '21/9/1993',
+      position: { name: 'Opening batter' },
+      batStyle: [{ description: 'Left-hand bat' }],
+      bowlStyle: [{ description: 'Right-arm offbreak' }],
+      headshot: { href: 'https://a.espncdn.com/i/headshots/cricket/players/full/348026.png' },
+      team: { id: '4', name: 'West Indies' },
+    },
+  };
+  await withClientStub(
+    { getAthlete: async () => athlete },
+    async () => {
+      const p = await provider.getPlayerInfo('348026');
+      assert.ok(isUsableResult(p), 'player should be usable');
+      assert.equal(p.player_id, '348026');
+      assert.equal(p.name, 'John Campbell');
+      assert.equal(p.batting_style, 'Left-hand bat');
+      assert.equal(provider.healthy, true);
+    },
+  );
+});
+
+test('getPlayerInfo returns a sentinel when the athlete endpoint 404s', async () => {
+  const provider = new CricinfoProvider();
+  await withClientStub(
+    { getAthlete: async () => { throw new Error('Request failed with status code 404'); } },
+    async () => {
+      const p = await provider.getPlayerInfo('156691'); // Cricbuzz-origin id
+      assert.ok(p instanceof ProviderIncompleteData);
+      assert.equal(isUsableResult(p), false);
+      assert.equal(provider.healthy, true, 'a 404 athlete lookup must not fail health');
+    },
+  );
+});
+
+// --- 9. Full schedule from the scoreboard header ----------------------------
+
+test('getFullSchedule returns series rows and never throws', async () => {
+  const provider = new CricinfoProvider();
+  const header = {
+    sports: [{ leagues: [
+      { id: '1', name: 'Series One', calendarStartDate: '2026-07-01T00:00Z', calendarEndDate: '2026-07-20T00:00Z' },
+      { id: '2', name: 'Series Two' },
+    ] }],
+  };
+  await withClientStub(
+    { getScoreboardHeader: async () => header },
+    async () => {
+      const rows = await provider.getFullSchedule();
+      assert.equal(rows.length, 2);
+      assert.equal(rows[0].series_id, '1');
+      assert.ok(rows[0].start_date.startsWith('2026-07-01'));
+      assert.equal(rows[0].source, 'espn-cricinfo');
+    },
+  );
+  // failure path → [] (best-effort, matches Cricbuzz)
+  await withClientStub(
+    { getScoreboardHeader: async () => { throw new Error('ECONNRESET'); } },
+    async () => {
+      const rows = await provider.getFullSchedule();
+      assert.deepEqual(rows, []);
+    },
+  );
+});
+
+// --- 10. Deliberate capability gaps → typed FeatureNotSupported sentinels -----
+
+test('unsupported ESPN methods return FeatureNotSupported without failing health', async () => {
+  const provider = new CricinfoProvider();
+  const cases = [
+    ['getQuickAccess', ['123']],
+    ['getNewsDetail', ['1', null]],
+    ['getRankings', [{}]],
+    ['getNewsStories', [null]],
+    ['getSeriesStatsTypes', ['5']],
+    ['getSeriesStatsTable', ['5', 'mostRuns']],
+    ['getSeriesNews', ['5', null]],
+    ['getHighlights', ['1', 1]],
+    ['getSeriesSquadGroups', ['5']],
+    ['getSeriesSquad', ['5', '9']],
+  ];
+  for (const [method, args] of cases) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await provider[method](...args);
+    assert.ok(r instanceof ProviderFeatureNotSupported, `${method} should return FeatureNotSupported`);
+    assert.equal(isUsableResult(r), false, `${method} sentinel must be non-usable`);
+  }
+  assert.equal(provider.healthy, true, 'capability gaps must not affect health');
+  assert.equal(provider.consecutiveFailures, 0);
+});
+
+test('capabilities advertise the upgraded pointsTable/playerInfo/fullSchedule', () => {
+  const caps = new CricinfoProvider().getCapabilities();
+  assert.equal(caps.pointsTable, 'full');
+  assert.equal(caps.playerInfo, 'full');
+  assert.equal(caps.fullSchedule, 'full');
+  assert.equal(caps.rankings, 'unsupported');
 });

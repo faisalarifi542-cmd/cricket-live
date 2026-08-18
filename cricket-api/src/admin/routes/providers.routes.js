@@ -34,6 +34,14 @@ function safeJson(value) {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+// The role-column fallbacks below must only trigger when the column is
+// actually missing (pre-migration DBs). Swallowing every SQL error there
+// masks real failures — e.g. a duplicate-slug insert would be retried
+// without `role`, fail again, and surface as an opaque 500.
+function isMissingRoleColumn(err) {
+  return err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054;
+}
+
 async function clearProviderCache(id) {
   const redis = getRedis();
   const keys = await redis.keys(`*provider*${id}*`);
@@ -47,24 +55,65 @@ export default async function providerRoutes(fastify) {
  
   fastify.get('/', { preHandler: [requirePermissions('providers.view')] }, async () => {
     await ensureDefaultProvider();
-    const rows = await query(
-      `SELECT * FROM api_providers ORDER BY priority ASC, name ASC`,
-    );
+    let rows;
+    try {
+      rows = await query(
+        `SELECT * FROM api_providers ORDER BY CASE WHEN (role IS NULL OR role = '') THEN 'fallback' ELSE role END = 'primary' DESC, priority ASC, name ASC`,
+      );
+    } catch (err) {
+      if (!isMissingRoleColumn(err)) throw err;
+      // `role` column may not exist yet on older DBs before the migration runs.
+      // Fall back to the old ORDER BY so the page never crashes on a missing column.
+      rows = await query(
+        `SELECT * FROM api_providers ORDER BY priority ASC, name ASC`,
+      );
+    }
+    // Enrich each row with live capabilities from the provider instance (not stored
+    // in the DB — always reflects what the code actually supports right now).
+    const enriched = rows.map((r) => {
+      const provider = providerManager.getProvider(r.provider_type);
+      let capabilities = {};
+      try {
+        capabilities = provider && typeof provider.getCapabilities === 'function'
+          ? provider.getCapabilities()
+          : {};
+      } catch {
+        // Per-provider capabilities map must never crash the list endpoint.
+      }
+      const configured = provider && typeof provider.isConfigured === 'function'
+        ? provider.isConfigured()
+        : true;
+      const configReasonVal = provider && typeof provider.configReason === 'function'
+        ? provider.configReason()
+        : null;
+      const healthState = provider && typeof provider.healthState === 'function'
+        ? provider.healthState()
+        : (r.health_status || 'unknown');
+      return {
+        ...cleanProvider(r),
+        capabilities,
+        is_configured: configured,
+        config_reason: configReasonVal,
+        live_health_state: healthState,
+      };
+    });
     return {
       success: true,
-      data: rows.map(cleanProvider),
+      data: enriched,
     };
   });
  
   fastify.post('/', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
     await ensureProviderSchema();
-    const { slug, name, provider_type = 'custom', base_url, description, priority: rawPriority, timeout_ms = 8000, rate_limit_per_minute = 60, is_active = true, metadata } = request.body || {};
+    const { slug, name, provider_type = 'custom', base_url, description, priority: rawPriority, timeout_ms = 8000, rate_limit_per_minute = 60, is_active = true, role, metadata } = request.body || {};
     if (!slug || !name) {
       return reply.code(400).send({ success: false, error: 'slug and name required' });
     }
     const meta = metadata && typeof metadata === 'object' ? { ...metadata } : {};
-    const becomingPrimary = String(meta.role || '').toLowerCase() === 'primary';
-    // A new primary defaults to priority 1 so it is tried first.
+    const providerRole = String(role || meta.role || 'fallback').toLowerCase();
+    const becomingPrimary = providerRole === 'primary';
+    // Keep metadata.role in sync for backward compat but use the dedicated column.
+    if (!meta.role) meta.role = providerRole;
     const priority = rawPriority !== undefined && rawPriority !== null
       ? rawPriority
       : (becomingPrimary ? 1 : 100);
@@ -73,23 +122,27 @@ export default async function providerRoutes(fastify) {
       { action: 'provider.create', entityType: 'api_provider', newValue: { slug, name } },
       async () =>
         transaction(async (conn) => {
-          const [res] = await conn.execute(
-            `INSERT INTO api_providers (slug, name, provider_type, base_url, description, priority, timeout_ms, rate_limit_per_minute, is_active, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [slug, name, provider_type, base_url || null, description || null, priority, timeout_ms, rate_limit_per_minute, is_active ? 1 : 0, Object.keys(meta).length ? JSON.stringify(meta) : null],
-          );
-          if (becomingPrimary) {
-            const [others] = await conn.execute(`SELECT id, metadata FROM api_providers WHERE id <> ?`, [res.insertId]);
-            for (const o of others) {
-              const m = typeof o.metadata === 'string' ? (safeJson(o.metadata) || {}) : (o.metadata || {});
-              if (String(m.role || '').toLowerCase() === 'primary') {
-                m.role = 'fallback';
-                // eslint-disable-next-line no-await-in-loop
-                await conn.execute(`UPDATE api_providers SET metadata = ? WHERE id = ?`, [JSON.stringify(m), o.id]);
-              }
+          // Try with the role column first; fall back to pre-role column set on older DBs.
+          try {
+            const [res] = await conn.execute(
+              `INSERT INTO api_providers (slug, name, provider_type, base_url, description, priority, timeout_ms, rate_limit_per_minute, is_active, role, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [slug, name, provider_type, base_url || null, description || null, priority, timeout_ms, rate_limit_per_minute, is_active ? 1 : 0, providerRole, Object.keys(meta).length ? JSON.stringify(meta) : null],
+            );
+            if (becomingPrimary) {
+              await conn.execute(`UPDATE api_providers SET role = 'fallback' WHERE id <> ?`, [res.insertId]);
             }
+            return res;
+          } catch (err) {
+            if (!isMissingRoleColumn(err)) throw err;
+            // role column missing — fall back to insert without it + store role in metadata
+            const [res] = await conn.execute(
+              `INSERT INTO api_providers (slug, name, provider_type, base_url, description, priority, timeout_ms, rate_limit_per_minute, is_active, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [slug, name, provider_type, base_url || null, description || null, priority, timeout_ms, rate_limit_per_minute, is_active ? 1 : 0, Object.keys(meta).length ? JSON.stringify(meta) : null],
+            );
+            return res;
           }
-          return res;
         }),
     );
     const row = await query(`SELECT * FROM api_providers WHERE id = ?`, [r.insertId]);
@@ -112,6 +165,12 @@ export default async function providerRoutes(fastify) {
     const incomingMeta = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
     const mergedMeta = { ...oldMeta, ...incomingMeta };
 
+    // Role: dedicated column is the source of truth. Accept `role` from body,
+    // fall back to metadata.role, then to the existing DB value.
+    const resolvedRole = String(body.role || incomingMeta.role || existing.role || 'fallback').toLowerCase();
+    // Sync metadata.role so both stay consistent.
+    mergedMeta.role = resolvedRole;
+
     const merged = {
       slug: body.slug !== undefined ? body.slug : existing.slug,
       name: body.name !== undefined ? body.name : existing.name,
@@ -123,6 +182,7 @@ export default async function providerRoutes(fastify) {
       rate_limit_per_minute: body.rate_limit_per_minute !== undefined ? body.rate_limit_per_minute : existing.rate_limit_per_minute,
       is_active: body.is_active !== undefined ? (body.is_active ? 1 : 0) : existing.is_active,
       health_status: body.health_status !== undefined ? body.health_status : existing.health_status,
+      role: resolvedRole,
       metadata: mergedMeta,
     };
 
@@ -134,10 +194,10 @@ export default async function providerRoutes(fastify) {
       return reply.code(400).send({ success: false, error: 'name is required' });
     }
 
-    // Role lives in metadata.role. A provider promoted to primary gets a default
-    // priority of 1 (if none supplied) and forces every OTHER provider to
-    // fallback — only one primary may exist at a time.
-    const becomingPrimary = String(mergedMeta.role || '').toLowerCase() === 'primary';
+    // A provider promoted to primary gets a default priority of 1 (if none
+    // supplied) and forces every OTHER provider to fallback — only one primary
+    // may exist at a time.
+    const becomingPrimary = resolvedRole === 'primary';
     if (becomingPrimary && (merged.priority === undefined || merged.priority === null)) {
       merged.priority = 1;
     }
@@ -147,30 +207,41 @@ export default async function providerRoutes(fastify) {
       { action: 'provider.update', entityType: 'api_provider', entityId: id, oldValue: existing, newValue: merged },
       async () =>
         transaction(async (conn) => {
-          await conn.execute(
-            `UPDATE api_providers
-                SET slug = ?, name = ?, provider_type = ?, base_url = ?, description = ?,
-                    priority = ?, timeout_ms = ?, rate_limit_per_minute = ?, is_active = ?,
-                    health_status = ?, metadata = ?
-              WHERE id = ?`,
-            [
-              merged.slug, merged.name, merged.provider_type, merged.base_url || null,
-              merged.description || null, merged.priority, merged.timeout_ms,
-              merged.rate_limit_per_minute, merged.is_active, merged.health_status,
-              JSON.stringify(mergedMeta), id,
-            ],
-          );
-          // Demote all other providers to fallback so exactly one primary exists.
-          if (becomingPrimary) {
-            const [others] = await conn.execute(`SELECT id, metadata FROM api_providers WHERE id <> ?`, [id]);
-            for (const o of others) {
-              const m = typeof o.metadata === 'string' ? (safeJson(o.metadata) || {}) : (o.metadata || {});
-              if (String(m.role || '').toLowerCase() === 'primary' || m.role === undefined) {
-                m.role = 'fallback';
-                // eslint-disable-next-line no-await-in-loop
-                await conn.execute(`UPDATE api_providers SET metadata = ? WHERE id = ?`, [JSON.stringify(m), o.id]);
-              }
+          try {
+            await conn.execute(
+              `UPDATE api_providers
+                  SET slug = ?, name = ?, provider_type = ?, base_url = ?, description = ?,
+                      priority = ?, timeout_ms = ?, rate_limit_per_minute = ?, is_active = ?,
+                      role = ?, health_status = ?, metadata = ?
+                WHERE id = ?`,
+              [
+                merged.slug, merged.name, merged.provider_type, merged.base_url || null,
+                merged.description || null, merged.priority, merged.timeout_ms,
+                merged.rate_limit_per_minute, merged.is_active, merged.role,
+                merged.health_status,
+                JSON.stringify(mergedMeta), id,
+              ],
+            );
+            if (becomingPrimary) {
+              await conn.execute(`UPDATE api_providers SET role = 'fallback' WHERE id <> ?`, [id]);
             }
+          } catch (err) {
+            if (!isMissingRoleColumn(err)) throw err;
+            // Fall back when role column is missing on older DBs (pre-migration).
+            await conn.execute(
+              `UPDATE api_providers
+                  SET slug = ?, name = ?, provider_type = ?, base_url = ?, description = ?,
+                      priority = ?, timeout_ms = ?, rate_limit_per_minute = ?, is_active = ?,
+                      health_status = ?, metadata = ?
+                WHERE id = ?`,
+              [
+                merged.slug, merged.name, merged.provider_type, merged.base_url || null,
+                merged.description || null, merged.priority, merged.timeout_ms,
+                merged.rate_limit_per_minute, merged.is_active,
+                merged.health_status,
+                JSON.stringify(mergedMeta), id,
+              ],
+            );
           }
         }),
     );
@@ -423,13 +494,147 @@ export default async function providerRoutes(fastify) {
   });
  
   fastify.delete('/:id/keys/:keyId', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
-    const old = await query(`SELECT id, provider_id, label FROM provider_api_keys WHERE id = ?`, [request.params.keyId]);
+    // Scope by provider too — the key must belong to the provider in the URL,
+    // otherwise a mismatched URL deletes another provider's key.
+    const old = await query(
+      `SELECT id, provider_id, label FROM provider_api_keys WHERE id = ? AND provider_id = ?`,
+      [request.params.keyId, request.params.id],
+    );
     if (!old.length) return reply.code(404).send({ success: false, error: 'Not found' });
     await withAudit(
       request,
       { action: 'providerKey.delete', entityType: 'provider_api_key', entityId: request.params.keyId, oldValue: old[0] },
-      async () => query(`DELETE FROM provider_api_keys WHERE id = ?`, [request.params.keyId]),
+      async () => query(
+        `DELETE FROM provider_api_keys WHERE id = ? AND provider_id = ?`,
+        [request.params.keyId, request.params.id],
+      ),
     );
+    return { success: true };
+  });
+
+  // ---------- Role + priority control ----------
+
+  fastify.post('/:id/set-primary', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
+    const id = Number(request.params.id);
+    const rows = await query(`SELECT id, name, priority FROM api_providers WHERE id = ?`, [id]);
+    if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+
+    await withAudit(
+      request,
+      { action: 'provider.setPrimary', entityType: 'api_provider', entityId: id, newValue: { role: 'primary' } },
+      async () =>
+        transaction(async (conn) => {
+          try {
+            await conn.execute(
+              `UPDATE api_providers SET role = 'fallback' WHERE id <> ? AND (role = 'primary' OR role IS NULL OR role = '')`,
+              [id],
+            );
+            const existingPriority = Number(rows[0].priority || 0);
+            const newPriority = existingPriority > 0 && existingPriority < 99 ? existingPriority : 1;
+            await conn.execute(
+              `UPDATE api_providers SET role = 'primary', priority = ?, is_active = 1 WHERE id = ?`,
+              [newPriority, id],
+            );
+          } catch (err) {
+            if (!isMissingRoleColumn(err)) throw err;
+            // role column may not exist on older DBs — store primary marker in metadata
+            const meta = JSON.stringify({ role: 'primary' });
+            const existingPriority = Number(rows[0].priority || 0);
+            const newPriority = existingPriority > 0 && existingPriority < 99 ? existingPriority : 1;
+            await conn.execute(
+              `UPDATE api_providers SET priority = ?, is_active = 1, metadata = ? WHERE id = ?`,
+              [newPriority, meta, id],
+            );
+            await conn.execute(
+              `UPDATE api_providers SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.role', 'fallback') WHERE id <> ?`,
+              [id],
+            );
+          }
+        }),
+    );
+    providerManager.invalidateConfig();
+    const updated = await query(`SELECT * FROM api_providers WHERE id = ?`, [id]);
+    return { success: true, data: cleanProvider(updated[0]) };
+  });
+
+  fastify.patch('/reorder', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
+    const { order } = request.body || {};
+    if (!Array.isArray(order) || !order.length) {
+      return reply.code(400).send({ success: false, error: 'order array required' });
+    }
+    await withAudit(
+      request,
+      { action: 'provider.reorder', entityType: 'api_provider', newValue: { count: order.length } },
+      async () =>
+        transaction(async (conn) => {
+          for (const item of order) {
+            if (!item.id || item.priority == null) continue;
+            // eslint-disable-next-line no-await-in-loop
+            await conn.execute(`UPDATE api_providers SET priority = ? WHERE id = ?`, [Number(item.priority), Number(item.id)]);
+          }
+        }),
+    );
+    providerManager.invalidateConfig();
+    return { success: true };
+  });
+
+  fastify.post('/refresh-health', { preHandler: [requirePermissions('providers.write')] }, async () => {
+    const rows = await query(`SELECT id, name, slug, provider_type, base_url, timeout_ms FROM api_providers ORDER BY id ASC`);
+    const results = [];
+    for (const row of rows) {
+      const type = String(row.provider_type || '').toLowerCase();
+      const slug = String(row.slug || '').toLowerCase();
+      const name = String(row.name || '').toLowerCase();
+      const isCricinfo =
+        type === 'cricinfo' || type === 'espn' || type === 'espn-cricinfo' ||
+        slug === 'cricinfo' || slug === 'espn-cricinfo' || slug === 'espn_cricinfo' ||
+        name.includes('cricinfo') || name.includes('espn');
+      let probeName = null;
+      if (isCricinfo) probeName = 'cricinfo';
+      else if (type === 'cricketdata' || name.includes('cricketdata')) probeName = 'cricketdata';
+      else if (type === 'cricbuzz' || name.includes('cricbuzz')) probeName = 'cricbuzz';
+
+      if (probeName) {
+        // eslint-disable-next-line no-await-in-loop
+        const probe = await probeProvider(probeName, {
+          baseUrl: row.base_url,
+          timeoutMs: Number(row.timeout_ms || 8000),
+        });
+        if (probe) {
+          const status = toHealthStatus(probe.status);
+          const healthy = probe.status === 'up' || probe.status === 'limited';
+          // eslint-disable-next-line no-await-in-loop
+          await query(
+            `UPDATE api_providers
+                SET health_status = ?,
+                    last_success_at = IF(?, NOW(), last_success_at),
+                    last_failure_at = IF(?, NOW(), last_failure_at)
+              WHERE id = ?`,
+            [status, healthy ? 1 : 0, healthy ? 0 : 1, row.id],
+          );
+          results.push({ id: row.id, name: row.name, status, capability_note: probe.capability_note || null });
+        }
+      }
+    }
+    providerManager.invalidateConfig();
+    return { success: true, data: results };
+  });
+
+  fastify.post('/:id/reset-health', { preHandler: [requirePermissions('providers.write')] }, async (request, reply) => {
+    const rows = await query(`SELECT id, name, provider_type FROM api_providers WHERE id = ?`, [request.params.id]);
+    if (!rows.length) return reply.code(404).send({ success: false, error: 'Not found' });
+    const provider = providerManager.getProvider(rows[0].provider_type);
+    await query(
+      `UPDATE api_providers SET health_status = 'unknown', last_failure_at = NULL WHERE id = ?`,
+      [request.params.id],
+    );
+    if (provider) {
+      provider.healthy = true;
+      provider.consecutiveFailures = 0;
+      provider.lastFailure = null;
+    }
+    providerManager.invalidateConfig();
+    logger.info({ msg: 'Provider health reset by admin', id: rows[0].id, name: rows[0].name });
     return { success: true };
   });
 }

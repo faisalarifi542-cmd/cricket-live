@@ -9,6 +9,57 @@ export class CricbuzzProvider extends BaseProvider {
     super('cricbuzz', 1); // highest priority
   }
 
+  healthState() {
+    return this.healthy ? 'up' : 'down';
+  }
+
+  isConfigured() {
+    return true; // no API key or config needed
+  }
+
+  configReason() {
+    return null;
+  }
+
+  getCapabilities() {
+    return {
+      liveMatches: 'full',
+      upcomingMatches: 'full',
+      recentMatches: 'full',
+      matchInfo: 'full',
+      matchInfoDetailed: 'full',
+      matchHeader: 'full',
+      matchStats: 'full',
+      matchOvers: 'full',
+      scorecard: 'full',
+      commentary: 'full',
+      fullCommentary: 'full',
+      quickAccess: 'full',
+      seriesList: 'full',
+      seriesInfo: 'full',
+      pointsTable: 'full',
+      playerInfo: 'full',
+      teamInfo: 'full',
+      newsStories: 'full',
+      newsDetail: 'full',
+      rankings: 'full',
+      seriesStatsTypes: 'full',
+      seriesStatsTable: 'full',
+      seriesNews: 'full',
+      matchNews: 'full',
+      highlights: 'full',
+      ballsMap: 'full',
+      overByOver: 'full',
+      upcomingSchedule: 'full',
+      fullSchedule: 'full',
+      matchSquads: 'full',
+      liveLine: 'full',
+      seriesTeams: 'full',
+      seriesSquadGroups: 'full',
+      seriesSquad: 'full',
+    };
+  }
+
   async getLiveMatches() {
     try {
       const raw = await cricbuzzApi.getHomeMatches();

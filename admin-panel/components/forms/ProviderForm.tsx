@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 
-type ProviderValue = Partial<ProviderInput> & { id?: number };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ProviderValue = Record<string, any> & { id?: number };
 
 export function ProviderForm({
   open,
@@ -19,7 +20,8 @@ export function ProviderForm({
 }: {
   open: boolean;
   onClose: () => void;
-  initial?: ProviderValue | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  initial?: Record<string, any> | null;
   onSaved: () => void;
 }) {
   const isEdit = !!initial?.id;
@@ -33,6 +35,7 @@ export function ProviderForm({
     timeout_ms: initial?.timeout_ms ?? 8000,
     rate_limit_per_minute: initial?.rate_limit_per_minute ?? 60,
     is_active: initial?.is_active ?? true,
+    role: (initial?.role || initial?.metadata?.role || 'fallback') as 'primary' | 'fallback',
   }));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -96,7 +99,7 @@ export function ProviderForm({
             value={form.slug ?? ''}
             onChange={(e) => update('slug', e.target.value)}
             placeholder="cricbuzz"
-            disabled={isEdit}
+            readOnly={isEdit}
           />
         </Field>
         <Field label="Name" required error={errors.name}>
@@ -114,7 +117,11 @@ export function ProviderForm({
           />
         </Field>
         <div className="md:col-span-2">
-          <Field label="Base URL" error={errors.base_url} hint="Optional — used for diagnostics">
+          <Field
+            label="Base URL"
+            error={errors.base_url}
+            hint="Optional for built-in providers; required to test custom providers"
+          >
             <Input
               value={(form.base_url ?? '') as string}
               onChange={(e) => update('base_url', e.target.value)}
@@ -134,23 +141,46 @@ export function ProviderForm({
         <Field label="Priority" error={errors.priority} hint="Lower numbers tried first">
           <Input
             type="number"
-            value={form.priority ?? 100}
-            onChange={(e) => update('priority', Number(e.target.value))}
+            value={Number.isFinite(form.priority) ? form.priority : ''}
+            onChange={(e) =>
+              update('priority', e.target.value === '' ? NaN : Number(e.target.value))
+            }
           />
         </Field>
         <Field label="Timeout (ms)" error={errors.timeout_ms}>
           <Input
             type="number"
-            value={form.timeout_ms ?? 8000}
-            onChange={(e) => update('timeout_ms', Number(e.target.value))}
+            value={Number.isFinite(form.timeout_ms) ? form.timeout_ms : ''}
+            onChange={(e) =>
+              update('timeout_ms', e.target.value === '' ? NaN : Number(e.target.value))
+            }
           />
         </Field>
         <Field label="Rate limit / min" error={errors.rate_limit_per_minute}>
           <Input
             type="number"
-            value={form.rate_limit_per_minute ?? 60}
-            onChange={(e) => update('rate_limit_per_minute', Number(e.target.value))}
+            value={
+              Number.isFinite(form.rate_limit_per_minute)
+                ? form.rate_limit_per_minute
+                : ''
+            }
+            onChange={(e) =>
+              update(
+                'rate_limit_per_minute',
+                e.target.value === '' ? NaN : Number(e.target.value),
+              )
+            }
           />
+        </Field>
+        <Field label="Role" error={errors.role}>
+          <select
+            value={(form.role as string) ?? 'fallback'}
+            onChange={(e) => update('role', e.target.value as 'primary' | 'fallback')}
+            className="h-10 w-full rounded-xl border border-line bg-white/5 px-3 text-sm text-slate-100"
+          >
+            <option value="primary">Primary</option>
+            <option value="fallback">Fallback</option>
+          </select>
         </Field>
         <div className="self-end">
           <Switch

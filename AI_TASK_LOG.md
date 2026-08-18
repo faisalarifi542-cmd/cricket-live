@@ -1,5 +1,43 @@
 # AI Task Log
 
+## Task: Home premium landscape refinement — final visual pass (2026-07-14)
+
+Continued Fable 5's partial Home-only work without reverting unrelated changes.
+Resolved the approved hero conflict in favour of the 1.34 landscape card and
+current/latest innings only; historical innings remain intact in the model and
+detail scorecards.
+
+### Changed
+- `lib/screens/home/widgets/home_hero.dart`: shared aspect diagnostics, compact
+  current-innings labels, no historical hero row, 4–6px carousel peek, darker
+  stadium treatment, restrained glow, compact spacing, CTA polish.
+- `lib/screens/home/widgets/home_header.dart`: 40→36px logo and outlined bell.
+- `lib/screens/home/widgets/home_match_cards.dart`: continuous card metrics,
+  current innings only, fixed stable height, subtle depth/rings.
+- `lib/screens/home/widgets/home_actions.dart`: two-row venue/date-action footer.
+- `lib/screens/home/widgets/home_featured.dart`: restrained heading polish.
+- `lib/screens/home/home_screen.dart`: preserved Fable's full-bleed hero and
+  Home-only section spacing.
+- `test/home_hero_overflow_test.dart`: replaced obsolete previous-innings
+  expectation with current score/ordinal/history-preservation assertions.
+- Added `test/home_hero_dimensions_test.dart`,
+  `test/home_visual_evidence_test.dart`, and `HOME_VISUAL_EVIDENCE.md`.
+
+### Verification
+- Format clean.
+- Scoped analyze: no errors/warnings; three existing test info notices.
+- Overflow suite: 4/4 passed.
+- Dimensions suite: 10/10 passed; a later runner invocation timed out without
+  output due orphaned Windows Flutter test processes (documented in evidence).
+- Visual evidence default mode: 12/12 passed; 12 gated PNGs generated using
+  isolated capture processes because Windows kept multi-capture raster workers alive.
+
+### Pending
+- Physical-device comparison is still required for subjective darkness, glow,
+  balance, and Android font rendering.
+
+---
+
 ## Task: Premium Test score presentation — Home/Matches/Schedule (2026-06-29)
 
 Inspect-first pass on the Test stacked-score visuals across all four surfaces.
@@ -3467,3 +3505,26 @@ Created a centralized theme token system in `CricColors` ThemeExtension, then sy
 ### Pending Issues
 - Parts 10-11 (Backend/Admin image management & controls) deferred — requires server-side API/database changes outside this PR's scope
 - Visual QA at 360dp width not performed (requires running app with connected backend)
+
+## 2026-07-14 - Home final visual cleanup
+
+Changed files:
+- `lib/screens/home/home_screen.dart`
+- `lib/screens/home/widgets/home_hero.dart`
+- `lib/screens/home/widgets/home_match_cards.dart`
+- `lib/screens/home/widgets/home_featured.dart`
+- `HOME_VISUAL_EVIDENCE.md`
+- `AI_TASK_LOG.md`
+
+Commands/results:
+- `dart format` on changed Home/test files: passed.
+- Scoped `flutter analyze --no-pub`: no errors/warnings; 3 existing info notices.
+- Hero overflow suite: 4/4 passed.
+- Score resilience + behavior + feed suites: 38/38 passed.
+- Default visual-evidence render suite: 12/12 passed.
+- Dimensions rerun stalled before first test output; terminated, not claimed.
+- Gated raster write deadlocked after capture on Windows; only the 352x856
+  single PNG refreshed, with the prior 11 evidence PNGs retained.
+
+Pending:
+- Physical-device review of darkness, glow restraint, and premium balance.

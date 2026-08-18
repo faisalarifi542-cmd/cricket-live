@@ -111,6 +111,27 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
     _loadAppConfig();
   }
 
+  bool _splashPrecached = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Kick the splash artwork decode from a context that already has a
+    // MediaQuery + ImageConfiguration, so `Image.asset` inside the splash
+    // widget hits a warm binary cache and paints on its first frame. Guard
+    // so the same asset is only precached once per app process.
+    if (!_splashPrecached) {
+      _splashPrecached = true;
+      // Fire-and-forget: precache never blocks UI and swallows its own errors
+      // (bundled asset — a genuine failure is caught by the splash's hard
+      // timeout, not surfaced here).
+      precacheImage(
+        const AssetImage('assets/splash/splash_composed.webp'),
+        context,
+      ).catchError((Object _, StackTrace __) {});
+    }
+  }
+
   @override
   void dispose() {
     ConsentManager.instance.privacyOptionsRequired.removeListener(
@@ -188,8 +209,8 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
         NotificationService.instance.syncAllTags();
         // Apply backend notification preference defaults (stream ON, others
         // opt-in) — only affects categories the user hasn't explicitly chosen.
-        NotificationSettingsService.instance
-            .applyConfigDefaults(_notificationDefaultsFromConfig(response.data));
+        NotificationSettingsService.instance.applyConfigDefaults(
+            _notificationDefaultsFromConfig(response.data));
         setState(() => _appConfig = config);
         _maybeShowColdStartAppOpen();
       }
@@ -354,8 +375,8 @@ class _CricProAppState extends State<CricProApp> with WidgetsBindingObserver {
     }
     // Rankings is reached by pushing the screen (same as the More menu does).
     if (type == 'rankings') {
-      navigator.push(MaterialPageRoute<void>(
-          builder: (_) => const RankingsScreen()));
+      navigator.push(
+          MaterialPageRoute<void>(builder: (_) => const RankingsScreen()));
       return;
     }
   }
@@ -751,10 +772,10 @@ class _RootShellState extends State<RootShell> {
           onOpenPrivacyOptions: () {
             ConsentManager.instance.showPrivacyOptionsForm();
           },
-          onOpenFloatingScore: (!kIsWeb &&
-                  defaultTargetPlatform == TargetPlatform.android)
-              ? () => _push(const FloatingScoreSettingsScreen())
-              : null,
+          onOpenFloatingScore:
+              (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                  ? () => _push(const FloatingScoreSettingsScreen())
+                  : null,
         );
     }
   }

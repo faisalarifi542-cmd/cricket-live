@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Modal } from './Modal';
 import { Button } from './Button';
 
@@ -32,6 +33,10 @@ export function ConfirmDialog({
       setLoading(true);
       await onConfirm();
       onClose();
+    } catch (err) {
+      // Without this the dialog silently resets and the admin believes a
+      // failed destructive action succeeded.
+      toast.error(err instanceof Error ? err.message : 'Action failed');
     } finally {
       setLoading(false);
     }

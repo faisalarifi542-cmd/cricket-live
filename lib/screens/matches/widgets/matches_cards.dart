@@ -158,12 +158,15 @@ class _CardTopRow extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            shortSeriesTitle(match.series),
+            cardSeriesTitle(match.series),
             // Allow the title two lines so important comps aren't cut to an
             // ugly one-line "Women's T20 WC 20…"; width is still constrained
             // by Expanded so it can never overflow.
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
+            // Centred so a wrapped title stays centred (consistent with every
+            // other match card across the app).
+            textAlign: TextAlign.center,
             style: TextStyle(
               color: c.cyan,
               fontWeight: FontWeight.w800,
@@ -179,6 +182,8 @@ class _CardTopRow extends StatelessWidget {
           child: Text(
             _dateTimeLabel(match),
             maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            softWrap: false,
             style: TextStyle(
               color: c.muted,
               fontWeight: FontWeight.w700,

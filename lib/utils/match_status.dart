@@ -203,45 +203,44 @@ class MatchStatusDisplay {
       case MatchSubPhase.stumps:
         return MatchStatusDisplay(
           badge: 'STUMPS',
-          phaseLabel: _stumpsLabel(match.statusText),
+          phaseLabel: _composePhaseNote(match.statusText, 'Stumps'),
           color: c.live,
           subPhase: MatchSubPhase.stumps,
         );
       case MatchSubPhase.lunch:
         return MatchStatusDisplay(
           badge: 'LUNCH',
-          phaseLabel: match.statusText.isNotEmpty ? match.statusText : 'Lunch',
+          phaseLabel: _composePhaseNote(match.statusText, 'Lunch'),
           color: c.live,
           subPhase: MatchSubPhase.lunch,
         );
       case MatchSubPhase.tea:
         return MatchStatusDisplay(
           badge: 'TEA',
-          phaseLabel: match.statusText.isNotEmpty ? match.statusText : 'Tea',
+          phaseLabel: _composePhaseNote(match.statusText, 'Tea'),
           color: c.live,
           subPhase: MatchSubPhase.tea,
         );
       case MatchSubPhase.drinks:
         return MatchStatusDisplay(
           badge: 'DRINKS',
-          phaseLabel: match.statusText.isNotEmpty ? match.statusText : 'Drinks',
+          phaseLabel: _composePhaseNote(match.statusText, 'Drinks'),
           color: c.live,
           subPhase: MatchSubPhase.drinks,
         );
       case MatchSubPhase.rain:
         return MatchStatusDisplay(
           badge: 'RAIN',
-          phaseLabel:
-              match.statusText.isNotEmpty ? match.statusText : 'Rain delay',
+          phaseLabel: _composePhaseNote(match.statusText, 'Rain',
+              emptyFallback: 'Rain delay'),
           color: c.live,
           subPhase: MatchSubPhase.rain,
         );
       case MatchSubPhase.inningsBreak:
         return MatchStatusDisplay(
           badge: 'INN BREAK',
-          phaseLabel: match.statusText.isNotEmpty
-              ? match.statusText
-              : 'Innings break',
+          phaseLabel: _composePhaseNote(match.statusText, 'Innings Break',
+              emptyFallback: 'Innings break'),
           color: c.live,
           subPhase: MatchSubPhase.inningsBreak,
         );
@@ -260,17 +259,44 @@ class MatchStatusDisplay {
     }
   }
 
-  /// "Stumps Day 1" -> "Day 1 Stumps" reads more naturally in a phase label.
-  /// Falls back to the original text when the shape doesn't match.
-  static String _stumpsLabel(String statusText) {
-    if (statusText.isEmpty) return 'Stumps';
-    final t = statusText.trim();
-    // "Stumps, Day 1" / "Stumps Day 1" / "Day 1: Stumps" -> "Day 1 Stumps".
-    final m = RegExp(r'stumps[,:\\s]*(.*)', caseSensitive: false).firstMatch(t);
-    if (m != null) {
-      final rest = m.group(1)!.trim().replaceAll(RegExp(r'[:,:]'), '').trim();
-      if (rest.isNotEmpty) return '$rest Stumps';
+  /// Normalizes a break-phase status note into a clean, natural sentence and
+  /// kills the malformed provider shapes seen in the wild:
+  ///   "- WI trail by 491 runs Stumps"          -> "WI trail by 491 runs · Stumps"
+  ///   "Day 3: Stumps - India A lead by 175 runs"-> "Day 3: Stumps · India A lead by 175 runs"
+  ///   "Stumps"                                  -> "Stumps"
+  /// It (1) lifts a "Day N" token to the front, (2) removes the phase word from
+  /// the body wherever it sits, (3) strips leading/trailing dashes/colons/·, and
+  /// (4) recomposes: with a Day prefix the phase leads ("Day N: Phase · note");
+  /// without one, the note leads and the phase trails ("note · Phase"). Both read
+  /// naturally and never start with a dash.
+  static String _composePhaseNote(String statusText, String phase,
+      {String? emptyFallback}) {
+    var t = statusText.trim();
+    if (t.isEmpty) return emptyFallback ?? phase;
+
+    // Lift a "Day N" token to the front and remove it from the body.
+    String dayLabel = '';
+    final dayMatch =
+        RegExp(r'\bday\s*(\d+)\b', caseSensitive: false).firstMatch(t);
+    if (dayMatch != null) {
+      dayLabel = 'Day ${dayMatch.group(1)}';
+      t = t.replaceRange(dayMatch.start, dayMatch.end, ' ');
     }
-    return t;
+
+    // Drop the phase word wherever it appears (whole word, case-insensitive).
+    t = t.replaceAll(
+        RegExp(r'\b' + RegExp.escape(phase) + r'\b', caseSensitive: false),
+        ' ');
+
+    // Strip separators/punctuation left dangling and collapse whitespace so the
+    // body never leads with "- " or a stray colon.
+    final rest = t
+        .replaceAll(RegExp(r'[·•\-–—:,]+'), ' ')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+
+    final head = dayLabel.isNotEmpty ? '$dayLabel: $phase' : phase;
+    if (rest.isEmpty) return head;
+    return dayLabel.isNotEmpty ? '$head · $rest' : '$rest · $phase';
   }
 }

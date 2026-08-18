@@ -38,6 +38,33 @@ export class BaseProvider {
     }
   }
 
+  // --- Admin-facing metadata (overridden by subclasses) ---
+
+  /** @returns {'up'|'down'|'limited'|'misconfigured'|'disabled'} */
+  healthState() {
+    return this.healthy ? 'up' : 'down';
+  }
+
+  /** @returns {boolean} true when provider has all required config (keys, base URL, etc.) */
+  isConfigured() {
+    return true; // most providers need no extra config
+  }
+
+  /** @returns {string|null} human-readable reason when !isConfigured(), null otherwise */
+  configReason() {
+    return null;
+  }
+
+  /**
+   * Return a static map of method → support level so the admin panel can render
+   * what each provider actually does without probing every method at runtime.
+   * Override in each subclass.
+   * @returns {{[method: string]: 'full'|'limited'|'unsupported'}}
+   */
+  getCapabilities() {
+    return {};
+  }
+
   // --- Methods to implement ---
 
   /** @returns {Promise<Array>} list of live matches */

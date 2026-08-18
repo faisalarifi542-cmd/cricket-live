@@ -34,8 +34,8 @@ void main() {
     // No RenderFlex/overflow exception was thrown laying out two innings.
     expect(tester.takeException(), isNull);
     // Stacked per-innings rows with inline overs, no `1st`/`2nd` prefix.
-    expect(find.text('362/10 · 87.1 ov'), findsOneWidget);
-    expect(find.text('391/10 · 96.2 ov'), findsOneWidget);
+    expect(find.text('362/10 · 87.1 OV'), findsOneWidget);
+    expect(find.text('391/10 · 96.2 OV'), findsOneWidget);
   });
 
   testWidgets('limited-overs score shows main score and overs', (tester) async {
@@ -48,7 +48,7 @@ void main() {
     ));
     expect(tester.takeException(), isNull);
     expect(find.text('218/10'), findsOneWidget);
-    expect(find.text('44.2 ov'), findsOneWidget);
+    expect(find.text('44.2 OVERS'), findsOneWidget);
   });
 
   testWidgets('yet-to-bat placeholder renders when there is no score',
@@ -80,8 +80,8 @@ void main() {
     ));
     expect(tester.takeException(), isNull);
     // Premium stacked format — never the old `1st`/`2nd`-prefixed rows.
-    expect(find.text('362/10 · 87.1 ov'), findsOneWidget);
-    expect(find.text('391/10 · 96.2 ov'), findsOneWidget);
+    expect(find.text('362/10 · 87.1 OV'), findsOneWidget);
+    expect(find.text('391/10 · 96.2 OV'), findsOneWidget);
     expect(find.text('1st'), findsNothing);
     expect(find.text('2nd'), findsNothing);
   });
@@ -102,8 +102,8 @@ void main() {
       width: 120,
     ));
     expect(tester.takeException(), isNull);
-    expect(find.text('291/10 · 84.0 ov'), findsOneWidget);
-    expect(find.text('90/3 · 20.1 ov'), findsOneWidget); // no * — not live
+    expect(find.text('291/10 · 84.0 OV'), findsOneWidget);
+    expect(find.text('90/3 · 20.1 OV'), findsOneWidget); // no * — not live
   });
 
   testWidgets('current (live) innings gets a * but order is NOT reversed',
@@ -123,8 +123,8 @@ void main() {
     ));
     expect(tester.takeException(), isNull);
     // 1st innings first (no star), current 2nd innings starred — order kept.
-    expect(find.text('291/10 · 84.0 ov'), findsOneWidget);
-    expect(find.text('90/3* · 20.1 ov'), findsOneWidget);
+    expect(find.text('291/10 · 84.0 OV'), findsOneWidget);
+    expect(find.text('90/3* · 20.1 OV'), findsOneWidget);
   });
 
   testWidgets(
@@ -235,8 +235,8 @@ void main() {
       width: 96,
     ));
     expect(tester.takeException(), isNull);
-    expect(find.text('438/10 · 114.5 ov'), findsOneWidget);
-    expect(find.text('288/9d · 94.0 ov'), findsOneWidget);
+    expect(find.text('438/10 · 114.5 OV'), findsOneWidget);
+    expect(find.text('288/9d · 94.0 OV'), findsOneWidget);
     final richTexts = tester
         .widgetList<Text>(find.byType(Text))
         .where((t) => t.textSpan != null)
@@ -270,8 +270,8 @@ void main() {
       ));
       expect(tester.takeException(), isNull, reason: '$mode overflowed');
       // Identical row strings everywhere — no `1st`/`2nd`, declared `d` kept.
-      expect(find.text('438/10 · 114.5 ov'), findsOneWidget, reason: '$mode');
-      expect(find.text('288/9d · 94.0 ov'), findsOneWidget, reason: '$mode');
+      expect(find.text('438/10 · 114.5 OV'), findsOneWidget, reason: '$mode');
+      expect(find.text('288/9d · 94.0 OV'), findsOneWidget, reason: '$mode');
       expect(find.text('1st'), findsNothing);
       expect(find.text('2nd'), findsNothing);
     }

@@ -13,7 +13,16 @@ import { Button } from '@/components/ui/Button';
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get('next') || '/dashboard';
+  // Only same-origin paths are allowed: an absolute or protocol-relative URL
+  // here would let `?next=https://evil.com` redirect the admin straight after
+  // a successful sign-in (open redirect / phishing vector).
+  const rawNext = searchParams.get('next') || '';
+  const next =
+    rawNext.startsWith('/') &&
+    !rawNext.startsWith('//') &&
+    !rawNext.startsWith('/login')
+      ? rawNext
+      : '/dashboard';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -45,7 +54,7 @@ export function LoginForm() {
       setToken(res.token);
       setStoredUser(res.user);
       toast.success(`Welcome back, ${res.user.name || res.user.email}`);
-      router.replace(next.startsWith('/login') ? '/dashboard' : next);
+      router.replace(next);
     } catch (err) {
       const message =
         err instanceof ApiError

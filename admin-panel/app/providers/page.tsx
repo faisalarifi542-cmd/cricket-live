@@ -2,7 +2,19 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Activity, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  KeyRound,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Star,
+  Trash2,
+} from 'lucide-react';
 import { AdminShell } from '@/components/layout/AdminShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { DataTable, type Column } from '@/components/ui/DataTable';
@@ -15,25 +27,35 @@ import { Field, Input, Textarea } from '@/components/ui/Input';
 import { ProviderForm } from '@/components/forms/ProviderForm';
 import { providersApi } from '@/lib/api';
 import { useAuth, usePermissions, useResource } from '@/lib/hooks';
-import { maskKey } from '@/lib/utils';
+import type { Provider, ProviderCapabilities } from '@/types/provider';
 
-type Provider = {
-  id: number;
-  slug: string;
-  name: string;
-  base_url?: string;
-  provider_type?: string;
-  description?: string;
-  is_active: boolean;
-  priority: number;
-  timeout_ms?: number;
-  rate_limit_per_minute?: number;
-  health_status?: string;
-  last_error?: string;
-  last_success_at?: string;
-  last_failure_at?: string;
-  metadata?: { role?: string } | null;
-};
+function roleBadge(role?: string | null) {
+  const r = String(role || 'fallback').toLowerCase();
+  if (r === 'primary') return { label: 'Primary', color: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' } as const;
+  return { label: 'Fallback', color: 'bg-slate-500/15 text-slate-400 border-slate-500/30' } as const;
+}
+
+function healthVariant(status?: string): 'up' | 'down' | 'limited' | 'disabled' | 'misconfigured' {
+  const s = String(status || 'unknown').toLowerCase();
+  if (s === 'healthy' || s === 'up') return 'up';
+  if (s === 'limited') return 'limited';
+  if (s === 'down') return 'down';
+  if (s === 'disabled') return 'disabled';
+  if (s === 'misconfigured') return 'misconfigured';
+  return 'down';
+}
+
+function capsSummary(caps?: ProviderCapabilities | null): string {
+  if (!caps || !Object.keys(caps).length) return '—';
+  const full = Object.entries(caps).filter(([, v]) => v === 'full').length;
+  const limited = Object.entries(caps).filter(([, v]) => v === 'limited').length;
+  const unsupported = Object.entries(caps).filter(([, v]) => v === 'unsupported').length;
+  const parts: string[] = [];
+  if (full) parts.push(`${full} full`);
+  if (limited) parts.push(`${limited} limited`);
+  if (unsupported) parts.push(`${unsupported} unsupported`);
+  return parts.join(', ');
+}
 
 export default function ProvidersPage() {
   return (
@@ -54,21 +76,27 @@ function ProvidersInner() {
   const [toDelete, setToDelete] = useState<Provider | null>(null);
   const [keysFor, setKeysFor] = useState<Provider | null>(null);
   const [showTestFetch, setShowTestFetch] = useState(false);
+  const [expandedCap, setExpandedCap] = useState<number | null>(null);
 
   async function toggle(p: Provider) {
-    await providersApi.toggle(p.id);
-    toast.success(`Provider ${p.is_active ? 'disabled' : 'enabled'}`);
-    reload();
+    try {
+      await providersApi.toggle(p.id);
+      toast.success(`Provider ${p.is_active ? 'disabled' : 'enabled'}`);
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
   }
   async function test(p: Provider) {
     const t = toast.loading('Testing provider…');
     try {
       const res = await providersApi.test(p.id);
       toast.dismiss(t);
-      // 'up' and 'limited' are both usable; only 'down'/'misconfigured' are errors.
       const good = res.status === 'healthy' || res.status === 'up' || res.status === 'limited';
       const note = (res as { capability_note?: string }).capability_note;
-      const label = note ? `Provider ${p.name}: ${res.status} — ${note}` : `Provider ${p.name}: ${res.status}`;
+      const label = note
+        ? `Provider ${p.name}: ${res.status} — ${note}`
+        : `Provider ${p.name}: ${res.status}`;
       toast[good ? 'success' : 'error'](label);
       reload();
     } catch (err) {
@@ -77,9 +105,62 @@ function ProvidersInner() {
     }
   }
   async function reset(p: Provider) {
-    await providersApi.reset(p.id);
-    toast.success('Provider health reset');
-    reload();
+    try {
+      await providersApi.reset(p.id);
+      toast.success('Provider health reset');
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
+  }
+  async function setPrimary(p: Provider) {
+    try {
+      await providersApi.setPrimary(p.id);
+      toast.success(`${p.name} is now the primary provider`);
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
+  }
+  async function resetHealth(p: Provider) {
+    try {
+      await providersApi.resetHealth(p.id);
+      toast.success(`${p.name} in-memory health reset`);
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
+  }
+  async function refreshAllHealth() {
+    const t = toast.loading('Refreshing all provider health…');
+    try {
+      const res = await providersApi.refreshHealth();
+      toast.dismiss(t);
+      toast.success(`Health refreshed for ${res.data?.length ?? 0} providers`);
+      reload();
+    } catch (err) {
+      toast.dismiss(t);
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
+  }
+  async function movePriority(p: Provider, direction: 'up' | 'down') {
+    const index = providers.findIndex((r) => r.id === p.id);
+    if (index < 0) return;
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= providers.length) return;
+    const rows = [...providers];
+    [rows[index], rows[swapIndex]] = [rows[swapIndex], rows[index]];
+    // Re-number the whole chain rather than swapping two priority VALUES: a
+    // value swap is a no-op when both rows share a priority, and new providers
+    // all default to 100.
+    const order = rows.map((r, i) => ({ id: r.id, priority: (i + 1) * 10 }));
+    try {
+      await providersApi.reorder(order);
+      toast.success('Provider order updated');
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed');
+    }
   }
 
   const columns: Column<Provider>[] = [
@@ -88,17 +169,74 @@ function ProvidersInner() {
       header: 'Provider',
       render: (p) => (
         <div>
-          <div className="font-medium text-slate-100">{p.name}</div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-slate-100">{p.name}</span>
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${roleBadge(p.role || p.metadata?.role).color}`}
+            >
+              {roleBadge(p.role || p.metadata?.role).label}
+            </span>
+          </div>
           <div className="font-mono text-[10px] uppercase tracking-wide text-slate-500">
-            {p.slug} · {p.provider_type || 'custom'} · {p.metadata?.role || 'provider'}
+            {p.slug} · {p.provider_type || 'custom'} · priority {p.priority}
           </div>
         </div>
       ),
     },
-    { id: 'base_url', header: 'Base URL', render: (p) => <span className="font-mono text-xs text-slate-400">{p.base_url || '—'}</span> },
-    { id: 'priority', header: 'Priority', render: (p) => p.priority },
-    { id: 'limits', header: 'Limits', render: (p) => <span className="text-xs text-slate-400">{p.timeout_ms || 8000}ms / {p.rate_limit_per_minute || 60} rpm</span> },
-    { id: 'health', header: 'Health', render: (p) => <StatusBadge status={p.health_status || 'unknown'} /> },
+    {
+      id: 'capabilities',
+      header: 'Capabilities',
+      render: (p) => (
+        <div>
+          <button
+            type="button"
+            className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1"
+            onClick={() => setExpandedCap(expandedCap === p.id ? null : p.id)}
+          >
+            {capsSummary(p.capabilities)}
+            {expandedCap === p.id ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+          </button>
+          {expandedCap === p.id && p.capabilities && (
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+              {Object.entries(p.capabilities).map(([method, level]) => (
+                <div key={method} className="flex items-center gap-1">
+                  <span
+                    className={
+                      level === 'full'
+                        ? 'text-emerald-400'
+                        : level === 'limited'
+                        ? 'text-amber-400'
+                        : 'text-slate-600'
+                    }
+                  >
+                    {level === 'full' ? '●' : level === 'limited' ? '◐' : '○'}
+                  </span>
+                  <span className={level === 'unsupported' ? 'text-slate-600' : 'text-slate-400'}>
+                    {method}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: 'health',
+      header: 'Health',
+      render: (p) => (
+        <div className="flex flex-col gap-1">
+          <StatusBadge status={healthVariant(p.live_health_state || p.health_status)} />
+          {p.config_reason && (
+            <span className="text-[10px] text-amber-400">{p.config_reason}</span>
+          )}
+        </div>
+      ),
+    },
     {
       id: 'active',
       header: 'Active',
@@ -118,13 +256,51 @@ function ProvidersInner() {
         <div className="flex items-center justify-end gap-1">
           {perms.can('providers.write') && (
             <>
-              <Button size="sm" variant="ghost" icon={<Activity className="h-3.5 w-3.5" />} onClick={() => test(p)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<ArrowUp className="h-3.5 w-3.5" />}
+                onClick={() => movePriority(p, 'up')}
+                title="Move up"
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<ArrowDown className="h-3.5 w-3.5" />}
+                onClick={() => movePriority(p, 'down')}
+                title="Move down"
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Star className="h-3.5 w-3.5" />}
+                onClick={() => setPrimary(p)}
+                title="Make default (primary)"
+              >
+                Default
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Activity className="h-3.5 w-3.5" />}
+                onClick={() => test(p)}
+              >
                 Test
               </Button>
-              <Button size="sm" variant="ghost" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={() => reset(p)}>
-                Reset
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<RefreshCw className="h-3.5 w-3.5" />}
+                onClick={() => resetHealth(p)}
+              >
+                Health
               </Button>
-              <Button size="sm" variant="ghost" icon={<KeyRound className="h-3.5 w-3.5" />} onClick={() => setKeysFor(p)}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<KeyRound className="h-3.5 w-3.5" />}
+                onClick={() => setKeysFor(p)}
+              >
                 Keys
               </Button>
               <Button
@@ -158,11 +334,29 @@ function ProvidersInner() {
         description="Configure cricket data providers, their priority, health, and private API keys. Private keys never leave the backend."
         right={
           <>
-            <Button variant="secondary" icon={<RefreshCw className="h-4 w-4" />} onClick={reload} loading={loading}>
+            <Button
+              variant="secondary"
+              icon={<RefreshCw className="h-4 w-4" />}
+              onClick={reload}
+              loading={loading}
+            >
               Refresh
             </Button>
             {perms.can('providers.write') && (
-              <Button variant="secondary" icon={<Activity className="h-4 w-4" />} onClick={() => setShowTestFetch(true)}>
+              <Button
+                variant="secondary"
+                icon={<RefreshCw className="h-4 w-4" />}
+                onClick={refreshAllHealth}
+              >
+                Refresh health
+              </Button>
+            )}
+            {perms.can('providers.write') && (
+              <Button
+                variant="secondary"
+                icon={<Activity className="h-4 w-4" />}
+                onClick={() => setShowTestFetch(true)}
+              >
                 Test data fetch
               </Button>
             )}
@@ -193,6 +387,7 @@ function ProvidersInner() {
       />
 
       <ProviderForm
+        key={showForm ? editing?.id ?? 'new' : 'closed'}
         open={showForm}
         onClose={() => setShowForm(false)}
         initial={editing}
@@ -215,7 +410,11 @@ function ProvidersInner() {
         confirmLabel="Delete provider"
       />
 
-      <ProviderKeysDialog provider={keysFor} onClose={() => setKeysFor(null)} canWrite={perms.can('providers.write')} />
+      <ProviderKeysDialog
+        provider={keysFor}
+        onClose={() => setKeysFor(null)}
+        canWrite={perms.can('providers.write')}
+      />
 
       <ProviderTestFetchDialog open={showTestFetch} onClose={() => setShowTestFetch(false)} />
     </>
@@ -242,11 +441,24 @@ function ProviderKeysDialog({
   const [keyValue, setKeyValue] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [toRevoke, setToRevoke] = useState<{ id: number; label: string } | null>(
+    null,
+  );
 
-  const keys = (data?.data || []) as Array<{ id: number; label: string; key_value: string; created_at?: string; notes?: string }>;
+  // The backend deliberately never returns key_value — only key metadata.
+  const keys = (data?.data || []) as Array<{
+    id: number;
+    label: string;
+    created_at?: string;
+    notes?: string;
+  }>;
 
   async function add() {
-    if (!provider || !label || !keyValue) return;
+    if (!provider) return;
+    if (!label.trim() || !keyValue.trim()) {
+      toast.error('Label and API key are required');
+      return;
+    }
     setSubmitting(true);
     try {
       await providersApi.addKey(provider.id, { label, key_value: keyValue, notes });
@@ -270,6 +482,7 @@ function ProviderKeysDialog({
   }
 
   return (
+    <>
     <Modal
       open={!!provider}
       onClose={onClose}
@@ -280,10 +493,18 @@ function ProviderKeysDialog({
       {canWrite && (
         <div className="mb-4 grid gap-2 rounded-xl border border-line bg-white/[0.04] p-3 md:grid-cols-4">
           <Field label="Label">
-            <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Primary" />
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Primary"
+            />
           </Field>
           <Field label="API key">
-            <Input value={keyValue} onChange={(e) => setKeyValue(e.target.value)} placeholder="sk_live_…" />
+            <Input
+              value={keyValue}
+              onChange={(e) => setKeyValue(e.target.value)}
+              placeholder="sk_live_…"
+            />
           </Field>
           <div className="md:col-span-2">
             <Field label="Notes">
@@ -296,7 +517,9 @@ function ProviderKeysDialog({
             </Field>
           </div>
           <div className="md:col-span-4 flex justify-end">
-            <Button onClick={add} loading={submitting}>Add key</Button>
+            <Button onClick={add} loading={submitting}>
+              Add key
+            </Button>
           </div>
         </div>
       )}
@@ -307,14 +530,22 @@ function ProviderKeysDialog({
       ) : (
         <ul className="space-y-2 text-sm">
           {keys.map((k) => (
-            <li key={k.id} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2">
+            <li
+              key={k.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-line bg-white/[0.03] px-3 py-2"
+            >
               <div>
                 <div className="font-medium text-slate-100">{k.label}</div>
-                <div className="font-mono text-xs text-slate-400">{maskKey(k.key_value)}</div>
+                <div className="font-mono text-xs text-slate-400">••••••••</div>
                 {k.notes && <div className="mt-1 text-xs text-slate-500">{k.notes}</div>}
               </div>
               {canWrite && (
-                <Button size="sm" variant="danger" onClick={() => remove(k.id)} icon={<Trash2 className="h-3.5 w-3.5" />}>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => setToRevoke({ id: k.id, label: k.label })}
+                  icon={<Trash2 className="h-3.5 w-3.5" />}
+                >
                   Revoke
                 </Button>
               )}
@@ -323,10 +554,28 @@ function ProviderKeysDialog({
         </ul>
       )}
     </Modal>
+    <ConfirmDialog
+      open={!!toRevoke}
+      onClose={() => setToRevoke(null)}
+      onConfirm={async () => {
+        if (toRevoke) await remove(toRevoke.id);
+      }}
+      title="Revoke key"
+      description={`This permanently deletes the key "${toRevoke?.label ?? ''}". Anything still using it will stop working. This cannot be undone.`}
+      destructive
+      confirmLabel="Revoke key"
+    />
+    </>
   );
 }
 
-function ProviderTestFetchDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function ProviderTestFetchDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
   const [kind, setKind] = useState<'player' | 'team' | 'match'>('player');
   const [id, setId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -343,9 +592,11 @@ function ProviderTestFetchDialog({ open, onClose }: { open: boolean; onClose: ()
     setErrMsg(null);
     try {
       const fn =
-        kind === 'player' ? providersApi.testPlayer
-        : kind === 'team' ? providersApi.testTeam
-        : providersApi.testMatch;
+        kind === 'player'
+          ? providersApi.testPlayer
+          : kind === 'team'
+          ? providersApi.testTeam
+          : providersApi.testMatch;
       const res = await fn(id.trim());
       setResult({ provider: res.provider, data: res.data });
       toast.success(`Fetched via ${res.provider || 'provider'}`);
@@ -381,7 +632,12 @@ function ProviderTestFetchDialog({ open, onClose }: { open: boolean; onClose: ()
             value={id}
             onChange={(e) => setId(e.target.value)}
             placeholder="Enter ID"
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                run();
+              }
+            }}
           />
         </Field>
         <Button icon={<Activity className="h-4 w-4" />} loading={busy} onClick={run}>
@@ -397,7 +653,8 @@ function ProviderTestFetchDialog({ open, onClose }: { open: boolean; onClose: ()
       {result && (
         <div className="mt-4">
           <div className="mb-2 text-xs uppercase tracking-wide text-slate-400">
-            Answered by: <span className="text-cyan-300">{result.provider || 'unknown'}</span>
+            Answered by:{' '}
+            <span className="text-cyan-300">{result.provider || 'unknown'}</span>
           </div>
           <pre className="max-h-80 overflow-auto rounded-xl border border-line bg-black/40 p-3 text-xs text-slate-200">
             {JSON.stringify(result.data, null, 2)}

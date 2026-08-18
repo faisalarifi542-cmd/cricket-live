@@ -140,12 +140,16 @@ class _ScheduleMatchCard extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          // Centre the series title + match desc block so a
+                          // wrapped title stays centred (consistent with every
+                          // other match card across the app).
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Text(
-                              shortSeriesTitle(match.series).toUpperCase(),
+                              cardSeriesTitle(match.series).toUpperCase(),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: c.cyan,
                                 fontWeight: FontWeight.w800,
@@ -160,6 +164,7 @@ class _ScheduleMatchCard extends StatelessWidget {
                                 match.matchDesc,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: c.text,
                                   fontWeight: FontWeight.w800,
@@ -209,9 +214,10 @@ class _ScheduleMatchCard extends StatelessWidget {
                   ),
                   // Live status / finished result line (e.g. "Day 4 · 2nd
                   // Session · NZ lead by 299 runs").
-                  if (_statusLine(match).isNotEmpty) ...[
+                  if (_statusLine(context, match).isNotEmpty) ...[
                     const SizedBox(height: 10),
-                    _ScheduleStatusLine(text: _statusLine(match), live: match.isLive),
+                    _ScheduleStatusLine(
+                        text: _statusLine(context, match), live: match.isLive),
                   ],
                   const SizedBox(height: 14),
                   // Time + venue split panel.
@@ -226,13 +232,19 @@ class _ScheduleMatchCard extends StatelessWidget {
   }
 
   /// The live status / finished result line for the card. Empty for upcoming
-  /// matches (their info lives in the time/venue panel).
-  String _statusLine(CricketMatch match) {
-    if (match.isLive) {
-      return match.statusText.isNotEmpty ? match.statusText : match.resultText;
-    }
-    if (match.isFinished) {
-      return match.resultText.isNotEmpty ? match.resultText : match.statusText;
+  /// matches (their info lives in the time/venue panel). Routes a LIVE match
+  /// through `MatchStatusDisplay` (the single source of truth) so the schedule
+  /// shows the same clean "Day 3: Stumps · IND A lead by 175 runs" note as the
+  /// Matches card — not the feed's malformed "Day 3: Stumps - India A lead …".
+  String _statusLine(BuildContext context, CricketMatch match) {
+    if (match.isLive || match.isFinished) {
+      final status = MatchStatusDisplay.of(context, match);
+      final fallback =
+          match.resultText.isNotEmpty ? match.resultText : match.statusText;
+      final label =
+          status.phaseLabel.isNotEmpty ? status.phaseLabel : fallback;
+      if (label.isEmpty) return '';
+      return shortMatchStatus(label, match, keepUnits: true);
     }
     return '';
   }
@@ -671,7 +683,19 @@ class _TimeVenuePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final (venueName, city) = _splitVenue(match.venue);
+    final (rawName, city) = _splitVenue(match.venue);
+    // Route through the shared `shortVenue` helper (same as the Matches card) so
+    // a multi-comma "Galle International Stadium, Galle" collapses to the
+    // distinctive "Galle" instead of ellipsizing to "Galle International St…".
+    final shortName = shortVenue(match.venue);
+    final venueName = shortName.isNotEmpty ? shortName : rawName;
+    // Drop the city subtitle when the short name already conveys it (no
+    // "Galle / Galle" duplication).
+    final venueCity = (city.isNotEmpty &&
+            !venueName.toLowerCase().contains(city.toLowerCase()) &&
+            !city.toLowerCase().contains(venueName.toLowerCase()))
+        ? city
+        : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
@@ -685,11 +709,15 @@ class _TimeVenuePanel extends StatelessWidget {
           Expanded(
             child: _InfoBlock(
               icon: Icons.access_time_rounded,
-              primary: _timeLine(match),
-              // A live (often multi-day) match shows its START date/time here —
-              // label it "Started" so it never reads as the selected schedule
-              // date. Upcoming matches keep the local-time note.
-              secondary: match.isLive ? 'Started' : '(Local Time)',
+              // A multi-day match that STARTED on an earlier day (a Test grouped
+              // under Today because it's live) must not read "2 Jul 2026 • 06:30"
+              // — that looks like a future slot under Today. Show "Started Jul 2"
+              // with the current "Day N" as the subtitle instead. Same-day live
+              // and upcoming matches keep the normal Today/Tomorrow time line.
+              primary: _carriedOver(match) ? _startedLine(match) : _timeLine(match),
+              secondary: _carriedOver(match)
+                  ? _liveDayLabel(match)
+                  : (match.isLive ? 'Started' : '(Local Time)'),
               maxPrimaryLines: 2,
             ),
           ),
@@ -713,7 +741,7 @@ class _TimeVenuePanel extends StatelessWidget {
             child: _InfoBlock(
               icon: Icons.location_on_outlined,
               primary: venueName.isEmpty ? 'Venue TBC' : venueName,
-              secondary: city,
+              secondary: venueCity,
               maxPrimaryLines: 2,
             ),
           ),
@@ -731,6 +759,37 @@ class _TimeVenuePanel extends StatelessWidget {
     final formatted = formatMatchDateTime(match.startDateTime);
     if (formatted.isNotEmpty) return formatted;
     return match.statusText.isNotEmpty ? match.statusText : match.startTime;
+  }
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  /// A live match whose start date is before today — i.e. a multi-day match
+  /// carried into Today's list. These get the "Started Jul 2 / Day 3" treatment.
+  bool _carriedOver(CricketMatch match) {
+    if (!match.isLive) return false;
+    final s = match.startDateTime?.toLocal();
+    if (s == null) return false;
+    final now = DateTime.now();
+    return DateTime(s.year, s.month, s.day)
+        .isBefore(DateTime(now.year, now.month, now.day));
+  }
+
+  /// "Started Jul 2" for a carried-over multi-day match.
+  String _startedLine(CricketMatch match) {
+    final s = match.startDateTime?.toLocal();
+    if (s == null) return 'Started';
+    return 'Started ${_months[s.month - 1]} ${s.day}';
+  }
+
+  /// The current day number parsed from the feed's status text ("Day 3: Stumps
+  /// …" -> "Day 3"); falls back to a neutral "In progress" when absent.
+  String _liveDayLabel(CricketMatch match) {
+    final m = RegExp(r'\bday\s*(\d+)\b', caseSensitive: false)
+        .firstMatch(match.statusText);
+    return m != null ? 'Day ${m.group(1)}' : 'In progress';
   }
 
   (String, String) _splitVenue(String venue) {

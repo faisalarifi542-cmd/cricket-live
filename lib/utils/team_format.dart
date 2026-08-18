@@ -219,7 +219,8 @@ List<({String name, String code})> seriesTeamsFromTitle(String title) {
         // Title-case the matched nation for display, then append the suffix.
         final display = h.base
             .split(' ')
-            .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+            .map(
+                (w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
             .join(' ');
         return (
           name: '$display$suffixName'.trim(),
@@ -302,6 +303,42 @@ String shortSeriesTitle(String title) {
   return s;
 }
 
+/// Card-context series title: [shortSeriesTitle] PLUS bilateral-tour
+/// compression to broadcast team codes, so a long tour name fits ONE line on
+/// compact phones instead of wrapping and breaking the card header:
+///   "New Zealand tour of West Indies, 2026" -> "NZ tour of WI, 2026"
+///   "Sri Lanka Women tour of India, 2026"   -> "SL W tour of IND, 2026"
+///   "South Africa A tour of Bangladesh"     -> "SA A tour of BAN"
+/// Only KNOWN nations are compressed (never invents a code) and only for
+/// titles containing "tour of" — tournament/league names ("ICC … World Cup
+/// 2026", "Indian Premier League") pass through [shortSeriesTitle] untouched.
+/// Used by CARD titles (Home hero/list, Matches, Schedule); the Series detail
+/// hero keeps the full names — a detail page has room and reads better long.
+String cardSeriesTitle(String title) {
+  var s = shortSeriesTitle(title);
+  if (!RegExp(r'\btour of\b', caseSensitive: false).hasMatch(s)) return s;
+  // Longest names first so "United States of America" wins over "United
+  // States" and a replaced code can never be re-matched by a shorter name.
+  final names = _kNameToCode.keys.toList()
+    ..sort((a, b) => b.length.compareTo(a.length));
+  for (final n in names) {
+    final re = RegExp(
+      r'\b' +
+          RegExp.escape(n) +
+          r"(?:\s+(women(?:'s)?|w))?(?:\s+(u-?19))?(?:\s+(a))?\b",
+      caseSensitive: false,
+    );
+    s = s.replaceAllMapped(re, (m) {
+      var code = _kNameToCode[n]!;
+      if ((m.group(1) ?? '').isNotEmpty) code += ' W';
+      if ((m.group(2) ?? '').isNotEmpty) code += ' U19';
+      if ((m.group(3) ?? '').isNotEmpty) code += ' A';
+      return code;
+    });
+  }
+  return s;
+}
+
 /// Shortens a verbose match status/result so it fits a pill or the minimized
 /// score bar, using team codes and trimming filler:
 ///   "West Indies need 126 runs in 87 balls"        -> "WI need 126 in 87"
@@ -343,8 +380,7 @@ String shortMatchStatus(String status, CricketMatch match,
   s = s.replaceAll(RegExp(r'\bsuper\s+over\b', caseSensitive: false), 'SO');
 
   // "tied (X)" -> "tied • X" (drops the closing paren too).
-  s = s.replaceAllMapped(
-      RegExp(r'tied\s*\(([^)]*)\)', caseSensitive: false),
+  s = s.replaceAllMapped(RegExp(r'tied\s*\(([^)]*)\)', caseSensitive: false),
       (m) => 'tied • ${m.group(1)!.trim()}');
 
   // Drop "runs"/"balls" filler: "126 runs in 87 balls" -> "126 in 87".
@@ -355,7 +391,10 @@ String shortMatchStatus(String status, CricketMatch match,
   }
   s = s.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
   // Tidy any stray " )" / " •" leftovers.
-  s = s.replaceAll(RegExp(r'\s+\)'), ')').replaceAll(RegExp(r'•\s*$'), '').trim();
+  s = s
+      .replaceAll(RegExp(r'\s+\)'), ')')
+      .replaceAll(RegExp(r'•\s*$'), '')
+      .trim();
   // Finally, un-cram any compressed team code the feed embedded directly
   // ("RSAW won" -> "RSA W won").
   s = _spaceTeamCodes(s, match);
@@ -424,7 +463,8 @@ String formatMatchFormat(String raw) {
 ///   "chose to bowling" -> "chose to bowl", "opt to batting" -> "opt to bat".
 String fixTossGrammar(String raw) {
   var s = raw;
-  s = s.replaceAll(RegExp(r'\bto\s+bowling\b', caseSensitive: false), 'to bowl');
+  s = s.replaceAll(
+      RegExp(r'\bto\s+bowling\b', caseSensitive: false), 'to bowl');
   s = s.replaceAll(RegExp(r'\bto\s+batting\b', caseSensitive: false), 'to bat');
   s = s.replaceAll(
       RegExp(r'\bto\s+fielding\b', caseSensitive: false), 'to field');
@@ -467,6 +507,46 @@ String compactPlayerName(String name, {int maxLen = 14}) {
   final initial = parts.first.isNotEmpty ? parts.first[0].toUpperCase() : '';
   final last = parts.last;
   return '$initial. $last';
+}
+
+/// Compacts a series name for tight card titles so it never ellipsizes
+/// mid-word (e.g. "Switzerland Women tour of G…"). Strategy:
+///   • drop a REDUNDANT trailing ", 2026" / ", 2026-27" / ", 2026/27" — the
+///     year is already shown in the card's date-range meta, so repeating it in
+///     the title only steals two lines of width,
+///   • strip any dangling trailing comma left behind.
+/// The meaningful body ("… tour of Germany") is preserved, and tournament
+/// names that carry the year WITHOUT a comma ("ICC … World Cup 2026") are left
+/// untouched, so normal names are never damaged. Pure + testable.
+String compactSeriesTitle(String name) {
+  var s = name.trim().replaceAll(RegExp(r'\s+'), ' ');
+  // Redundant ", YYYY" (optionally a season suffix like -27 / /27) tail.
+  s = s.replaceFirst(RegExp(r',\s*\d{4}(?:\s*[-/]\s*\d{2,4})?\s*$'), '');
+  // Any leftover dangling trailing comma/space.
+  s = s.replaceFirst(RegExp(r'[,\s]+$'), '');
+  return s.trim();
+}
+
+/// Normalizes a series format-summary string for a compact chip so it reads
+/// like the target ("3 T20Is • 3 ODIs") instead of the provider's comma form
+/// with ragged spacing ("3 T20s , 3 ODIs"):
+///   • collapses whitespace,
+///   • turns any comma / slash / middot / bare-space-separated segments into a
+///     single " • " bullet separator,
+///   • drops empty segments and a dangling trailing separator.
+/// Segments themselves are preserved verbatim (never re-cased) so real labels
+/// like "3 T20Is" / "1 Test" pass through unchanged. Pure + testable.
+String normalizeSeriesFormat(String raw) {
+  final s = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (s.isEmpty) return s;
+  // Split on comma / slash / existing bullet (with optional surrounding space).
+  final parts = s
+      .split(RegExp(r'\s*[,/•·]\s*'))
+      .map((p) => p.trim())
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return '';
+  return parts.join(' • ');
 }
 
 /// True when a string is a raw epoch/timestamp-like number (≥ 6 consecutive

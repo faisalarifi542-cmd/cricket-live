@@ -140,6 +140,15 @@ class StadiumImage extends StatelessWidget {
   }
 }
 
+/// Converts a logical widget extent into the device-pixel extent an image
+/// should be DECODED at, so small avatars/logos never hold a full-resolution
+/// bitmap in memory. Clamped so a hairline widget still decodes something
+/// legible and a huge one does not decode absurdly large.
+int _decodeExtent(BuildContext context, double logicalExtent) {
+  final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+  return (logicalExtent * dpr).round().clamp(48, 1024);
+}
+
 /// Central registry of the clean light-mode artwork in
 /// `assets/images/light_mode/`. These are bright ice-blue PNGs (no text, no
 /// logos, no dark scrim) used to render light-mode backdrops/cards at full
@@ -443,6 +452,14 @@ class TeamLogoWidget extends StatelessWidget {
   final Color? borderColor;
   final String? emoji;
 
+  // Standard logo size buckets so the same widget reads consistently across
+  // screens. Callers with a responsive/hero size keep computing their own; these
+  // name the common FIXED buckets. Keep [miniSize] < 32 (thin border, no glow)
+  // and [cardSize] >= 40 (glow) to preserve the existing per-size styling.
+  static const double heroSize = 64; // match/series hero
+  static const double cardSize = 46; // list match cards, live striker/bowler
+  static const double miniSize = 22; // team selectors + points/stats table rows
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
@@ -494,6 +511,11 @@ class TeamLogoWidget extends StatelessWidget {
             imageUrl: resolved,
             fit: fit,
             fadeInDuration: Duration.zero,
+            // Decode at the circle's on-screen size (device pixels) instead of
+            // the provider's full-resolution logo — long lists of team logos
+            // otherwise hold many megabytes of oversized bitmaps.
+            memCacheWidth: _decodeExtent(context, size),
+            memCacheHeight: _decodeExtent(context, size),
             placeholder: (context, _) => _teamLoading(context),
             errorWidget: (_, __, ___) => networkError(),
           );
@@ -677,6 +699,9 @@ class PlayerAvatarWidget extends StatelessWidget {
               key: ValueKey(imageUrl!.trim()),
               fit: BoxFit.cover,
               fadeInDuration: Duration.zero,
+              // Decode to the avatar's on-screen size, not the source photo's.
+              memCacheWidth: _decodeExtent(context, size),
+              memCacheHeight: _decodeExtent(context, size),
               placeholder: (context, _) => _initialsBox(context),
               errorWidget: (_, __, ___) => _initialsBox(context),
             )

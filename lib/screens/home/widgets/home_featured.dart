@@ -9,7 +9,6 @@ class _UpcomingMatchesSection extends StatelessWidget {
     required this.future,
     required this.onOpenMatch,
     required this.onSeeAll,
-    this.onOpenSchedule,
     this.excludeIds = const <String>{},
     this.topSpacing = 22,
   });
@@ -18,16 +17,13 @@ class _UpcomingMatchesSection extends StatelessWidget {
   final ValueChanged<String> onOpenMatch;
   final VoidCallback onSeeAll;
 
-  /// Navigates to the full Schedule screen (the complete day-by-day fixture
-  /// list). Drives the "More Upcoming Matches" CTA below the teaser row.
-  final VoidCallback? onOpenSchedule;
-
   /// Match ids already shown as the primary hero — excluded so no card is
   /// duplicated across Home.
   final Set<String> excludeIds;
 
-  /// Gap above the section. Zero when this row is the primary content (no live
-  /// matches) so it sits snug under the segmented tabs.
+  /// Gap above the section. This teaser row only ever renders on the Live and
+  /// Finished tabs (never when Upcoming is the resolved tab), so it always uses
+  /// the standard section gap.
   final double topSpacing;
 
   @override
@@ -49,10 +45,8 @@ class _UpcomingMatchesSection extends StatelessWidget {
               showSeeAll: true,
               onSeeAll: onSeeAll,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             _FeaturedMatchesRow(matches: matches, onOpenMatch: onOpenMatch),
-            if (onOpenSchedule != null)
-              _MoreUpcomingCta(onOpenSchedule: onOpenSchedule!),
           ],
         );
       },
@@ -72,12 +66,12 @@ class _MoreUpcomingCta extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Padding(
-      padding: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.only(top: 16),
       child: TapScale(
         onTap: onOpenSchedule,
         borderRadius: 18,
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             color: c.isDark ? c.card.withValues(alpha: .4) : c.card,
@@ -86,50 +80,61 @@ class _MoreUpcomingCta extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 38,
+                height: 38,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: c.cyan.withValues(alpha: .14),
                 ),
-                child: Icon(Icons.calendar_month_rounded,
-                    color: c.cyan, size: 22),
+                child:
+                    Icon(Icons.calendar_month_rounded, color: c.cyan, size: 20),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'More Upcoming Matches',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.text,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14.5,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'More Upcoming Matches',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: c.text,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      'View full schedule day by day',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.muted,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
+                    // Complete, self-contained copy that never needs ellipsis
+                    // (§H). Scales down within its own box on very narrow phones
+                    // rather than truncating to a dangling fragment.
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'See the full fixture list',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: c.muted,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 7),
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
                   gradient: LinearGradient(colors: [c.cyan, c.primary]),
@@ -157,6 +162,30 @@ class _MoreUpcomingCta extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Test-only host for the Upcoming teaser row (§F/§G): renders the horizontal
+/// `_FeaturedMatchesRow` so tests can measure the next-card peek and per-card
+/// heights without standing up the whole Home screen.
+@visibleForTesting
+class HomeUpcomingRowHost extends StatelessWidget {
+  const HomeUpcomingRowHost({super.key, required this.matches});
+
+  final List<CricketMatch> matches;
+
+  @override
+  Widget build(BuildContext context) =>
+      _FeaturedMatchesRow(matches: matches, onOpenMatch: (_) {});
+}
+
+/// Test-only host for the "More Upcoming Matches" CTA (§H): lets tests assert
+/// the subtitle copy renders without truncation.
+@visibleForTesting
+class HomeMoreUpcomingCtaHost extends StatelessWidget {
+  const HomeMoreUpcomingCtaHost({super.key});
+
+  @override
+  Widget build(BuildContext context) => _MoreUpcomingCta(onOpenSchedule: () {});
 }
 
 class _FeaturedSeriesSection extends StatelessWidget {
@@ -189,8 +218,9 @@ class _FeaturedSeriesSection extends StatelessWidget {
               showSeeAll: config.showSeeAll,
               onSeeAll: onSeeAll,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
             _FeaturedSeriesRow(series: series, onOpenSeries: onOpenSeries),
+            const SizedBox(height: 14),
           ],
         );
       },
@@ -213,13 +243,15 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(
           title,
           style: TextStyle(
             color: c.text,
             fontWeight: FontWeight.w900,
-            fontSize: 16,
+            fontSize: 19,
+            letterSpacing: .2,
           ),
         ),
         const Spacer(),
@@ -235,11 +267,11 @@ class _SectionHeader extends StatelessWidget {
                   style: TextStyle(
                     color: c.cyan,
                     fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontSize: 13.5,
                   ),
                 ),
-                const SizedBox(width: 2),
-                Icon(Icons.chevron_right_rounded, color: c.cyan, size: 18),
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right_rounded, color: c.cyan, size: 19),
               ],
             ),
           ),
@@ -266,24 +298,38 @@ class _FeaturedMatchesRow extends StatelessWidget {
     // Compact horizontal cards — shorter than the rich match cards so the
     // Upcoming row never feels oversized or gets cut at the bottom on small
     // phones. Card width shows ~1.3 cards at 360dp with a clear peek.
-    final w = context.w;
-    final hp = context.horizontalPadding;
-    final cardWidth = ((w - hp * 2) * 0.74).clamp(232.0, 300.0);
     return SizedBox(
-      height: 138,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        clipBehavior: Clip.none,
-        padding: const EdgeInsets.only(right: 18),
-        itemCount: matches.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          return SizedBox(
-            width: cardWidth,
-            child: _FeaturedMatchMini(
-              match: matches[index],
-              onTap: () => onOpenMatch(matches[index].id),
-            ),
+      height: 142,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const gap = 12.0;
+          // Clean, intentional peek of the next card (§G): a small sliver that
+          // signals "scrollable", never a card cut at ~40%. Explicit constant so
+          // the exact peek is deterministic and testable.
+          const peek = 12.0;
+          final available = constraints.maxWidth;
+          // Narrow phones: one card + a `peek` sliver of the next. `gap` sits
+          // between them, so the first card is `available - gap - peek` wide and
+          // the neighbour shows exactly `peek` px inside the viewport. Wide
+          // layouts fit two full cards with no dangling peek.
+          final cardWidth =
+              available >= 440 ? (available - gap) / 2 : available - gap - peek;
+          return ListView.separated(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.only(right: 18),
+            itemCount: matches.length,
+            separatorBuilder: (_, __) => const SizedBox(width: gap),
+            itemBuilder: (context, index) {
+              return SizedBox(
+                key: ValueKey('home-upcoming-card-${matches[index].id}'),
+                width: cardWidth,
+                child: _FeaturedMatchMini(
+                  match: matches[index],
+                  onTap: () => onOpenMatch(matches[index].id),
+                ),
+              );
+            },
           );
         },
       ),
@@ -310,13 +356,13 @@ class _FeaturedMatchMini extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: c.cyan.withValues(alpha: .2), width: 1),
+          border: Border.all(color: c.cyan.withValues(alpha: .18), width: 1),
           boxShadow: c.isDark
               ? [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: .32),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
+                    color: Colors.black.withValues(alpha: .28),
+                    blurRadius: 12,
+                    offset: const Offset(0, 5),
                   ),
                 ]
               : c.heroShadow,
@@ -350,83 +396,96 @@ class _FeaturedMatchMini extends StatelessWidget {
                 children: [
                   // Top: status badge + series title (title gets full width and
                   // up to 2 lines so it never clips too early).
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 1),
-                        child: _StatusBadge(
-                            label: status.badge,
-                            color: status.color,
-                            live: status.subPhase == MatchSubPhase.live,
-                            dense: true),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _heroTitle(match),
-                          // Two lines so a long comp name isn't cut to an ugly
-                          // "Asia Pacific Cricket Ch…"; the card's two Spacers
-                          // absorb the extra line so the 138px height never
-                          // overflows.
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: c.cyan,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 11.5,
-                            height: 1.15,
+                  SizedBox(
+                    height: 32,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: _StatusBadge(
+                              label: status.badge,
+                              color: status.color,
+                              live: status.subPhase == MatchSubPhase.live,
+                              dense: true),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _heroTitle(match),
+                            // Two lines so a long comp name isn't cut to an ugly
+                            // "Asia Pacific Cricket Ch…"; the card's two Spacers
+                            // absorb the extra line so the 138px height never
+                            // overflows.
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            // Centred so a wrapped title stays centred (consistent
+                            // with every other match card).
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: c.cyan,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11.5,
+                              height: 1.15,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  const Spacer(),
+                  const SizedBox(height: 4),
                   // Middle: logos + VS + codes.
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: _MiniTeam(
-                          name: match.teamA,
-                          short: match.teamAShort,
-                          logo: match.teamALogo,
-                          accent: c.cyan,
+                  SizedBox(
+                    height: 61,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: _MiniTeam(
+                            name: match.teamA,
+                            short: match.teamAShort,
+                            logo: match.teamALogo,
+                            accent: c.cyan,
+                          ),
                         ),
-                      ),
-                      const _HomeVsBadge(width: 44, height: 31, intensity: 0.85),
-                      Expanded(
-                        child: _MiniTeam(
-                          name: match.teamB,
-                          short: match.teamBShort,
-                          logo: match.teamBLogo,
-                          accent: c.warning,
+                        const _HomeVsBadge(
+                            width: 44, height: 31, intensity: 0.85),
+                        Expanded(
+                          child: _MiniTeam(
+                            name: match.teamB,
+                            short: match.teamBShort,
+                            logo: match.teamBLogo,
+                            accent: c.warning,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  const Spacer(),
+                  const SizedBox(height: 4),
                   // Bottom: date/time only (venue omitted to keep the upcoming
                   // card compact).
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.calendar_month_rounded,
-                          size: 12, color: c.cyan),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          _cardDateTime(match),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: c.onImageText,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 11,
+                  SizedBox(
+                    height: 18,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.calendar_month_rounded,
+                            size: 12, color: c.cyan),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            _cardDateTime(match),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: c.onImageText,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -791,9 +850,44 @@ String normalizeWomenTeamName(String name) => compactTeamName(name);
 String formatWomenCode(String code) => formatTeamCode(code);
 String formatWomenName(String name) => compactTeamName(name);
 String homeTeamCode(String short, String name) => teamCodeOf(short, name);
-String homeShortSeriesTitle(String title) => shortSeriesTitle(title);
+String homeShortSeriesTitle(String title) => cardSeriesTitle(title);
 String homeShortStatus(String status, CricketMatch match) =>
     shortMatchStatus(status, match, keepUnits: true);
+
+/// Resolved primary center pill for a Home card (hero + live cards). Priority:
+///   1. an explicit phase/break label (Stumps/Lunch/Tea/Drinks/Rain/Innings
+///      Break) — overrides the generic LIVE pill so a paused match reads truthfully;
+///   2. a generic LIVE pill for an actively-playing match;
+///   3. null — the caller falls back to its own note/date-time rendering (upcoming,
+///      finished).
+/// Centralized here so hero + list cards can never disagree about which pill wins.
+class HomeCenterPill {
+  const HomeCenterPill({required this.label, required this.isPhase});
+
+  /// Short, shortened label ready to render — never empty when returned.
+  final String label;
+
+  /// True when the pill represents a break phase (Stumps/…): render as the
+  /// neutral/muted phase pill. False for the green LIVE pill.
+  final bool isPhase;
+}
+
+HomeCenterPill? homeCenterPillFor(
+  MatchStatusDisplay status,
+  CricketMatch match, {
+  String liveLabel = 'LIVE',
+}) {
+  if (status.isInBreak && status.phaseLabel.isNotEmpty) {
+    return HomeCenterPill(
+      label: homeShortStatus(status.phaseLabel, match),
+      isPhase: true,
+    );
+  }
+  if (match.isLive) {
+    return HomeCenterPill(label: liveLabel, isPhase: false);
+  }
+  return null;
+}
 
 /// Content fingerprint using the SAME fields the Home UI renders for score,
 /// status, and result. If any of these change, the card appearance changes and
@@ -809,7 +903,9 @@ String _cardDateTime(CricketMatch match) {
   if (dt == null) {
     // Never leak a raw epoch `startTime` (e.g. 1782073800000) into a card.
     if (match.statusText.isNotEmpty) return match.statusText;
-    return looksLikeRawTimestamp(match.startTime) ? 'Match yet to begin' : match.startTime;
+    return looksLikeRawTimestamp(match.startTime)
+        ? 'Match yet to begin'
+        : match.startTime;
   }
   return '${_months[dt.month - 1]} ${dt.day} • ${_clock(dt)}';
 }

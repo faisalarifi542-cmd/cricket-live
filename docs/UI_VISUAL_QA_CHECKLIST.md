@@ -129,6 +129,39 @@ These were skipped to keep the production-app regression risk low per the approv
 
 ---
 
+## Small-device screenshot QA — July 2026 pass
+
+Targeted density/readability/data-presentation pass driven by a fresh set of 360px screenshots (Match Details Info/Live/Squad/Comm/Overs, CricPro Series/Schedule/Matches/Home). No new design language — existing `context.sp()`/`bp`/`isCompact` tokens and shared formatters (`shortVenue`, `shortSeriesTitle`) reused. UI colors unchanged.
+
+**Status legend:** ✅ Fixed + device-verified · 🔧 Fixed (analyze/test/build-verified, NOT device-verified) · ⏳ Remaining · ➖ already-OK (no change needed)
+
+| # | Screenshot issue | Screen | File(s) | Fixed | Verified (analyze/test/build) | Remaining |
+|---|---|---|---|---|---|---|
+| 1 | Hero cramped at 360: status squeezed between two pills; invisible "balance" pill wasted ~48px; scores hardcoded 26px | Match Details header | `match_details_ui.dart` (`MatchHeroScoreCard`, `MDTeamScoreBlock`) | 🔧 Dropped invisible pill; badge on its own centered row + status note on a dedicated 2-line ellipsized line; scores/code/VS badge now `context.sp()`-scaled + compact VS; inner padding 14→16/18 | analyze clean, 192/192, APK 79.8 MB | device QA |
+| 2 | Freshness inconsistency: global row said "Pull to refresh" on Live while other tabs said "Updated just now" (two sources) | Match Details all tabs / Live | `match_details_screen.dart` (`_loadSummary`), `live_match_tab.dart` (`_LiveFooter`) | 🔧 Screen now seeds `_lastUpdatedAt` from `meta.lastUpdated` (never faked) on FIRST load → header row is the single authoritative freshness source on every tab; Live footer demoted to a pure "Live coverage"/"Match completed" status line (removed its duplicate timestamp + dead `_parseLastUpdated`/`dart:async`) | analyze clean, 192/192 | device QA |
+| 3 | RRR shows "0" in a Test; Recent Overs prints raw "0 0 0 0 0 0" | Match Details Info | `md_info.dart` (`_InfoPanel`, `_RecentOverPill`) | 🔧 RRR hidden unless value > 0 (real chase); Recent Overs hidden when all-zero, else rendered as per-over pills (wicket-over tinted) | analyze clean, 192/192 | device QA |
+| 4 | Overs legend packs densely; a `Wrap` could break a line between a chip and its own label | Match Details Overs | `md_panels.dart` (`_BallLegend`) | 🔧 Each chip+label is now an atomic `Row`; tighter spacing on compact. (Dot vs missing already distinct — unchanged) | analyze clean, 192/192 | device QA |
+| 5 | ~94px fixed left gutter before the commentary card cramps long text at 360 | Match Details Commentary | `md_timeline.dart` (`_buildBall`, `_TimelineRail`) | 🔧 Over column 40→32, rail 46→42, gap 8→6, ball chips −4 on compact (~16px reclaimed). Filter bar already horizontally scrollable (usable) | analyze clean, 192/192 | device QA |
+| 6 | Series hero title "SWITZERLAND WOMEN TO… GERMANY," — dangling comma, mid-word truncation | Series Detail hero | `series_detail_hero.dart` (`_splitTitle`) | 🔧 Split now handles "to"/"vs" connectors (not just "tour of"); strips edge punctuation + collapses ", 2026"; routes through `shortSeriesTitle`; small line 2 lines; fonts `sp()`-scaled | analyze clean, 192/192 | device QA |
+| 7 | Venue "Galle International St…" truncates aggressively (multi-comma name) | Schedule | `schedule_cards.dart` (`_TimeVenuePanel`) | 🔧 Routed through shared `shortVenue()` (consistent with Matches card); duplicate city subtitle dropped | analyze clean, 192/192 | device QA |
+| 8 | Series squad grid 3-up at 360 crushes names; ragged card heights (optional role tag) | Series Detail Squads | `series_detail_squads.dart` (`_PlayerGrid`, `_SquadPlayerCard`) | 🔧 2 columns ≤360 (3 at ≥360 inner, 4 at ≥460); fixed-height role-tag slot equalizes card heights | analyze clean, 192/192 | device QA |
+| 9 | Home carousel center card reads edge-to-edge/cropped on small phones | Home | `home_hero.dart` (`_HeroMetrics.of`) | 🔧 Small-phone `viewportFraction` 0.965→0.92 for a clean gutter + subtle non-distracting peek | analyze clean, 192/192 | device QA |
+| 10 | Series-detail back button had a bare 26px tap target (< 44px) | Series Detail header | `series_detail_hero.dart` (`_DetailAppBar`) | 🔧 44×44 hit area, icon left-aligned to the edge | analyze clean, 192/192 | device QA |
+| 11 | Matches-card date `Text` lacked ellipsis guard | Matches | `matches_cards.dart` (`_CardTopRow`) | 🔧 Added `overflow: ellipsis` + `softWrap:false` (defensive) | analyze clean, 192/192 | device QA |
+
+### Corrected instructions (reported issues that were already handled — no rebuild)
+- ➖ **Series list filter clipping / selected-chip-off-screen** — already mitigated by `_ensureVisible(alignment:0.0)` on init + selection (`series_poster_cards.dart:1282`); list bottom inset already uses `mainScrollBottomInset`. No change.
+- ➖ **Matches card layout** (status top-left / title 2 lines / date top-right / venue `shortVenue`+2 lines / "Match Center" CTA) — already implemented. Only the defensive date-ellipsis micro-fix (#11) applied.
+- ➖ **Overs dot-vs-missing** — already distinct (`•` filled vs `–` dashed) from the prior pass; only legend density (#4) addressed.
+- ➖ **Points table** — center-aligned values already align column-to-column with the header and don't overflow (fixed-width cols + ellipsized team `Expanded`); sort preserved. Left as-is (changing alignment would risk header mismatch, low benefit).
+- ➖ **Squad team selectors** — render short codes ("WI"/"SL") with `Flexible`+ellipsis; readable in screenshots. No change.
+- ➖ **Team logos** — single reusable `TeamLogoWidget` with centralized premium initials fallback already in use everywhere; sizes are contextually correct. Named size tokens deferred (no behavior gap); hero accent-ring is intentional premium styling (preserved).
+
+### Backend
+- No backend changes were required this pass. Required-RR and Recent-Overs are normalized on the client (display-only); no API response shape changed.
+
+---
+
 ## Verification commands run (this session, from clean)
 
 - `flutter clean` — exit 0
@@ -138,3 +171,62 @@ These were skipped to keep the production-app regression risk low per the approv
 - `node --check` on 4 changed backend JS files (`match-phase.js`, cricbuzz/cricinfo/cricketdata normalizers) — 4/4 OK
 - `flutter build apk --release` — exit 0, `build/app/outputs/flutter-apk/app-release.apk`, 79.8 MB (83,632,445 bytes)
 - Device/emulator QA — **NOT run** (see "Device QA" section above)
+
+### Small-device screenshot pass (July 2026) — re-verified
+- `flutter analyze lib/` — **No issues found**, exit 0
+- `flutter test` — **192/192 passed**, exit 0
+- `flutter build apk --release` — exit 0, `build/app/outputs/flutter-apk/app-release.apk`, **79.8 MB (83,632,445 bytes)** (unchanged — UI-only edits)
+- Backend — no changes this pass (`node --check` N/A)
+- Device/emulator QA at 360px + high text-scale — **still required before release**
+
+---
+
+## Series target design pass — July 2026
+
+Targeted polish of the **existing** premium Series screen to close the last visual gaps versus the attached target design. No rebuild, no new V2 components, no backend/API/sort/filter/navigation changes, no core-color changes — the CricPro dark/cyan design language and all existing reusable widgets (`SeriesLogoRing`, `SeriesLogoRingPair`, `SeriesStatusPillImg`, `SeriesCtaButton`, `SeriesMetaRow`, `SeriesBorderFrame`) are preserved and reused.
+
+**Status legend:** ✅ Fixed + device-verified · 🔧 Fixed (analyze/test/build-verified, NOT device-verified) · ➖ already-OK (no change needed)
+
+| # | Target gap | File(s) | Fixed | Verified |
+|---|---|---|---|---|
+| 1 | Featured hero had no team-name captions; target shows `AUSTRALIA` / `BANGLADESH` under the two large flags | `series_poster_cards.dart` (`_HeroTeamBadge`, `_heroTeamLabel`, hero `Row`) | 🔧 Each hero ring now stacks a centered uppercase team-name caption beneath it (two-team heroes only); width-capped to the ring so long names ellipsize cleanly instead of widening the hero; renders bare ring when only placeholder text exists | analyze/test/build |
+| 2 | Card titles over-truncated ("Switzerland Women tour of G…") + kept redundant trailing ", 2026"/dangling commas | `team_format.dart` (`compactSeriesTitle`), `series_components.dart` (`SeriesView.compactName`), `series_poster_cards.dart` (both card titles) | 🔧 New pure `compactSeriesTitle()` strips a redundant trailing ", YYYY" (incl. season suffixes `-27`/`/27`) and dangling commas, preserves "tour of", and leaves comma-less tournament years (e.g. "… World Cup 2026") intact; poster cards render `series.compactName` | analyze/test/build + `series_title_compact_test.dart` |
+| 3 | Hero felt small/compressed vs target | `series_poster_cards.dart` (`_metricsFor`) | 🔧 Safe hero/heroRing bump per breakpoint — 176→190 / 188→204 / 200→216 (height) and 80→86 / 90→96 / 100→106 (ring); still clip-free at 360px | analyze/test/build |
+| 4 | Filter chip could sit flush-left with a jarring half-clipped neighbour after selecting Upcoming/Completed | `series_poster_cards.dart` (`SeriesFilterChipBar._ensureVisible`) | 🔧 Selected chip now CENTERS (`alignment:0.5`); framework clamps at row ends so All stays flush-left/fully visible on initial load and the selected chip is always fully visible with balanced neighbour peeks | analyze/test/build |
+
+### Already-OK (verified, no change needed — from the prior redesign)
+- ➖ **Watermark on tournament/league card art** — already resolved: `tournamentBg`/`leagueBg` point at the watermark-free `*_asset_01_clean.png` files (the older "REVIEWED/VERIFIED BY … PIXELS" stock watermark is gone).
+- ➖ **CTA size** — `SeriesCtaButton` already renders at tap-sized 40–44px height (prior FittedBox-shrink removed); readable "Explore Series"/"View Series".
+- ➖ **Bottom padding** — Series list already uses `context.mainScrollBottomInset` (nav ~64 + banner ~64 + safe area + 24 comfort); last card clears the bottom bar.
+- ➖ **Status pill / favorite star / team badges / meta row** — already present and premium; favorite-star tap toggle preserved.
+- ➖ **Sort/filter/navigation** — `sortSeriesByStatus` (ongoing→upcoming→completed), `filterSeries`, and `_open`/`_openHero` routing untouched.
+
+> Note: this pass changes the filter-chip scroll from `alignment:0.0` to centered `0.5`; the earlier checklist note referencing `alignment:0.0` is superseded here.
+
+### Backend
+- No backend changes. API response shapes and admin data source unchanged.
+
+---
+
+## Series target fidelity pass — July 2026 (focused visual pass)
+
+Second, tighter Series-only pass driven by fresh 360px screenshots vs the attached target. Existing premium components are **tuned more aggressively** toward the target (no new V2 system, no backend/sort/filter/nav/color changes). Only `series_list_screen.dart`, `series_poster_cards.dart` and `team_format.dart` touched (+ the QA checklist and a unit test).
+
+**Status legend:** ✅ Fixed + device-verified · 🔧 Fixed (analyze/test/build-verified, NOT device-verified) · ➖ already-OK
+
+| # | Target gap | File(s) | Fixed | Verified |
+|---|---|---|---|---|
+| 1 | Header logo/title too small + compressed on 360 | `series_list_screen.dart` (`_SeriesHeader`, list top pad) | 🔧 CRICPRO wordmark bumped (30/33 → 34/37/40 responsive); "Series" title `sp(26)` → `sp(32)`, tighter `-.5` tracking; more breathing room (list top pad 8→12, logo→title gap 14→18, header→hero gap 14→20). SafeArea preserved | analyze/test/build |
+| 2 | Hero shorter/compressed; small team labels; format chip truncated "3 T20s , 3 …" | `series_poster_cards.dart` (`_metricsFor`, `_HeroPill`, `_HeroTeamBadge`), `team_format.dart` (`normalizeSeriesFormat`) | 🔧 Hero height 190/204/216 → 214/228/242; hero ring 86/96/106 → 96/106/116; team captions `meta*.95` → `meta*1.05`; **new `normalizeSeriesFormat()` renders bullet-separated "3 T20Is • 3 ODIs"** (comma/slash → " • "); `_HeroPill` now `FittedBox(scaleDown)` so the full format text NEVER ellipsizes | analyze/test/build + `series_title_compact_test.dart` |
+| 3 | Series cards too compact; small metadata/CTA | `series_poster_cards.dart` (`_metricsFor`, `SeriesCtaButton`) | 🔧 Card heights bumped per breakpoint (tournament 222→238/250/262, league 206→222/232/242, bilateral 190→204/214/224, completed 182→190/200/210); pad, meta (12.5→13/13.5/14), CTA height (40→44/46/48), status pill, rings all up; CTA text ratio `.38`→`.35` keeps label readable without dominating the row | analyze/test/build |
+| 4 | Filter row half-clipped a chip on the left after selecting Upcoming/Completed; chips small | `series_poster_cards.dart` (`SeriesFilterChipBar`, `_FilterChip`) | 🔧 Scroll changed from **centered `0.5`** to **left-bias `0.06` (explicit policy)** — earlier chips scroll cleanly OFF the left instead of peeking as a sliced half; selected chip stays fully visible with a small left inset + clean right peek. Chips bigger (h44→48, pad18→20, icon16→17, text14→14.5, radius22→24), stronger selected cyan glow; row h52→58 with leading inset | analyze/test/build |
+| 5 | "League" tag clipped to "L…" on the ongoing tournament/league card | `series_poster_cards.dart` (`_CompetitionPosterCard` bottom row) | 🔧 Bottom-left tag changed from `Expanded` (which forced an early ellipsis) to `Flexible` + `Spacer`, so "League"/"Tournament" takes its natural width and the CTA is pushed to the right edge — no more "L…" | analyze/test/build |
+
+### Watermark / artifact confirmation (item 5 of the brief)
+- ➖ **"VERIFIED/REVIEWED BY … PIXELS" watermark** — verified NOT present in the current code path. Every rendered Series card background was inspected directly: `tournamentBg` (`sheet1_tournament_asset_01_clean.png`), `leagueBg` (`sheet3_league_asset_01_clean.png`), `leagueBatsman` (`sheet3_league_asset_05.png`), `bilateralBg` (`sheet2_bilateral_asset_01.png`) and `trophyGold` (core) are all clean, and all are bundled via `pubspec.yaml` asset dirs. The dead references (`tournamentTrophy`/`tournamentBurst`/`leagueBgAlt`) are not rendered. The watermark visible in the supplied screenshots is from a **stale build** — a clean `flutter build apk --release` (below) renders watermark-free. Originals kept (non-destructive).
+
+### Superseded note
+- Item #4 of the previous "Series target design pass" changed the chip scroll to centered `0.5`; **this pass supersedes it** with the left-bias `0.06` policy (centring was the cause of the reported left half-clip).
+
+### Backend
+- No backend changes. API response shapes, admin hero data, sort/filter/navigation, and core colors all unchanged.

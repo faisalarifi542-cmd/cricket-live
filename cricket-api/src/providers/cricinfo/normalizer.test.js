@@ -14,6 +14,9 @@ import {
   normalizeScorecard,
   normalizeCommentary,
   normalizeSeriesList,
+  normalizeStandings,
+  normalizePlayerFromAthlete,
+  normalizeFullSchedule,
 } from './normalizer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -204,5 +207,134 @@ test('normalizeSeriesList de-duplicates leagues into series', () => {
   assert.equal(ids.length, new Set(ids).size, 'series ids must be unique');
   for (const s of list) {
     assert.ok('series_id' in s && 'name' in s);
+  }
+});
+
+// --- standings / points table (from /apis/v2/.../standings) -----------------
+
+const STANDINGS_FIXTURE = {
+  id: '1542357',
+  name: 'TG20 2026',
+  children: [
+    {
+      id: '1',
+      name: 'Group A',
+      standings: {
+        entries: [
+          {
+            team: {
+              id: '1542364',
+              displayName: 'Hyderabad E-Champions',
+              abbreviation: 'HYC',
+              logos: [{ href: 'https://a.espncdn.com/i/teamlogos/cricket/500/1542364.png' }],
+            },
+            stats: [
+              { name: 'rank', value: 2, displayValue: '2' },
+              { name: 'matchesPlayed', value: 7, displayValue: '7' },
+              { name: 'matchesWon', value: 5, displayValue: '5' },
+              { name: 'matchesLost', value: 2, displayValue: '2' },
+              { name: 'noresult', value: 0, displayValue: '0' },
+              { name: 'matchPoints', value: 10, displayValue: '10' },
+              { name: 'matchesTied', value: 0, displayValue: '0' },
+              { name: 'netrr', value: 1.879, displayValue: '1.879' },
+              { name: 'for', value: 0, displayValue: '1350/126.3' },
+              { name: 'against', value: 0, displayValue: '1231/140.0' },
+            ],
+          },
+          {
+            team: { id: '1542365', displayName: 'Chennai Kings', abbreviation: 'CHK', logos: [] },
+            stats: [
+              { name: 'rank', value: 1, displayValue: '1' },
+              { name: 'matchesPlayed', value: 7, displayValue: '7' },
+              { name: 'matchesWon', value: 7, displayValue: '7' },
+              { name: 'matchPoints', value: 14, displayValue: '14' },
+              { name: 'netrr', value: 2.1, displayValue: '2.100' },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+test('normalizeStandings produces a Cricbuzz-shaped points table', () => {
+  const table = normalizeStandings(STANDINGS_FIXTURE, '1542357');
+  assert.equal(table.seriesId, '1542357');
+  assert.equal(table.source, 'espn-cricinfo');
+  assert.equal(table.groups.length, 1);
+  assert.equal(table.groups[0].name, 'Group A');
+  assert.equal(table.rows.length, 2);
+  // rows are sorted by rank → Chennai (rank 1) first
+  const top = table.rows[0];
+  assert.equal(top.teamName, 'Chennai Kings');
+  assert.equal(top.rank, 1);
+  assert.equal(top.won, 7);
+  assert.equal(top.points, 14);
+  assert.equal(top.nrr, '2.100');
+  const hyc = table.rows[1];
+  assert.equal(hyc.teamShortName, 'HYC');
+  assert.equal(hyc.for, '1350/126.3');
+  assert.equal(hyc.against, '1231/140.0');
+  assert.equal(hyc.logoUrl, 'https://a.espncdn.com/i/teamlogos/cricket/500/1542364.png');
+});
+
+test('normalizeStandings returns empty groups/rows when no entries', () => {
+  const table = normalizeStandings({ id: '99', name: 'Empty', children: [] });
+  assert.deepEqual(table.groups, []);
+  assert.deepEqual(table.rows, []);
+});
+
+// --- standalone player (from v3 athlete endpoint) ---------------------------
+
+const ATHLETE_FIXTURE = {
+  athlete: {
+    id: '348026',
+    displayName: 'John Campbell',
+    fullName: 'John Dillon Campbell',
+    displayDOB: '21/9/1993',
+    age: 32,
+    position: { name: 'Opening batter' },
+    batStyle: [{ description: 'Left-hand bat', type: 'batting' }],
+    bowlStyle: [{ description: 'Right-arm offbreak', type: 'bowling' }],
+    headshot: { href: 'https://a.espncdn.com/i/headshots/cricket/players/full/348026.png' },
+    team: { id: '4', name: 'West Indies' },
+    flag: { alt: 'WI' },
+  },
+};
+
+test('normalizePlayerFromAthlete maps a v3 athlete into internal player shape', () => {
+  const p = normalizePlayerFromAthlete(ATHLETE_FIXTURE);
+  assert.equal(p.player_id, '348026');
+  assert.equal(p.name, 'John Campbell');
+  assert.equal(p.full_name, 'John Dillon Campbell');
+  assert.equal(p.role, 'Opening batter');
+  assert.equal(p.batting_style, 'Left-hand bat');
+  assert.equal(p.bowling_style, 'Right-arm offbreak');
+  assert.equal(p.nationality, 'West Indies');
+  assert.deepEqual(p.teams, ['4']);
+  // "21/9/1993" (D/M/Y) → ISO 1993-09-21
+  assert.ok(p.dob.startsWith('1993-09-21'), `dob was ${p.dob}`);
+});
+
+test('normalizePlayerFromAthlete returns null on empty payload', () => {
+  assert.equal(normalizePlayerFromAthlete({}), null);
+  assert.equal(normalizePlayerFromAthlete({ athlete: {} }), null);
+});
+
+// --- full schedule (series date ranges from scoreboard header) --------------
+
+test('normalizeFullSchedule extracts series rows with date ranges', () => {
+  const raw = loadFixture('espn_header.json');
+  const rows = normalizeFullSchedule(raw);
+  assert.ok(Array.isArray(rows));
+  if (rows.length) {
+    const ids = rows.map((r) => r.series_id);
+    assert.equal(ids.length, new Set(ids).size, 'series ids must be unique');
+    for (const r of rows) {
+      for (const k of ['series_id', 'name', 'start_date', 'end_date', 'source']) {
+        assert.ok(k in r, `missing full-schedule key ${k}`);
+      }
+      assert.equal(r.source, 'espn-cricinfo');
+    }
   }
 });

@@ -28,14 +28,10 @@ Map<String, dynamic> _raw(
 class _FakeService extends CricketApiService {
   _FakeService({
     this.live = const [],
-    this.recent = const [],
-    this.upcoming = const [],
     this.sched = const [],
   });
 
   final List<Map<String, dynamic>> live;
-  final List<Map<String, dynamic>> recent;
-  final List<Map<String, dynamic>> upcoming;
   final List<Map<String, dynamic>> sched;
 
   ApiEnvelope<List<CricketMatch>> _env(List<Map<String, dynamic>> l) =>
@@ -47,10 +43,11 @@ class _FakeService extends CricketApiService {
   @override
   Future<ApiEnvelope<List<CricketMatch>>> liveMatches() async => _env(live);
   @override
-  Future<ApiEnvelope<List<CricketMatch>>> recentMatches() async => _env(recent);
+  Future<ApiEnvelope<List<CricketMatch>>> recentMatches() async =>
+      _env(const []);
   @override
   Future<ApiEnvelope<List<CricketMatch>>> upcomingMatches() async =>
-      _env(upcoming);
+      _env(const []);
   @override
   Future<ApiEnvelope<List<dynamic>>> schedule(
           {String type = 'upcoming', bool forceRefresh = false}) async =>

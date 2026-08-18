@@ -49,6 +49,43 @@ SeriesView _fixture() => SeriesView(
       ],
     );
 
+/// A league fixture — the "Explore Series" CTA + tag row on a narrow content
+/// column (art zone eats ~30%) is what painted the debug overflow stripe that
+/// looked like a "VERIFIED/REVIEWED BY N PIXELS" watermark in screenshots.
+SeriesView _leagueFixture() => SeriesView(
+      id: 'lpl',
+      name: 'Lanka Premier League 2026',
+      status: SeriesStatus.ongoing,
+      category: SeriesCategory.league,
+      startDate: DateTime(2026, 7, 7),
+      endDate: DateTime(2026, 8, 8),
+      matchCount: 24,
+      teams: const [
+        SeriesTeamRef(name: 'a', shortName: 'BAS'),
+        SeriesTeamRef(name: 'b', shortName: 'JKS'),
+        SeriesTeamRef(name: 'c', shortName: 'DAS'),
+        SeriesTeamRef(name: 'd', shortName: 'KFS'),
+        SeriesTeamRef(name: 'e', shortName: 'CLK'),
+      ],
+    );
+
+/// A bilateral fixture in the tightest state (long team names + full meta).
+SeriesView _bilateralFixture() => SeriesView(
+      id: 'pak-wi',
+      name: 'Pakistan tour of West Indies',
+      status: SeriesStatus.ongoing,
+      category: SeriesCategory.international,
+      startDate: DateTime(2026, 7, 18),
+      endDate: DateTime(2026, 8, 6),
+      formatLabel: '3 Tests',
+      matchCount: 3,
+      host: 'West Indies',
+      teams: const [
+        SeriesTeamRef(name: 'Pakistan', shortName: 'PAK'),
+        SeriesTeamRef(name: 'West Indies', shortName: 'WI'),
+      ],
+    );
+
 Widget _wrap(Widget child) {
   return MaterialApp(
     theme: ThemeData(brightness: Brightness.dark),
@@ -56,6 +93,20 @@ Widget _wrap(Widget child) {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: child,
+      ),
+    ),
+  );
+}
+
+/// Mirrors the real Series screen shell: a ListView with the screen's
+/// horizontal padding (16), so card widths match production.
+Widget _wrapScreen(Widget child) {
+  return MaterialApp(
+    theme: ThemeData(brightness: Brightness.dark),
+    home: Scaffold(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        children: [child],
       ),
     ),
   );
@@ -104,6 +155,43 @@ void main() {
     await tester.tap(find.text('View Series'));
     expect(tapped, isTrue);
   });
+
+  // Width-matrix overflow guard across the card variants that render on the
+  // Series screen. The debug "OVERFLOWED BY N PIXELS" stripe (mistaken for a
+  // "VERIFIED/REVIEWED BY N PIXELS" watermark in the screenshots) must NEVER
+  // appear — the CTA scales to fit its column on every supported width.
+  for (final width in <double>[320, 340, 360, 384]) {
+    for (final entry in <String, SeriesView Function()>{
+      'tournament': _tournamentFixture,
+      'league': _leagueFixture,
+      'bilateral': _bilateralFixture,
+    }.entries) {
+      testWidgets('${entry.key} poster has no overflow @${width.toInt()}dp',
+          (WidgetTester tester) async {
+        final errors = <FlutterErrorDetails>[];
+        final previous = FlutterError.onError;
+        FlutterError.onError = errors.add;
+        addTearDown(() => FlutterError.onError = previous);
+
+        await tester.binding.setSurfaceSize(Size(width, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          _wrapScreen(SeriesPosterCard(series: entry.value(), onTap: () {})),
+        );
+        await tester.pump();
+
+        expect(
+          errors
+              .where((e) => e.exceptionAsString().contains('overflow'))
+              .map((e) => e.exceptionAsString().split('\n').first)
+              .toList(),
+          isEmpty,
+          reason: '${entry.key} card overflowed at ${width.toInt()}dp',
+        );
+      });
+    }
+  }
 
   testWidgets(
       'Tournament poster with wide "Explore Series" CTA has no overflow at 360dp',

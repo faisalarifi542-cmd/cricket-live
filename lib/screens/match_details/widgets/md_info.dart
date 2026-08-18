@@ -54,6 +54,23 @@ class _InfoPanel extends StatelessWidget {
     final lastWicket = str(data['last_wicket'] ?? data['lastWicket']);
     final recentOvers = str(data['recent_overs'] ?? data['recentOvers']);
 
+    // Required Run Rate is only meaningful in a live chase (positive target). A
+    // Test / 1st-innings feed sends the literal "0"/"0.00" — showing "Required
+    // Run Rate 0" is misleading, so hide it unless the value is a real > 0 rate.
+    final reqRateVal =
+        double.tryParse(reqRate.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0;
+    final showReqRate = reqRateVal > 0;
+    // Recent Overs runs-per-over tokens: hide the card when every value is 0/–
+    // (a "0 0 0 0 0 0" placeholder carries no information) and render the real
+    // ones as compact per-over pills instead of a raw space-joined string.
+    final overTokens = recentOvers
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList();
+    final showRecentOvers =
+        overTokens.any((t) => t != '0' && t != '-' && t != '–' && t != '.');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -89,7 +106,7 @@ class _InfoPanel extends StatelessWidget {
           const SizedBox(height: 12),
           _OfficialsCard(officials: officials),
         ],
-        if (runRate.isNotEmpty || reqRate.isNotEmpty) ...[
+        if (runRate.isNotEmpty || showReqRate) ...[
           const SizedBox(height: 12),
           _SectionCard(
             title: 'Run Rate',
@@ -98,24 +115,23 @@ class _InfoPanel extends StatelessWidget {
               children: [
                 if (runRate.isNotEmpty)
                   _kvRow(context, 'Current Run Rate', runRate),
-                if (reqRate.isNotEmpty)
+                if (showReqRate)
                   _kvRow(context, 'Required Run Rate', reqRate),
               ],
             ),
           ),
         ],
-        if (recentOvers.isNotEmpty) ...[
+        if (showRecentOvers) ...[
           const SizedBox(height: 12),
           _SectionCard(
             title: 'Recent Overs',
             icon: Icons.timelapse_rounded,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                recentOvers,
-                style: TextStyle(
-                    color: c.text, fontWeight: FontWeight.w700, height: 1.4),
-              ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final t in overTokens) _RecentOverPill(runs: t),
+              ],
             ),
           ),
         ],
@@ -205,6 +221,41 @@ class _InfoItem {
   final String label;
   final String value;
   final Color? valueColor;
+}
+
+/// A single "runs in that over" pill for the Info tab's Recent Overs row.
+/// A wicket-carrying over (feed sends e.g. "1W" / "Xw") is tinted with the live
+/// accent; a boundary-heavy over leans cyan; a plain over stays neutral glass.
+class _RecentOverPill extends StatelessWidget {
+  const _RecentOverPill({required this.runs});
+
+  final String runs;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.cric;
+    final hasWicket = runs.toLowerCase().contains('w');
+    final accent = hasWicket ? c.live : c.cyan;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 30),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: c.isDark ? .12 : .10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: .40)),
+      ),
+      child: Text(
+        runs,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: hasWicket ? c.live : c.text,
+          fontWeight: FontWeight.w900,
+          fontSize: 12.5,
+          height: 1,
+        ),
+      ),
+    );
+  }
 }
 
 class _InfoGridCard extends StatelessWidget {

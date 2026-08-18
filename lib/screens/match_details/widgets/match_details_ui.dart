@@ -647,7 +647,7 @@ class MDTeamScoreBlock extends StatelessWidget {
           style: TextStyle(
             color: c.text,
             fontWeight: FontWeight.w900,
-            fontSize: 17,
+            fontSize: context.sp(17),
             height: 1,
           ),
         ),
@@ -661,8 +661,8 @@ class MDTeamScoreBlock extends StatelessWidget {
             mode: multi
                 ? ScoreDisplayMode.matchDetailsMultiInnings
                 : ScoreDisplayMode.matchDetailsLimitedOvers,
-            mainSize: multi ? 19 : 26,
-            oversSize: 12.5,
+            mainSize: context.sp(multi ? 19 : 26),
+            oversSize: context.sp(12.5),
             live: live,
             currentInningsIndex: currentInningsIndex,
             color: c.isDark ? Colors.white : c.text,
@@ -758,46 +758,42 @@ class MatchHeroScoreCard extends StatelessWidget {
           ),
           const MDTopGlow(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            padding: EdgeInsets.fromLTRB(phone ? 16 : 18, 10, phone ? 16 : 18, 10),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    MDStatusPill(
-                      label: statusLabel,
-                      color: statusColor,
-                      // Suppress the pulsing "live now" dot for a stoppage
-                      // (stumps/lunch/tea/…) so the pill does not read "live
-                      // now" while the note says "Day 1 Stumps".
-                      live: status.subPhase == MatchSubPhase.live,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        statusText,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: c.isDark
-                              ? Colors.white.withValues(alpha: .92)
-                              : c.text,
-                          fontWeight: FontWeight.w800,
-                          fontSize: phone ? 11.5 : 12.5,
-                          height: 1.2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // Balances the LIVE pill so the status text stays centered.
-                    const Opacity(
-                      opacity: 0,
-                      child: MDStatusPill(label: 'LIVE', color: Colors.white),
-                    ),
-                  ],
+                // Badge on its own centered row, then the phase/status note on
+                // a dedicated full-width line below. This gives the long Test
+                // status ("Day 2: 3rd Session - WI trail by 515") a readable 2
+                // lines at 360px instead of squeezing it between two pills — and
+                // drops the invisible "balance" pill that used to steal ~48px.
+                Center(
+                  child: MDStatusPill(
+                    label: statusLabel,
+                    color: statusColor,
+                    // Suppress the pulsing "live now" dot for a stoppage
+                    // (stumps/lunch/tea/…) so the pill does not read "live
+                    // now" while the note says "Day 1 Stumps".
+                    live: status.subPhase == MatchSubPhase.live,
+                  ),
                 ),
+                if (statusText.isNotEmpty) ...[
+                  SizedBox(height: phone ? 5 : 6),
+                  Text(
+                    statusText,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: c.isDark
+                          ? Colors.white.withValues(alpha: .92)
+                          : c.text,
+                      fontWeight: FontWeight.w800,
+                      fontSize: context.sp(phone ? 11.5 : 12.5),
+                      height: 1.25,
+                    ),
+                  ),
+                ],
                 if (format.isNotEmpty) ...[
                   SizedBox(height: phone ? 5 : 7),
                   _formatPill(context, format),
@@ -822,8 +818,8 @@ class MatchHeroScoreCard extends StatelessWidget {
                       ),
                     ),
                     MDVsBadge(
-                      width: phone ? 52 : 60,
-                      height: phone ? 36 : 40,
+                      width: context.isCompact ? 46 : (phone ? 52 : 60),
+                      height: context.isCompact ? 34 : (phone ? 36 : 40),
                     ),
                     Expanded(
                       child: MDTeamScoreBlock(
@@ -1458,7 +1454,7 @@ class MDTeamSelector extends StatelessWidget {
                           teamName: items[i].name,
                           abbreviation: items[i].label,
                           color: c.cyan,
-                          size: 22,
+                          size: TeamLogoWidget.miniSize,
                         ),
                         const SizedBox(width: 7),
                         Flexible(

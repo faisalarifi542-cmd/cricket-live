@@ -168,8 +168,8 @@ void main() {
         150,
       ));
       expect(tester.takeException(), isNull); // no overflow
-      expect(find.text('438/10 · 114.5 ov'), findsOneWidget);
-      expect(find.text('234/8* · 83.0 ov'), findsOneWidget);
+      expect(find.text('438/10 · 114.5 OV'), findsOneWidget);
+      expect(find.text('234/8* · 83.0 OV'), findsOneWidget);
     });
 
     testWidgets('Yet to bat is muted/small, not a big score, with no overs',
@@ -190,7 +190,7 @@ void main() {
       expect(t.style!.fontSize! <= 14.5, isTrue);
       expect(t.style!.fontWeight, isNot(FontWeight.w900));
       // No overs line rendered for a yet-to-bat side.
-      expect(find.textContaining(' ov'), findsNothing);
+      expect(find.textContaining(' OV'), findsNothing);
     });
 
     testWidgets(
@@ -220,12 +220,12 @@ void main() {
       ));
       expect(tester.takeException(), isNull);
       expect(find.text('154/7'), findsOneWidget);
-      expect(find.text('20.0 ov'), findsOneWidget);
+      expect(find.text('20.0 OVERS'), findsOneWidget);
       // Score stays strong (single-innings hero preset 26–34, capped) and the
       // overs line sits clearly below it.
       final score = tester.widget<Text>(find.text('154/7'));
       expect(score.style!.fontSize!, inInclusiveRange(26.0, 34.0));
-      final overs = tester.widget<Text>(find.text('20.0 ov'));
+      final overs = tester.widget<Text>(find.text('20.0 OVERS'));
       expect(overs.style!.fontSize!, inInclusiveRange(13.0, 15.0));
       expect(overs.style!.fontSize! < score.style!.fontSize!, isTrue);
     });

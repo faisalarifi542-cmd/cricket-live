@@ -50,7 +50,8 @@ class LivePlayerScreen extends StatefulWidget {
   State<LivePlayerScreen> createState() => _LivePlayerScreenState();
 }
 
-class _LivePlayerScreenState extends State<LivePlayerScreen> {
+class _LivePlayerScreenState extends State<LivePlayerScreen>
+    with WidgetsBindingObserver {
   final CricketRepository _repository = CricketRepository();
   Future<ApiEnvelope<Map<String, dynamic>>>? _streamsFuture;
   Future<ApiEnvelope<Map<String, dynamic>>>? _detailFuture;
@@ -244,6 +245,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _appConfigFuture = _repository.appConfig();
     if (_hasMatchId) {
       // Live player opened for a match. Fires once per screen open.
@@ -261,13 +263,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
       AnalyticsService.instance.screenView('live_player');
       _detailFuture = _loadMatchDetail();
       _liveLineFuture = _repository.matchLiveLine(widget.matchId);
-      _liveLineFuture!.then((response) => _liveLineData = response.data);
+      _liveLineFuture!.then(
+        (response) => _liveLineData = response.data,
+        onError: (_) {
+          // The FutureBuilder observes the original future's error; this
+          // derived chain must not raise a second, unhandled rejection.
+        },
+      );
       _streamsFuture = _repository.matchStreams(widget.matchId);
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _liveTimer?.cancel();
     _portraitHideTimer?.cancel();
     _videoController?.removeListener(_onControllerUpdate);
@@ -280,17 +289,35 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
     super.dispose();
   }
 
+  /// Match the other polling screens: no live polling while the app is
+  /// backgrounded, with an immediate catch-up refresh on resume.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _configureLivePolling();
+      if (_liveTimer != null) _silentPollLiveLine();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _liveTimer?.cancel();
+      _liveTimer = null;
+    }
+  }
+
   Future<ApiEnvelope<Map<String, dynamic>>> _loadMatchDetail({
     bool forceRefresh = false,
   }) async {
     final response = await _repository.matchDetail(widget.matchId,
         forceRefresh: forceRefresh);
     _detailData = response.data;
-    _configureLivePolling();
+    // The screen can be popped while this fetch is in flight — arming the
+    // periodic timer then would leak it forever (dispose already ran).
+    if (mounted) _configureLivePolling();
     return response;
   }
 
   void _configureLivePolling() {
+    if (!mounted) return;
     final live = _isLiveMatchData(_detailData);
     if (!live) {
       _liveTimer?.cancel();
@@ -332,6 +359,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen> {
           _liveLineFuture = Future.value(line);
         });
       }
+    } catch (_) {
+      // Silent poll: an offline tick must not surface an unhandled async
+      // exception; the next 10s tick retries naturally.
     } finally {
       _livePolling = false;
     }

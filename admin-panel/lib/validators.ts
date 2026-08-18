@@ -75,6 +75,7 @@ export const providerSchema = z.object({
   timeout_ms: z.coerce.number().int().min(1000).default(8000),
   rate_limit_per_minute: z.coerce.number().int().min(1).default(60),
   is_active: z.boolean().default(true),
+  role: z.enum(['primary', 'fallback']).default('fallback'),
 });
 export type ProviderInput = z.infer<typeof providerSchema>;
 

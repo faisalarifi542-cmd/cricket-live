@@ -19,7 +19,11 @@
 //   • Scores NEVER ellipsize. Innings stay in chronological order (oldest
 //     first); the current/live innings is highlighted (brighter + a small `*`)
 //     but is NEVER reordered ahead of an earlier innings.
-//   • Overs use a lowercase `ov` unit, always.
+//   • Overs unit matches the Home premium style everywhere: a single innings
+//     reads `44.2 OVERS`, multi-innings rows read `87.1 OV` — so a score looks
+//     IDENTICAL on Home, Matches, Schedule, Match Details and the compact bar.
+//     (The pure presentation layer + legacy flat strings keep lowercase `ov`;
+//     the uppercase treatment is display-only, applied here.)
 import 'package:flutter/material.dart';
 
 import 'package:cricpro_flutter/app_theme.dart';
@@ -101,6 +105,19 @@ class TeamScoreView extends StatelessWidget {
         _ => Alignment.center,
       };
 
+  /// Display-only overs unit, unified with the Home premium style: a roomy
+  /// single-innings line spells `OVERS`; multi-innings rows and the tight
+  /// compact bar use the short `OV`. Applied at render time only — the pure
+  /// presentation layer (`oversLine`) and legacy flat strings keep `ov`.
+  String _displayOvers(String rawOversLine, {required bool single}) {
+    if (rawOversLine.isEmpty) return rawOversLine;
+    final up = rawOversLine.replaceAll(RegExp(r'\bov\b'), 'OV');
+    if (!single) return up;
+    return mode.family == ScoreLayoutFamily.bar
+        ? up
+        : up.replaceFirst(RegExp(r'\bOV$'), 'OVERS');
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
@@ -111,8 +128,8 @@ class TeamScoreView extends StatelessWidget {
         color ?? (live ? (c.isDark ? Colors.white : c.text) : c.cyan);
     // Overs read WHITE / near-white (low-contrast cyan on the blue stadium
     // backdrop was hard to read). Only the small separator dot stays cyan.
-    final ovColor = oversColor ??
-        (c.isDark ? Colors.white.withValues(alpha: .92) : c.text);
+    final ovColor =
+        oversColor ?? (c.isDark ? Colors.white.withValues(alpha: .92) : c.text);
     final sepColor = c.cyan.withValues(alpha: c.isDark ? .9 : .8);
 
     if (!pres.hasScore) {
@@ -154,7 +171,8 @@ class TeamScoreView extends StatelessWidget {
   Widget _stackedInlineRows(TeamScorePresentation pres, ScorePreset preset,
       Color mainColor, Color ovColor, Color sepColor) {
     final scored = pres.scored;
-    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex, live: live);
+    final currentIdx =
+        pres.resolveCurrentIndex(currentInningsIndex, live: live);
     final hasCurrent = currentIdx >= 0;
     final dim = mainColor.withValues(alpha: .62);
     // Premium hierarchy enforced centrally by the preset: runs/wickets stay
@@ -200,7 +218,7 @@ class TeamScoreView extends StatelessWidget {
             ),
           ),
           TextSpan(
-            text: '$overs ov',
+            text: '$overs OV',
             style: TextStyle(
               color: ovColor,
               fontWeight: preset.oversWeight,
@@ -246,7 +264,8 @@ class TeamScoreView extends StatelessWidget {
       letterSpacing: .2,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
-    final oversLine = pres.oversLine(unitEach: !compactOvers);
+    final oversLine =
+        _displayOvers(pres.oversLine(unitEach: !compactOvers), single: true);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: align,
@@ -297,7 +316,8 @@ class TeamScoreView extends StatelessWidget {
       letterSpacing: .2,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
-    final oversLine = pres.oversLine(unitEach: !compactOvers);
+    final oversLine =
+        _displayOvers(pres.oversLine(unitEach: !compactOvers), single: false);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: align,
@@ -336,9 +356,11 @@ class TeamScoreView extends StatelessWidget {
   Widget _combinedScoreRich(
       TeamScorePresentation pres, TextStyle base, Color mainColor) {
     final scored = pres.scored;
-    final currentIdx = pres.resolveCurrentIndex(currentInningsIndex, live: live);
+    final currentIdx =
+        pres.resolveCurrentIndex(currentInningsIndex, live: live);
     final hasCurrent = currentIdx >= 0;
-    final dim = (live && hasCurrent) ? mainColor.withValues(alpha: .62) : mainColor;
+    final dim =
+        (live && hasCurrent) ? mainColor.withValues(alpha: .62) : mainColor;
     final spans = <TextSpan>[];
     for (var i = 0; i < scored.length; i++) {
       final isCurrent = i == currentIdx;

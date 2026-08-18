@@ -47,6 +47,26 @@ const siteWebApi = axios.create({
   maxRedirects: 5,
 });
 
+// Standings live under site.api's /apis/v2 path (NOT the /apis/site/v2 sport
+// base), e.g. /apis/v2/sports/cricket/{seriesId}/standings.
+const siteApiV2 = axios.create({
+  baseURL: 'https://site.api.espn.com/apis/v2/sports/cricket',
+  headers: JSON_HEADERS,
+  timeout: 10000,
+  decompress: true,
+  maxRedirects: 5,
+});
+
+// The v3 "common" athlete endpoint is the only ESPN backend that serves a full
+// standalone player profile (bio, styles, headshot). Base is site.web.api.
+const commonV3Api = axios.create({
+  baseURL: 'https://site.web.api.espn.com/apis/common/v3/sports/cricket',
+  headers: JSON_HEADERS,
+  timeout: 10000,
+  decompress: true,
+  maxRedirects: 5,
+});
+
 async function fetchJson(client, path, params, context) {
   const start = Date.now();
   const url = `${client.defaults.baseURL || ''}${path}`;
@@ -117,6 +137,30 @@ export async function getPlayByPlay(matchId, seriesId, page = 1) {
   return fetchJson(siteApi, `/${sId}/playbyplay`, { event: mId, page }, 'playbyplay');
 }
 
+/**
+ * Fetch a series' standings/points table.
+ * site.api…/apis/v2/sports/cricket/{seriesId}/standings returns a
+ * `children[].standings.entries[]` structure with per-team stats.
+ * @param {string} seriesId
+ */
+export async function getStandings(seriesId) {
+  const sid = String(seriesId || '').trim();
+  if (!sid) throw new Error('cricinfo getStandings: seriesId required');
+  return fetchJson(siteApiV2, `/${sid}/standings`, undefined, 'standings');
+}
+
+/**
+ * Fetch a standalone player profile from the v3 "common" athlete endpoint.
+ * This is the ONLY ESPN backend that serves a full player bio without a match
+ * context (core.api /athletes returns 400 for cricket, HTML is 403).
+ * @param {string} playerId - ESPN athlete id
+ */
+export async function getAthlete(playerId) {
+  const pid = String(playerId || '').trim();
+  if (!pid) throw new Error('cricinfo getAthlete: playerId required');
+  return fetchJson(commonV3Api, `/athletes/${pid}`, undefined, 'athlete');
+}
+
 // --- mapping learners (best-effort, never throw) ---
 
 function learnMappingsFromHeader(data) {
@@ -159,4 +203,6 @@ export const cricinfoClient = {
   getSeriesScoreboard,
   getSummary,
   getPlayByPlay,
+  getStandings,
+  getAthlete,
 };

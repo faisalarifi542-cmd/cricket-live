@@ -158,6 +158,45 @@ void main() {
     });
   });
 
+  group('MatchStatusDisplay — phase note normalization (no malformed strings)',
+      () {
+    testWidgets('"Stumps - WI trail by 491 runs" → no leading dash, phase last',
+        (tester) async {
+      await _withTheme(tester, (ctx) {
+        final m = _m(
+            status: 'live',
+            phase: 'stumps',
+            statusText: 'Stumps - WI trail by 491 runs');
+        final d = MatchStatusDisplay.of(ctx, m);
+        // Must NOT start with a dash and must NOT duplicate/append "runs Stumps".
+        expect(d.phaseLabel.trimLeft().startsWith('-'), isFalse);
+        expect(d.phaseLabel, isNot(contains('runs Stumps')));
+        expect(d.phaseLabel, 'WI trail by 491 runs · Stumps');
+      });
+    });
+
+    testWidgets('"Day 3: Stumps - India A lead by 175 runs" → Day lifted, clean',
+        (tester) async {
+      await _withTheme(tester, (ctx) {
+        final m = _m(
+            status: 'live',
+            phase: 'stumps',
+            statusText: 'Day 3: Stumps - India A lead by 175 runs');
+        final d = MatchStatusDisplay.of(ctx, m);
+        expect(d.phaseLabel, 'Day 3: Stumps · India A lead by 175 runs');
+        expect(d.phaseLabel, isNot(contains(' - ')));
+      });
+    });
+
+    testWidgets('bare "Stumps" stays "Stumps"', (tester) async {
+      await _withTheme(tester, (ctx) {
+        final m = _m(status: 'live', phase: 'stumps', statusText: 'Stumps');
+        final d = MatchStatusDisplay.of(ctx, m);
+        expect(d.phaseLabel, 'Stumps');
+      });
+    });
+  });
+
   testWidgets('badge + label never contradict for a stumps Test', (tester) async {
     // The exact bug from the brief: a live Test at "Day 1: Stumps" must NOT
     // show a generic LIVE badge alongside "Day 1: Stumps" text. The badge is

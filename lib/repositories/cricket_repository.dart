@@ -11,8 +11,20 @@ import 'package:cricpro_flutter/upcoming_sort.dart';
 import 'package:cricpro_flutter/utils/match_classification.dart';
 
 class CricketRepository {
-  CricketRepository({CricketApiService? service})
-      : _service = service ?? CricketApiService();
+  /// Screens and per-card widgets all construct `CricketRepository()`, so that
+  /// must resolve to ONE shared instance — otherwise every caller gets a
+  /// private empty cache and the TTL cache / in-flight dedup below can never
+  /// coalesce anything (N live cards = N identical `/app/config` fetches).
+  /// Injecting a service (tests) still yields an isolated instance.
+  factory CricketRepository({CricketApiService? service}) {
+    if (service != null) return CricketRepository._(service);
+    return _shared;
+  }
+
+  CricketRepository._(this._service);
+
+  static final CricketRepository _shared =
+      CricketRepository._(CricketApiService());
 
   final CricketApiService _service;
   final Map<String, _CacheEntry<dynamic>> _cache = {};
@@ -591,6 +603,7 @@ class CricketRepository {
     try {
       final value = await future;
       _cache[key] = _CacheEntry(value, now.add(ttl));
+      _evictExpired();
       // Persist successful responses so a cold start can serve them instantly.
       _writePersistent<T>(key, value, persist);
       return value;
@@ -599,6 +612,24 @@ class CricketRepository {
       rethrow;
     } finally {
       _inflight.remove(key);
+    }
+  }
+
+  /// The cache is shared process-wide and keyed per match, so browsing many
+  /// matches would otherwise grow it without bound (entries were only ever
+  /// overwritten, never removed once expired). Drop expired entries, and if
+  /// still over budget drop the entries closest to expiry.
+  static const int _maxCacheEntries = 120;
+
+  void _evictExpired() {
+    final now = DateTime.now();
+    _cache.removeWhere(
+        (key, entry) => !_inflight.containsKey(key) && !entry.expiresAt.isAfter(now));
+    if (_cache.length <= _maxCacheEntries) return;
+    final byExpiry = _cache.entries.toList()
+      ..sort((a, b) => a.value.expiresAt.compareTo(b.value.expiresAt));
+    for (final entry in byExpiry.take(_cache.length - _maxCacheEntries)) {
+      _cache.remove(entry.key);
     }
   }
 

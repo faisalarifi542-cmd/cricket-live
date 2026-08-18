@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cricpro_flutter/models/ad_config.dart';
 import 'package:cricpro_flutter/services/ads/ad_adapter.dart';
 import 'package:cricpro_flutter/services/ads/admob_adapter.dart';
+import 'package:cricpro_flutter/services/ads/att_service.dart';
 import 'package:cricpro_flutter/services/ads/consent_manager.dart';
 import 'package:cricpro_flutter/services/ads/meta_adapter.dart';
 import 'package:cricpro_flutter/services/ads/unity_adapter.dart';
@@ -150,6 +151,12 @@ class AdsManager {
       return;
     }
     debugPrint('ADS_CONFIG: UMP complete; ad SDK initialization starting');
+
+    // iOS ATT: request tracking authorization before the ad SDKs load so they
+    // can access IDFA when the user grants it. Apple requires this prompt
+    // before IDFA access; it is the platform-level counterpart to UMP's
+    // regional consent. No-op on Android/web; fail-open (never blocks init).
+    await AttService.instance.requestIfNeeded();
 
     for (final network in config.orderedNetworks) {
       final adapter = _adapters[network]!;

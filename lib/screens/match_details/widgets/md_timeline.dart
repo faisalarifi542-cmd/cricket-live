@@ -71,12 +71,16 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
       _ => runs,
     };
 
+    // On a 360px phone the fixed left gutter (over column + rail + gap) used to
+    // eat ~94px, leaving the commentary card cramped. Slim it on compact so the
+    // text card gets ~16px more width.
+    final compact = context.isCompact;
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: 40,
+            width: compact ? 32 : 40,
             child: Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Column(
@@ -89,7 +93,7 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
                       style: TextStyle(
                           color: c.cyan,
                           fontWeight: FontWeight.w900,
-                          fontSize: 12.5)),
+                          fontSize: compact ? 11.5 : 12.5)),
                   if (team.isNotEmpty)
                     Text(team.toUpperCase(),
                         textAlign: TextAlign.center,
@@ -106,20 +110,21 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
           _TimelineRail(
             isFirst: widget.isFirst,
             isLast: widget.isLast,
+            width: compact ? 42 : 46,
             child: MDBallChip(
               label: ballLabel,
               type: type,
               wicket: type == 'wicket',
               boundary: type == 'four' || type == 'six',
               size: switch (type) {
-                'wicket' => 44,
-                'six' || 'four' => 42,
-                'dot' => 38,
-                _ => 40,
+                'wicket' => compact ? 40 : 44,
+                'six' || 'four' => compact ? 38 : 42,
+                'dot' => compact ? 34 : 38,
+                _ => compact ? 36 : 40,
               },
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: compact ? 6 : 8),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -255,17 +260,19 @@ class _TimelineRail extends StatelessWidget {
     required this.child,
     required this.isFirst,
     required this.isLast,
+    this.width = 46,
   });
 
   final Widget child;
   final bool isFirst;
   final bool isLast;
+  final double width;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
     return SizedBox(
-      width: 46,
+      width: width,
       child: Stack(
         alignment: Alignment.topCenter,
         children: [

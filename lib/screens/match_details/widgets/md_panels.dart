@@ -859,40 +859,41 @@ class _BallLegend extends StatelessWidget {
       ('B', 'bye'),
       ('Lb', 'leg_bye'),
     ];
+    final compact = context.isCompact;
+    // Each (chip + label) is one atomic Row so the Wrap can NEVER break a line
+    // between a chip and its own label. Tighter spacing on compact keeps the
+    // 8 keys + "No data" from packing too densely at 360px.
+    Widget pair(String label, String type, String caption) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MDBallChip(label: label, type: type, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              caption,
+              style: TextStyle(
+                color: c.muted,
+                fontWeight: FontWeight.w700,
+                fontSize: 10.5,
+              ),
+            ),
+          ],
+        );
     return Wrap(
-      spacing: 12,
+      spacing: compact ? 10 : 14,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        for (final s in samples) ...[
-          MDBallChip(label: s.$1, type: s.$2, size: 22),
-          const SizedBox(width: 2),
-          Text(
+        for (final s in samples)
+          pair(
+            s.$1,
+            s.$2,
             s.$1 == '0'
                 ? 'Dot'
                 : s.$1 == 'W'
                     ? 'Wkt'
                     : s.$1,
-            style: TextStyle(
-              color: c.muted,
-              fontWeight: FontWeight.w700,
-              fontSize: 10.5,
-            ),
           ),
-        ],
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const MDBallChip(label: '', type: '', size: 22),
-            const SizedBox(width: 6),
-            Text('No data',
-                style: TextStyle(
-                  color: c.muted,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 10.5,
-                )),
-          ],
-        ),
+        pair('', '', 'No data'),
       ],
     );
   }

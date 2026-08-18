@@ -15,12 +15,14 @@ import '../../repositories/cricket_repository.dart';
 import '../../upcoming_sort.dart';
 import '../../utils/match_classification.dart';
 import '../../utils/match_status.dart';
+import '../../utils/score_presentation.dart';
 import '../../utils/team_format.dart';
-import '../../widgets/team_score_view.dart';
 import '../../services/favorite_countries_service.dart';
 import 'package:cricpro_flutter/services/analytics_service.dart';
 import 'home_hero_order.dart';
+import 'home_score_rules.dart';
 
+part 'home_card_metrics.dart';
 part 'widgets/home_header.dart';
 part 'widgets/home_hero.dart';
 part 'widgets/home_match_cards.dart';
@@ -46,6 +48,35 @@ class _HAsset {
   /// Main list match card background — clean live card art.
   static const liveCardBg = '$_base/list_match_card_bg_live_clean.webp';
 }
+
+/// Single authoritative selected-filter for the Home main-matches region.
+///
+/// The segmented-control highlight, the section heading, the list data source
+/// and the "View All" destination must ALL derive from this one value so they
+/// can never disagree (the forbidden "Live highlighted / Upcoming heading /
+/// upcoming cards" state).
+///
+/// The user's selection is ALWAYS honoured: tapping Live keeps Live selected
+/// even when zero live matches loaded — the region then renders the dedicated
+/// Live empty state (with a switch-to-Upcoming CTA) instead of silently
+/// re-resolving to Upcoming. The previous auto-fallback made the Live tab feel
+/// non-clickable whenever nothing was live.
+///
+/// `0 = Live`, `1 = Upcoming`, `2 = Finished`.
+@visibleForTesting
+int homeResolvedTab({required int selectedTab, required bool liveLoadedEmpty}) {
+  return selectedTab;
+}
+
+/// Section heading for a RESOLVED tab (see [homeResolvedTab]). Kept in lockstep
+/// with the segmented-control highlight and the list data so the three never
+/// drift apart.
+@visibleForTesting
+String homeSectionHeading(int resolvedTab) => switch (resolvedTab) {
+      0 => 'Live Matches',
+      1 => 'Upcoming Matches',
+      _ => 'Finished Matches',
+    };
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -106,6 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late Future<List<CricketMatch>> _heroFuture;
   late Future<List<CricketMatch>> _tabFuture;
   late Future<HomeFeed> _feedFuture;
+
   /// Dedicated merged+sorted upcoming feed for the horizontal Upcoming row and
   /// the Live-empty fallback. Independent of the selected tab so it is always
   /// ready to surface fixtures.
@@ -129,6 +161,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// skeleton instead of rendering with an empty exclude set — which is what let
   /// the hero match flash in the list before "moving" into the carousel.
   bool _heroSettled = false;
+
+  /// Completes the moment [_heroSettled] flips to true. Used by the post-frame
+  /// startup refresh so a silent poll can't race the initial hero resolution.
+  /// Bounded by [_kStartupRefreshGrace] — if the hero never settles (offline
+  /// cold start), the refresh still fires so we don't stall in the loading
+  /// state forever.
+  final Completer<void> _heroSettledCompleter = Completer<void>();
+  static const Duration _kStartupRefreshGrace = Duration(milliseconds: 500);
 
   /// Latest resolved hero matches + a content key, tracked so the silent poll
   /// can refresh a live featured match's score INDEPENDENTLY of the lower
@@ -166,9 +206,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // First paint shows the repository's cached snapshot instantly; immediately
     // kick a silent force-refresh after that frame so a live score that moved
     // since the cache was written updates without waiting for the 8s tick or a
-    // manual pull-to-refresh.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _kickImmediateRefresh('initState');
+    // manual pull-to-refresh. Wait for the hero to settle first (bounded by a
+    // 500ms grace) so the immediate poll never races the initial hero-id
+    // resolution — this is what let the primary hero flash into the list for
+    // one frame before "moving" up into the carousel.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        await _heroSettledCompleter.future.timeout(_kStartupRefreshGrace);
+      } on TimeoutException {
+        // Hero taking longer than expected — the immediate refresh is
+        // optional (cached data already renders), so proceed anyway.
+      }
+      if (!mounted) return;
+      _kickImmediateRefresh('initState');
     });
   }
 
@@ -197,6 +248,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .map((m) => m.id)
           .firstWhere((id) => id.isNotEmpty, orElse: () => '');
       final ids = primary.isEmpty ? const <String>{} : {primary};
+      final wasSettled = _heroSettled;
       if (!_heroSettled ||
           ids.length != _heroIds.length ||
           !ids.containsAll(_heroIds)) {
@@ -204,6 +256,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _heroIds = ids;
           _heroSettled = true;
         });
+      }
+      if (!wasSettled && !_heroSettledCompleter.isCompleted) {
+        _heroSettledCompleter.complete();
       }
       // If the hero's live-ness changed (e.g. a featured match just went live
       // while the user sits on the Finished tab), re-arm polling so the hero
@@ -214,6 +269,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // unblock the list so it isn't stuck on a skeleton forever.
       if (mounted && !_heroSettled) {
         setState(() => _heroSettled = true);
+      }
+      if (!_heroSettledCompleter.isCompleted) {
+        _heroSettledCompleter.complete();
       }
     });
   }
@@ -316,10 +374,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       var replaced = 0;
       final merged = [
         for (final h in heroes)
-          if (byId[h.id] case final fresh?) () {
-            replaced++;
-            return fresh;
-          }()
+          if (byId[h.id] case final fresh?)
+            () {
+              replaced++;
+              return fresh;
+            }()
           else
             h,
       ];
@@ -327,7 +386,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         debugPrint('CricProHomeHero: overlaid $replaced/${heroes.length} '
             'hero(es) from match feeds (indexed=${byId.length})');
         for (final h in merged) {
-          if (h.isLive && h.teamAScoreText.isEmpty && h.teamBScoreText.isEmpty) {
+          if (h.isLive &&
+              h.teamAScoreText.isEmpty &&
+              h.teamBScoreText.isEmpty) {
             debugPrint('CricProHomeHero: WARN hero ${h.id} is LIVE but has '
                 'EMPTY score after overlay — not present in match feeds, or '
                 'feed score parsed empty (see CricProHomeScoreMap).');
@@ -354,12 +415,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return matches;
     }
     // Status bucket: live (0) outranks upcoming (1) outranks finished (2).
-    int statusRank(CricketMatch m) =>
-        m.isLive ? 0 : (m.isFinished ? 2 : 1);
+    int statusRank(CricketMatch m) => m.isLive ? 0 : (m.isFinished ? 2 : 1);
     // The best status bucket present decides which matches are eligible to
     // lead — favourites never jump a worse bucket over a better one.
-    final topBucket =
-        matches.map(statusRank).reduce((a, b) => a < b ? a : b);
+    final topBucket = matches.map(statusRank).reduce((a, b) => a < b ? a : b);
     final favsInTopBucket = matches
         .where((m) =>
             statusRank(m) == topBucket &&
@@ -396,14 +455,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// main-list / featured-series toggles.
   List<Widget> _buildSections() {
     final cfg = _config;
+    final hPad = context.horizontalPadding;
+    // Small-device breathing-room pass: on compact phones (≤380px) the
+    // section-to-section gaps are widened a few px so headings never sit right
+    // on top of their content. Larger phones keep the existing spacing.
+    final compact = context.w < 380;
+    // The ListView is now full-bleed (no horizontal padding) so the hero
+    // carousel can span nearly the full screen width. Every NON-hero section is
+    // re-inset to the normal page padding via this helper; the hero carousel
+    // instead uses its own small [_HeroMetrics.heroMargin] so it reads as one
+    // dominant card with only a thin peek of its neighbours.
+    Widget pad(Widget child) => Padding(
+          padding: EdgeInsets.symmetric(horizontal: hPad),
+          child: child,
+        );
     final children = <Widget>[
-      _HomeHeader(
+      pad(_HomeHeader(
         onBell: widget.onOpenNotifications,
-      ),
-      const SizedBox(height: 12),
+      )),
+      // Breathing room between the CRICPRO logo row and the hero carousel's
+      // cyan-bordered card.
+      const SizedBox(height: 22),
     ];
 
-    // 1. Hero carousel.
+    // 1. Hero carousel — full-bleed (NOT wrapped in `pad`).
     if (cfg.topFeatured.enabled) {
       children.add(_HeroMatchCarousel(
         future: _heroFuture,
@@ -414,38 +489,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onRetry: _refresh,
         showDots: cfg.topFeatured.showDots,
       ));
-      children.add(const SizedBox(height: 12));
+      children.add(const SizedBox(height: 22));
     }
 
-    // 2. Live / Upcoming / Finished segmented control.
+    // Single authoritative selected-filter. The segmented-control highlight,
+    // the section heading and the main list data source are ALL derived from
+    // this one value, so they can never disagree. The user's tap is always
+    // honoured — an empty Live tab stays on Live and renders the dedicated
+    // Live empty state below (never a silent re-resolve to Upcoming that made
+    // the Live tab feel dead).
+    final resolvedTab =
+        homeResolvedTab(selectedTab: topTab, liveLoadedEmpty: false);
+
+    // 2. Live / Upcoming / Finished segmented control — highlights the RESOLVED
+    // tab so the highlight always matches the heading + list below.
     if (cfg.mainMatches.enabled && cfg.mainMatches.showStatusTabs) {
-      children.add(_HomeStatusTabs(selected: topTab, onChanged: _setTopTab));
-      children.add(const SizedBox(height: 14));
+      children.add(
+          pad(_HomeStatusTabs(selected: resolvedTab, onChanged: _setTopTab)));
+      children.add(const SizedBox(height: 18));
     }
 
-    // 3. Main matches — titled by the selected tab.
-    // When the Live tab has loaded and has no live matches (after primary-hero
-    // exclusion), the Live section is replaced by the Upcoming Matches section
-    // flowing up directly beneath the tabs — no big "No live matches" card and
-    // no blank gap where the quick actions used to be.
-    final loadedEmpty = _tabData != null &&
-        _tabData!.where((m) => !_heroIds.contains(m.id)).isEmpty;
-    final showUpcomingInstead = topTab == 0 && loadedEmpty;
-    if (cfg.mainMatches.enabled && !showUpcomingInstead) {
-      children.add(_SectionHeader(
-        title: switch (topTab) {
-          0 => 'Live Matches',
-          1 => 'Upcoming Matches',
-          _ => 'Finished Matches',
-        },
+    // 3. Main matches — heading + list both keyed off [resolvedTab]. An empty
+    // Live tab renders the polished Live empty state (with a switch-to-Upcoming
+    // CTA) under the "Live Matches" heading, so tab / heading / content always
+    // agree.
+    if (cfg.mainMatches.enabled) {
+      children.add(pad(_SectionHeader(
+        title: homeSectionHeading(resolvedTab),
         onSeeAll: widget.onOpenMatches ?? () {},
         showSeeAll: widget.onOpenMatches != null,
-      ));
-      children.add(const SizedBox(height: 12));
-      children.add(_HomeMatchList(
+      )));
+      children.add(SizedBox(height: compact ? 20 : 14));
+      children.add(pad(_HomeMatchList(
         future: _tabFuture,
         data: _tabData,
-        topTab: topTab,
+        topTab: resolvedTab,
         repository: _repository,
         maxItems: cfg.mainMatches.maxItems,
         excludeIds: _heroIds,
@@ -461,43 +539,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onReminder: widget.onOpenReminders,
         onSwitchUpcoming: () => _setTopTab(1),
         onRetry: _refresh,
-      ));
+      )));
     }
 
-    // 4. Upcoming Matches — horizontal scroll row. Shown on the Live and
-    // Finished tabs (and as the primary content when Live is empty). Hidden on
-    // the Upcoming tab to avoid duplicating the main list there.
-    if (topTab != 1) {
-      children.add(_UpcomingMatchesSection(
+    // 4. Upcoming Matches — horizontal scroll teaser row. Shown only on the
+    // Live and Finished tabs; hidden whenever Upcoming is the RESOLVED tab
+    // (the real Upcoming tab OR the Live→Upcoming fallback) so upcoming content
+    // is never duplicated as both the main list and the teaser.
+    if (resolvedTab != 1) {
+      children.add(pad(_UpcomingMatchesSection(
         future: _upcomingFuture,
         excludeIds: _heroIds,
-        // When this IS the primary content (no live matches), drop the top gap
-        // so it sits snug under the tabs instead of leaving a blank band.
-        topSpacing: showUpcomingInstead ? 0 : 22,
+        topSpacing: compact ? 32 : 26,
         onOpenMatch: widget.onOpenMatchDetails,
         onSeeAll: widget.onOpenSchedule ?? widget.onOpenMatches ?? () {},
-        // The prominent "More Upcoming Matches" CTA belongs to the Upcoming
-        // view only. On a populated Live/Finished tab the upcoming row is just a
-        // teaser (header "See All" is enough) — never the big upcoming CTA. It
-        // returns only when Upcoming is the ACTIVE content (Live tab empty).
-        onOpenSchedule: showUpcomingInstead ? widget.onOpenSchedule : null,
-      ));
+      )));
     }
 
     // "More Upcoming Matches → Schedule" CTA at the end of the Upcoming main
     // list (Home keeps only today/tomorrow; Schedule has the full fixture list).
-    if (topTab == 1 && widget.onOpenSchedule != null) {
-      children.add(_MoreUpcomingCta(onOpenSchedule: widget.onOpenSchedule!));
+    // Follows the resolved tab so it appears in the fallback too.
+    if (resolvedTab == 1 && widget.onOpenSchedule != null) {
+      children
+          .add(pad(_MoreUpcomingCta(onOpenSchedule: widget.onOpenSchedule!)));
     }
 
     // 5. Featured Series — always last.
     if (cfg.featuredSeries.enabled) {
-      children.add(_FeaturedSeriesSection(
+      children.add(pad(_FeaturedSeriesSection(
         future: _feedFuture,
         config: cfg.featuredSeries,
         onSeeAll: widget.onOpenSeries,
         onOpenSeries: _openFeaturedSeries,
-      ));
+      )));
     }
     return children;
   }
@@ -746,7 +820,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (topTab != 2) {
           final fresh = await _loadTabMatches(forceRefresh: true);
           if (!mounted) return;
-          setState(() { _tabFuture = Future.value(fresh); });
+          setState(() {
+            _tabFuture = Future.value(fresh);
+          });
         }
         await _refreshHeroSilently(null);
         if (!mounted) return;
@@ -780,12 +856,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final fresh = await _loadTabMatches(forceRefresh: true);
         if (!mounted) return;
         _consecutivePollFailures = 0;
-        final prevKey =
-            previous == null ? '' : jsonEncode(previous.map(_refreshKey).toList());
+        final prevKey = previous == null
+            ? ''
+            : jsonEncode(previous.map(_refreshKey).toList());
         final newKey = jsonEncode(fresh.map(_refreshKey).toList());
         final changed = previous == null || prevKey != newKey;
         if (changed) {
-          setState(() { _tabFuture = Future.value(fresh); });
+          setState(() {
+            _tabFuture = Future.value(fresh);
+          });
           _restoreScroll(oldOffset);
         }
         if (_kHomeDebug) {
@@ -865,15 +944,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final freshHero = _preserveHeroOrder(resolved);
       final freshKey = _heroListKey(freshHero);
       if (_kHomeDebug) {
-        final oldPrimary = _heroData?.isNotEmpty == true ? _heroData!.first : null;
+        final oldPrimary =
+            _heroData?.isNotEmpty == true ? _heroData!.first : null;
         final newPrimary = freshHero.isNotEmpty ? freshHero.first : null;
         // Show per-hero score detail so empty scores are immediately visible.
-        final heroDetails = freshHero.map((h) =>
-            '${h.id}(${homeTeamCode(h.teamAShort, h.teamA)}'
-            ' ${h.teamAScoreText.isEmpty ? "?" : h.teamAScoreText}'
-            ' | ${homeTeamCode(h.teamBShort, h.teamB)}'
-            ' ${h.teamBScoreText.isEmpty ? "?" : h.teamBScoreText}'
-            ' st=${h.status})').join(', ');
+        final heroDetails = freshHero
+            .map((h) => '${h.id}(${homeTeamCode(h.teamAShort, h.teamA)}'
+                ' ${h.teamAScoreText.isEmpty ? "?" : h.teamAScoreText}'
+                ' | ${homeTeamCode(h.teamBShort, h.teamB)}'
+                ' ${h.teamBScoreText.isEmpty ? "?" : h.teamBScoreText}'
+                ' st=${h.status})')
+            .join(', ');
         debugPrint('CricProHomeHero: refresh changed=${freshKey != _heroKey} '
             'primaryId=${newPrimary?.id ?? ''} '
             'old=[${oldPrimary?.teamAScoreText.isEmpty == false ? oldPrimary!.teamAScoreText : "empty"}'
@@ -1060,6 +1141,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
+                  // Top scrim: caps the top band of the backdrop in SOLID page
+                  // bg so the bright horizon inside the stadium art can never
+                  // read as a line crossing the header. Stays fully opaque
+                  // through the status bar + header, then fades into the stadium
+                  // just above the hero. (Target header is clean dark navy.)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 230,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            c.bg,
+                            c.bg,
+                            c.bg.withValues(alpha: .0),
+                          ],
+                          stops: const [0, .5, 1],
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1070,11 +1176,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               color: c.cyan,
               child: ListView(
                 controller: _scrollController,
+                // Full-bleed horizontally (0 side padding) so the hero carousel
+                // spans nearly the whole screen; every non-hero section re-insets
+                // itself to `context.horizontalPadding` via `_buildSections`.
                 padding: EdgeInsets.fromLTRB(
-                  context.horizontalPadding,
+                  0,
                   8,
-                  context.horizontalPadding,
-                  context.mainScrollBottomInset,
+                  0,
+                  // Extra comfort gap over the shared floating nav so the LAST
+                  // card scrolls fully clear of the bar (never clipped behind
+                  // it). The base inset already accounts for the safe area.
+                  context.mainScrollBottomInset + 16,
                 ),
                 children: _buildSections(),
               ),
@@ -1089,4 +1201,3 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
-

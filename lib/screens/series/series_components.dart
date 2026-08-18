@@ -58,6 +58,11 @@ class SeriesView {
 
   String get cleanName => cleanSeriesText(name);
 
+  /// Card-title variant of [cleanName] with a redundant trailing ", YYYY"
+  /// removed so long tour names never ellipsize mid-word (the year still shows
+  /// in the date-range meta). See [compactSeriesTitle].
+  String get compactName => compactSeriesTitle(cleanName);
+
   String get statusLabel => switch (status) {
         SeriesStatus.ongoing => 'Ongoing',
         SeriesStatus.upcoming => 'Upcoming',

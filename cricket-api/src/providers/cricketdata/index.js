@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { BaseProvider } from '../base-provider.js';
+import { ProviderFeatureNotSupported } from '../provider-results.js';
 import config from '../../config/index.js';
 import logger from '../../lib/logger.js';
 import { derivePhase } from '../../lib/match-phase.js';
@@ -19,6 +20,11 @@ export class CricketDataProvider extends BaseProvider {
     super('cricketdata', 3); // lowest priority
   }
 
+  healthState() {
+    if (!this.isConfigured()) return 'misconfigured';
+    return this.healthy ? 'up' : 'down';
+  }
+
   /** CricketData is only usable with an API key configured. */
   isConfigured() {
     return !!config.providers.cricketdata.apiKey;
@@ -26,6 +32,24 @@ export class CricketDataProvider extends BaseProvider {
 
   configReason() {
     return this.isConfigured() ? null : 'missing_api_key';
+  }
+
+  getCapabilities() {
+    return {
+      liveMatches: 'full',
+      upcomingMatches: 'full',
+      recentMatches: 'full',
+      matchInfo: 'full',
+      scorecard: 'full',
+      commentary: 'unsupported',
+      seriesList: 'full',
+      seriesInfo: 'full',
+      pointsTable: 'full',
+      playerInfo: 'full',
+      teamInfo: 'unsupported',
+      matchSquads: 'unsupported',
+      liveLine: 'unsupported',
+    };
   }
 
   #params(extra = {}) {
@@ -94,8 +118,8 @@ export class CricketDataProvider extends BaseProvider {
   }
 
   async getCommentary(_matchId) {
-    // CricketData free tier doesn't support ball-by-ball commentary
-    throw new Error('Commentary not available from CricketData provider');
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getCommentary', 'CricketData free tier does not support ball-by-ball commentary');
   }
 
   async getSeriesList() {
@@ -182,7 +206,8 @@ export class CricketDataProvider extends BaseProvider {
   }
 
   async getTeamInfo(teamId) {
-    throw new Error('Team info not supported by CricketData provider');
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getTeamInfo', 'CricketData does not support team-by-id endpoint');
   }
 
   // --- Internal normalizers ---
@@ -271,16 +296,15 @@ export class CricketDataProvider extends BaseProvider {
     return 'upcoming';
   }
 
-  // Fallback methods for features not supported by CricketData
-  async getPointsTable() {
-    return []; // Not implemented
-  }
-
+  // Fallback methods for features not supported by CricketData — return typed
+  // sentinels so provider-manager falls through cleanly without tripping health.
   async getMatchSquads() {
-    return { team1: null, team2: null }; // Not implemented
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getMatchSquads', 'CricketData does not provide squad data');
   }
 
   async getLiveLine() {
-    return null; // Not implemented
+    this.recordSuccess();
+    return new ProviderFeatureNotSupported('getLiveLine', 'CricketData does not provide live line data');
   }
 }

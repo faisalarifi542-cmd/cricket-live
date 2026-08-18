@@ -144,55 +144,55 @@ class _Metrics {
 _Metrics _metricsFor(double w) {
   if (w <= 360) {
     return const _Metrics(
-      pad: 14,
-      title: 18,
-      meta: 12.5,
-      ctaH: 40,
-      statusH: 26,
-      starSize: 24,
-      bilatRing: 74,
-      stripRing: 34,
-      tournamentH: 222,
-      leagueH: 206,
-      bilateralH: 190,
-      completedH: 182,
-      hero: 176,
-      heroRing: 80,
+      pad: 15,
+      title: 18.5,
+      meta: 13,
+      ctaH: 44,
+      statusH: 27,
+      starSize: 25,
+      bilatRing: 78,
+      stripRing: 35,
+      tournamentH: 238,
+      leagueH: 222,
+      bilateralH: 204,
+      completedH: 190,
+      hero: 214,
+      heroRing: 96,
     );
   }
   if (w <= 430) {
     return const _Metrics(
-      pad: 16,
-      title: 19.5,
-      meta: 13,
-      ctaH: 42,
-      statusH: 28,
-      starSize: 25,
-      bilatRing: 82,
-      stripRing: 36,
-      tournamentH: 232,
-      leagueH: 214,
-      bilateralH: 198,
-      completedH: 190,
-      hero: 188,
-      heroRing: 90,
+      pad: 17,
+      title: 20,
+      meta: 13.5,
+      ctaH: 46,
+      statusH: 29,
+      starSize: 26,
+      bilatRing: 86,
+      stripRing: 37,
+      tournamentH: 250,
+      leagueH: 232,
+      bilateralH: 214,
+      completedH: 200,
+      hero: 228,
+      heroRing: 106,
     );
   }
   return const _Metrics(
-    pad: 18,
-    title: 21,
-    meta: 13.5,
-    ctaH: 44,
+    pad: 19,
+    title: 21.5,
+    meta: 14,
+    ctaH: 48,
     statusH: 30,
-    starSize: 26,
-    bilatRing: 90,
-    stripRing: 38,
-    tournamentH: 242,
-    leagueH: 222,
-    bilateralH: 206,
-    completedH: 198,
-    hero: 200,
-    heroRing: 100,
+    starSize: 27,
+    bilatRing: 94,
+    stripRing: 39,
+    tournamentH: 262,
+    leagueH: 242,
+    bilateralH: 224,
+    completedH: 210,
+    hero: 242,
+    heroRing: 116,
   );
 }
 
@@ -549,12 +549,21 @@ class SeriesCtaButton extends StatelessWidget {
     required this.onTap,
     required this.height,
     this.style = SeriesCtaStyle.primary,
+    this.shrinkToFit = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final double height;
   final SeriesCtaStyle style;
+
+  /// When true the label+chevron are wrapped in a [FittedBox] so the button
+  /// scales its contents down to whatever width the parent allots instead of
+  /// demanding its intrinsic width. Used on the competition/bilateral cards
+  /// where the CTA shares a narrow content column with a tag/meta row — without
+  /// this the row's intrinsic width exceeds the column and Flutter paints its
+  /// debug "OVERFLOWED BY N PIXELS" stripe on the card edge.
+  final bool shrinkToFit;
 
   String get _asset => switch (style) {
         SeriesCtaStyle.primary => SeriesNewAssets.buttonPrimary,
@@ -568,6 +577,29 @@ class SeriesCtaButton extends StatelessWidget {
     final dim = style == SeriesCtaStyle.disabled;
     final textColor =
         dim ? Colors.white.withValues(alpha: .72) : Colors.white;
+    final inner = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(
+            color: textColor,
+            fontWeight: FontWeight.w800,
+            fontSize: height * .35,
+          ),
+        ),
+        SizedBox(width: height * .14),
+        Image.asset(
+          SeriesNewAssets.chevronRight,
+          height: height * .42,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => Icon(Icons.chevron_right_rounded,
+              color: textColor, size: height * .54),
+        ),
+      ],
+    );
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -590,29 +622,12 @@ class SeriesCtaButton extends StatelessWidget {
               : Border.all(color: c.cyan.withValues(alpha: dim ? .3 : .6)),
         ),
         alignment: Alignment.center,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              maxLines: 1,
-              softWrap: false,
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w800,
-                fontSize: height * .38,
-              ),
-            ),
-            SizedBox(width: height * .14),
-            Image.asset(
-              SeriesNewAssets.chevronRight,
-              height: height * .42,
-              fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => Icon(Icons.chevron_right_rounded,
-                  color: textColor, size: height * .54),
-            ),
-          ],
-        ),
+        // On the narrow competition/bilateral content column, scale the
+        // label+chevron down to fit rather than forcing an intrinsic width that
+        // overflows the row (the debug overflow stripe seen on the card edge).
+        child: shrinkToFit
+            ? FittedBox(fit: BoxFit.scaleDown, child: inner)
+            : inner,
       ),
     );
   }
@@ -942,14 +957,26 @@ class _CompetitionPosterCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    SeriesStatusPillImg(
-                      label: statusLabel,
-                      color: statusColor,
-                      live: isLive,
-                      height: m.statusH,
-                      asset: statusAsset,
+                    // Scale-to-fit so the status pill never overflows the
+                    // narrow competition content column: the trophy/league
+                    // side art eats 30–36% of the card width, leaving ~154px
+                    // at 320pt where a full "ONGOING" pill + star exceeds the
+                    // column. FittedBox.scaleDown renders the pill full-size
+                    // when there is room and shrinks it only on the smallest
+                    // widths; the star stays pinned to the right edge.
+                    Expanded(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: SeriesStatusPillImg(
+                          label: statusLabel,
+                          color: statusColor,
+                          live: isLive,
+                          height: m.statusH,
+                          asset: statusAsset,
+                        ),
+                      ),
                     ),
-                    const Spacer(),
                     _PosterFavoriteStar(seriesId: series.id, size: m.starSize),
                   ],
                 ),
@@ -960,7 +987,7 @@ class _CompetitionPosterCard extends StatelessWidget {
                     children: [
                       SizedBox(height: m.pad * .5),
                       Text(
-                        series.cleanName,
+                        series.compactName,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -985,7 +1012,14 @@ class _CompetitionPosterCard extends StatelessWidget {
                 ),
                 Row(
                   children: [
+                    // Label takes only its natural width (Flexible, not Expanded)
+                    // so a short tag like "League" never collapses to "L…"; it
+                    // ellipsizes only when genuinely starved. The CTA sits in its
+                    // own bounded Flexible slot, right-aligned, and scales its
+                    // contents down (shrinkToFit) so the tag + CTA always fit the
+                    // narrow content column — no debug overflow stripe.
                     Flexible(
+                      flex: 3,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1014,13 +1048,14 @@ class _CompetitionPosterCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
+                      flex: 4,
+                      child: Align(
                         alignment: Alignment.centerRight,
                         child: SeriesCtaButton(
                           label: completed ? 'View Series' : 'Explore Series',
                           onTap: onTap,
                           height: m.ctaH,
+                          shrinkToFit: true,
                           style: completed
                               ? SeriesCtaStyle.disabled
                               : SeriesCtaStyle.primary,
@@ -1062,7 +1097,7 @@ class _CompetitionPosterCard extends StatelessWidget {
     final date = series.shortDateRange;
     final matchLine = series.matchCount != null && series.matchCount! > 0
         ? '${series.matchCount} Matches'
-        : series.formatSummary;
+        : normalizeSeriesFormat(series.formatSummary);
     final teamCount = series.teamCount;
     return [
       if (date.isNotEmpty) (Icons.calendar_today_rounded, date),
@@ -1166,7 +1201,7 @@ class _BilateralPosterCard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          series.cleanName,
+                          series.compactName,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1191,6 +1226,7 @@ class _BilateralPosterCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(
+                      flex: 5,
                       child: SeriesMetaRow(
                         fontSize: m.meta,
                         items: [
@@ -1199,7 +1235,7 @@ class _BilateralPosterCard extends StatelessWidget {
                                 series.shortDateRange),
                           if (series.formatSummary.isNotEmpty)
                             (Icons.sports_cricket_rounded,
-                                series.formatSummary),
+                                normalizeSeriesFormat(series.formatSummary)),
                           (
                             completed
                                 ? Icons.check_circle_rounded
@@ -1210,14 +1246,18 @@ class _BilateralPosterCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    // CTA in a bounded, right-aligned slot that scales its
+                    // contents down (shrinkToFit) so the meta row + CTA always
+                    // fit the content column — no debug overflow stripe at 320dp.
                     Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
+                      flex: 4,
+                      child: Align(
                         alignment: Alignment.centerRight,
                         child: SeriesCtaButton(
                           label: 'View Series',
                           onTap: onTap,
                           height: m.ctaH,
+                          shrinkToFit: true,
                           style: completed
                               ? SeriesCtaStyle.disabled
                               : SeriesCtaStyle.secondary,
@@ -1285,8 +1325,13 @@ class _SeriesFilterChipBarState extends State<SeriesFilterChipBar> {
     if (i < 0 || i >= _keys.length) return;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return;
-    // Align the selected chip to the LEADING edge (0.0) so a chip is never left
-    // half-clipped at the start of the row.
+    // FLUSH-LEFT the selected chip so earlier chips scroll cleanly OFF the left
+    // edge — never a half-cut sliver hugging the left (the target shows a clean
+    // chip row). alignment 0.0 aligns the selected chip's leading edge to the
+    // viewport's leading edge, so:
+    //   • initial load (All, index 0) clamps to offset 0 → All sits flush-left,
+    //   • selecting Ongoing/Upcoming/Completed snaps that chip to the left with
+    //     no partial previous chip visible, matching the target.
     Scrollable.ensureVisible(ctx,
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
@@ -1303,13 +1348,13 @@ class _SeriesFilterChipBarState extends State<SeriesFilterChipBar> {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 52,
+      height: 58,
       child: ListView.separated(
         controller: _controller,
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
         clipBehavior: Clip.hardEdge,
-        padding: const EdgeInsets.fromLTRB(0, 4, 4, 4),
+        padding: const EdgeInsets.fromLTRB(2, 5, 10, 5),
         itemCount: _items.length,
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, i) => _FilterChip(
@@ -1351,13 +1396,13 @@ class _FilterChip extends StatelessWidget {
             : SeriesNewAssets.filterInactive);
     return TapScale(
       onTap: onTap,
-      borderRadius: 22,
+      borderRadius: 24,
       child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(24),
           image: DecorationImage(image: AssetImage(base), fit: BoxFit.fill),
           // Fallbacks if a chip base asset fails to load.
           gradient: selected
@@ -1374,15 +1419,15 @@ class _FilterChip extends StatelessWidget {
             color: selected
                 ? c.cyan.withValues(alpha: .95)
                 : c.cyan.withValues(alpha: .35),
-            width: 1.1,
+            width: 1.2,
           ),
           boxShadow: selected && c.isDark
               ? [
                   BoxShadow(
-                    color: c.cyan.withValues(alpha: .3),
-                    blurRadius: 12,
-                    spreadRadius: -3,
-                    offset: const Offset(0, 4),
+                    color: c.cyan.withValues(alpha: .42),
+                    blurRadius: 16,
+                    spreadRadius: -2,
+                    offset: const Offset(0, 5),
                   ),
                 ]
               : null,
@@ -1390,14 +1435,14 @@ class _FilterChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: selected ? Colors.white : c.muted),
-            const SizedBox(width: 7),
+            Icon(icon, size: 17, color: selected ? Colors.white : c.muted),
+            const SizedBox(width: 8),
             Text(
               label,
               style: TextStyle(
                 color: selected ? Colors.white : c.muted,
                 fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-                fontSize: 14,
+                fontSize: 14.5,
               ),
             ),
           ],
@@ -1410,6 +1455,71 @@ class _FilterChip extends StatelessWidget {
 // ===========================================================================
 // Featured hero poster (+ carousel)
 // ===========================================================================
+
+/// A hero flag ring with the team's name captioned beneath it (matching the
+/// target: `AUSTRALIA` / `BANGLADESH` under the two large logos). Renders just
+/// the ring when the team has no readable name. The caption width is capped to
+/// the ring so a long name ellipsizes cleanly instead of widening the hero.
+class _HeroTeamBadge extends StatelessWidget {
+  const _HeroTeamBadge({
+    required this.team,
+    required this.ring,
+    required this.accent,
+    required this.size,
+    required this.captionSize,
+  });
+
+  final SeriesTeamRef? team;
+  final String ring;
+  final Color accent;
+  final double size;
+  final double captionSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _heroTeamLabel(team);
+    final logo = SeriesLogoRing(
+      size: size,
+      ring: ring,
+      team: team,
+      accent: accent,
+    );
+    if (label.isEmpty) return logo;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        logo,
+        const SizedBox(height: 5),
+        SizedBox(
+          width: size + 10,
+          child: Text(
+            label.toUpperCase(),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: captionSize,
+              letterSpacing: .3,
+              shadows: const [Shadow(color: Color(0xCC020812), blurRadius: 6)],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Full team name for a hero caption, falling back to the short code, and empty
+/// when only placeholder text is available (so no caption is drawn).
+String _heroTeamLabel(SeriesTeamRef? team) {
+  if (team == null) return '';
+  final name = team.name.trim();
+  if (name.isNotEmpty && !isPlaceholderText(name)) return name;
+  final short = team.shortName.trim();
+  return isPlaceholderText(short) ? '' : short;
+}
 
 class SeriesFeaturedHeroPoster extends StatelessWidget {
   const SeriesFeaturedHeroPoster({
@@ -1531,11 +1641,12 @@ class SeriesFeaturedHeroPoster extends StatelessWidget {
                 child: Row(
                   children: [
                     if (twoTeams)
-                      SeriesLogoRing(
-                        size: m.heroRing,
-                        ring: SeriesNewAssets.ringBlueGlow,
+                      _HeroTeamBadge(
                         team: left,
+                        ring: SeriesNewAssets.ringBlueGlow,
                         accent: c.cyan,
+                        size: m.heroRing,
+                        captionSize: m.meta * 1.05,
                       ),
                     Expanded(
                       child: Column(
@@ -1604,21 +1715,25 @@ class SeriesFeaturedHeroPoster extends StatelessWidget {
                             ),
                           if (formatText.isNotEmpty ||
                               teamCountText.isNotEmpty) ...[
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 8),
                             _HeroPill(
                                 label: formatText.isNotEmpty
-                                    ? formatText
+                                    // Bullet-separated, ellipsis-free format text
+                                    // ("3 T20Is • 3 ODIs") instead of the raw
+                                    // provider comma form ("3 T20s , 3 ODIs").
+                                    ? normalizeSeriesFormat(formatText)
                                     : teamCountText),
                           ],
                         ],
                       ),
                     ),
                     if (twoTeams)
-                      SeriesLogoRing(
-                        size: m.heroRing,
-                        ring: SeriesNewAssets.ringOrangeGreenGlow,
+                      _HeroTeamBadge(
                         team: right,
+                        ring: SeriesNewAssets.ringOrangeGreenGlow,
                         accent: const Color(0xffff8a3d),
+                        size: m.heroRing,
+                        captionSize: m.meta * 1.05,
                       ),
                   ],
                 ),
@@ -1759,7 +1874,7 @@ class _HeroPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       decoration: BoxDecoration(
         color: c.isDark
             ? const Color(0xff04101f).withValues(alpha: .6)
@@ -1767,15 +1882,20 @@ class _HeroPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: c.cyan.withValues(alpha: .5)),
       ),
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: .95),
-          fontWeight: FontWeight.w700,
-          fontSize: 12.5,
+      // Scale-to-fit (never ellipsize) so the full "3 T20Is • 3 ODIs" always
+      // shows inside the hero's centre column, even on 360px.
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          softWrap: false,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .95),
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
         ),
       ),
     );

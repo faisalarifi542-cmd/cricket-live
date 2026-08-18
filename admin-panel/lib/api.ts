@@ -91,11 +91,20 @@ export async function adminFetch<T = unknown>(
     if (newToken) {
       const retryHeaders = new Headers(headers);
       retryHeaders.set('Authorization', `Bearer ${newToken}`);
-      res = await fetch(url, {
-        ...init,
-        headers: retryHeaders,
-        credentials: 'include',
-      });
+      try {
+        res = await fetch(url, {
+          ...init,
+          headers: retryHeaders,
+          credentials: 'include',
+        });
+      } catch (err) {
+        // Match the first attempt's contract: callers expect ApiError, not a
+        // raw TypeError, when the network drops mid-refresh-retry.
+        throw new ApiError(
+          err instanceof Error ? err.message : 'Network error',
+          0,
+        );
+      }
     }
   }
 
@@ -117,9 +126,15 @@ export async function adminFetch<T = unknown>(
   }
 
   if (!res.ok || (json && typeof json === 'object' && (json as { success?: boolean }).success === false)) {
+    // `String(obj)` would render structured backend errors as "[object Object]".
+    const rawError =
+      json && typeof json === 'object' && 'error' in json
+        ? (json as { error?: unknown }).error
+        : null;
     const message =
-      (json && typeof json === 'object' && 'error' in json
-        ? String((json as { error?: unknown }).error)
+      (typeof rawError === 'string' && rawError) ||
+      (rawError && typeof rawError === 'object'
+        ? JSON.stringify(rawError)
         : null) ||
       `Request failed (${res.status})`;
     throw new ApiError(message, res.status, json);
@@ -446,6 +461,15 @@ export const providersApi = {
       '/admin/providers/test-match',
       { method: 'POST', body: j({ match_id: matchId }) },
     ),
+  // Role + priority control
+  setPrimary: (id: number) =>
+    adminFetch<{ success: true; data: any }>(`/admin/providers/${id}/set-primary`, { method: 'POST' }),
+  reorder: (order: Array<{ id: number; priority: number }>) =>
+    adminFetch<{ success: true }>('/admin/providers/reorder', { method: 'PATCH', body: j({ order }) }),
+  refreshHealth: () =>
+    adminFetch<{ success: true; data: any[] }>('/admin/providers/refresh-health', { method: 'POST' }),
+  resetHealth: (id: number) =>
+    adminFetch<{ success: true }>(`/admin/providers/${id}/reset-health`, { method: 'POST' }),
 };
 
 export const apiKeysApi = {

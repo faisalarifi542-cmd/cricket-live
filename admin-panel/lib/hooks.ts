@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   clearToken,
   getStoredUser,
@@ -85,41 +85,34 @@ export function useResource<T>(
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Monotonic request sequence. Mutation handlers all call reload()
+  // fire-and-forget, so two overlapping reloads could otherwise resolve out of
+  // order and leave stale rows rendered.
+  const reqSeq = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
     try {
       const result = await loader();
-      setData(result);
+      if (seq === reqSeq.current) setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      if (seq === reqSeq.current)
+        setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    setError(null);
-    loader()
-      .then((result) => {
-        if (alive) setData(result);
-      })
-      .catch((err: unknown) => {
-        if (alive)
-          setError(err instanceof Error ? err.message : 'Failed to load');
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+    reload();
     return () => {
-      alive = false;
+      // Invalidate any in-flight request on dep change / unmount.
+      reqSeq.current++;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [reload]);
 
   return { data, error, loading, reload };
 }

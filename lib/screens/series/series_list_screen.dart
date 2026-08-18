@@ -213,7 +213,7 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                 child: ListView(
                   padding: EdgeInsets.fromLTRB(
                     context.horizontalPadding,
-                    8,
+                    12,
                     context.horizontalPadding,
                     widget.showBack
                         ? context.detailBottomPadding
@@ -226,7 +226,7 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                       onBell: () {},
                       title: widget.showBack ? 'All Series' : 'Series',
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 20),
                     FutureBuilder<ApiEnvelope<List<ApiSeries>>>(
                       future: _series,
                       builder: (context, snapshot) {
@@ -366,11 +366,17 @@ class _SeriesHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final logoSize = context.w <= 400 ? 30.0 : 33.0;
+    // Target-scaled CRICPRO wordmark — noticeably larger than the compact
+    // Home/Matches header so the Series screen reads as a premium landing.
+    final logoSize = context.w <= 360
+        ? 34.0
+        : context.w <= 430
+            ? 37.0
+            : 40.0;
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.only(top: 6),
           child: Row(
             children: [
               if (showBack) ...[
@@ -389,7 +395,7 @@ class _SeriesHeader extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 18),
         Row(
           children: [
             if (showBack) const SizedBox(width: 38),
@@ -398,8 +404,8 @@ class _SeriesHeader extends StatelessWidget {
               style: TextStyle(
                 color: c.text,
                 fontWeight: FontWeight.w900,
-                fontSize: context.sp(26),
-                letterSpacing: -.3,
+                fontSize: context.sp(32),
+                letterSpacing: -.5,
               ),
             ),
           ],

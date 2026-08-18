@@ -168,14 +168,22 @@ void main() {
     });
 
     test('WWC is Ongoing on Jun 23 and excluded from Upcoming', () {
-      final view = SeriesView.fromApi(ApiSeries.fromJson({
-        'series_id': '10119',
-        'name': "ICC Women's T20 World Cup 2026",
-        'status': 'ongoing',
-        'start_date': '2026-06-12T00:00:00.000Z',
-        'end_date': '2026-07-05T00:00:00.000Z',
-        'format': '33 T20s',
-      }));
+      // Classify with the group's fixed `now` (Jun 23) so the status — and
+      // therefore the filter result — never depends on the real wall clock.
+      // WWC ends Jul 05; after that date the real clock flips it to Completed
+      // and this assertion would break. fromApi's format/range parsing is
+      // already covered by the test directly above; this one targets the
+      // Ongoing/Upcoming filter behaviour on a deterministic status.
+      final start = DateTime(2026, 6, 12);
+      final end = DateTime(2026, 7, 5);
+      final view = SeriesView(
+        id: '10119',
+        name: "ICC Women's T20 World Cup 2026",
+        status: classifySeriesStatus('ongoing', start, end, now: now),
+        category: SeriesCategory.women,
+        startDate: start,
+        endDate: end,
+      );
       final all = [view];
       expect(filterSeries(all, null, SeriesStatus.ongoing), isNotEmpty);
       expect(filterSeries(all, null, SeriesStatus.upcoming), isEmpty);

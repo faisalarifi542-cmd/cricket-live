@@ -267,7 +267,7 @@ class _PointsRow extends StatelessWidget {
             teamName: name,
             abbreviation: short,
             color: c.cyan,
-            size: 22,
+            size: TeamLogoWidget.miniSize,
           ),
           const SizedBox(width: 8),
           Expanded(

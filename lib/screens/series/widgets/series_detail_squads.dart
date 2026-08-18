@@ -457,7 +457,7 @@ class _SquadToggle extends StatelessWidget {
                           teamName: items[i].team!.name,
                           abbreviation: items[i].label,
                           color: c.cyan,
-                          size: 20,
+                          size: TeamLogoWidget.miniSize,
                         ),
                         const SizedBox(width: 6),
                       ],
@@ -648,9 +648,12 @@ class _PlayerGrid extends StatelessWidget {
         // room instead of being crushed into a cramped 3-up grid; tablets keep
         // 3–4 columns.
         final w = constraints.maxWidth;
-        final cols = w >= 440
+        // 360px phones (inner width ~328) MUST land on 2 columns so names like
+        // "Niroshan Dickwella" have room; only genuinely wider phones/tablets
+        // step up to 3–4.
+        final cols = w >= 460
             ? 4
-            : w >= 340
+            : w >= 360
                 ? 3
                 : 2;
         final width = (w - (cols - 1) * spacing) / cols;
@@ -761,24 +764,32 @@ class _SquadPlayerCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 7),
-          if (roleTag != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-              decoration: BoxDecoration(
-                color: roleTag.$2.withValues(alpha: .16),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: roleTag.$2.withValues(alpha: .6)),
-              ),
-              child: Text(
-                roleTag.$1,
-                style: TextStyle(
-                  color: roleTag.$2,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 9,
-                  letterSpacing: .3,
-                ),
-              ),
-            ),
+          // Fixed-height role-tag slot so a card WITH a role and one WITHOUT
+          // stay the same height — no ragged rows across the Wrap grid.
+          SizedBox(
+            height: 22,
+            child: roleTag == null
+                ? null
+                : Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: roleTag.$2.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(999),
+                      border:
+                          Border.all(color: roleTag.$2.withValues(alpha: .6)),
+                    ),
+                    child: Text(
+                      roleTag.$1,
+                      style: TextStyle(
+                        color: roleTag.$2,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 9,
+                        letterSpacing: .3,
+                      ),
+                    ),
+                  ),
+          ),
         ],
       ),
     );

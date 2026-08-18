@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,9 +12,24 @@ const Color kSplashNavy = Color(0xFF060B18);
 
 const Color _kCyan = Color(0xFF5CD0FF);
 const String _kComposedSplash = 'assets/splash/splash_composed.webp';
-// Premium but brisk: the splash plays a full 2.0s timeline. Heavy app init runs
-// concurrently (see main.dart) so this is the floor, never a stall.
-const Duration _kSplashDuration = Duration(milliseconds: 2000);
+
+/// Splash dismissal timing.
+///
+/// The splash is bounded by both a minimum on-screen duration and a hard
+/// timeout so the user never sees the two-stage flash from the field video
+/// (dark bg + ring at t=0, then artwork at t=~0.8s) and also never gets
+/// stranded if the asset fails to decode.
+///
+/// - The ring/loader are gated on `_imageReady` (see [SplashLocalImage]);
+///   they never paint before the artwork does.
+/// - Once the image is ready, the animation keeps playing until
+///   [_kSplashMinVisible] has elapsed since the splash first painted.
+/// - If the image never becomes ready, [_kSplashHardTimeout] dismisses the
+///   splash anyway. In that case the ring/loader never appear, so nothing
+///   confusing is shown on a dark screen.
+const Duration _kSplashMinVisible = Duration(milliseconds: 800);
+const Duration _kSplashHardTimeout = Duration(milliseconds: 1600);
+const Duration _kSplashAnimationDuration = Duration(milliseconds: 1600);
 
 /// Local-only CricPro splash.
 ///
@@ -46,6 +63,15 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
 
   bool _finished = false;
 
+  /// True once [SplashLocalImage] fires its first decoded frame. The ring
+  /// (`_LogoPulsePainter`) and loader (`_SplashLoaderBar`) are conditionally
+  /// mounted so they never paint on a black pre-splash.
+  bool _imageReady = false;
+
+  /// Backstop that dismisses the splash if the image never decodes.
+  Timer? _hardTimeout;
+  Timer? _minVisibleTimer;
+
   @override
   void initState() {
     super.initState();
@@ -58,10 +84,10 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
       systemNavigationBarIconBrightness: Brightness.light,
     ));
 
-    _main = AnimationController(vsync: this, duration: _kSplashDuration)
-      ..addStatusListener((status) {
-        if (status == AnimationStatus.completed) _finish();
-      });
+    _main = AnimationController(
+      vsync: this,
+      duration: _kSplashAnimationDuration,
+    );
     _pulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -73,7 +99,7 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
           curve: Interval(begin, end, curve: curve),
         );
 
-    _imageFade = seg(0.00, 0.09, Curves.easeOut);
+    _imageFade = seg(0.00, 0.11, Curves.easeOut);
     _glow = seg(0.07, 0.28, Curves.easeInOut);
     _logoPulse = TweenSequence<double>([
       TweenSequenceItem(
@@ -94,11 +120,34 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
     _loader = seg(0.18, 0.94, Curves.easeInOut);
 
     _main.forward();
+    // Absolute upper bound. Even if the image asset never decodes we dismiss
+    // the splash so the user is never stuck on a dark background.
+    _hardTimeout = Timer(_kSplashHardTimeout, _finish);
+  }
+
+  /// Called by [SplashLocalImage] on the frame the decoded artwork first
+  /// paints. Starts (or completes) the minimum-visible window; the splash is
+  /// dismissed the moment `_kSplashMinVisible` has elapsed AFTER this fires.
+  void _handleImageReady() {
+    if (_finished || !mounted) return;
+    if (_imageReady) return;
+    setState(() => _imageReady = true);
+    _minVisibleTimer?.cancel();
+    _minVisibleTimer = Timer(_kSplashMinVisible, _finish);
+  }
+
+  /// Called by [SplashLocalImage] when the artwork asset fails to decode.
+  /// We deliberately do NOT flip `_imageReady` here — the ring/loader must
+  /// never appear on a black background. The hard timeout will dismiss.
+  void _handleImageError() {
+    // Intentionally empty. The hard timeout owns dismissal in this branch.
   }
 
   void _finish() {
     if (_finished) return;
     _finished = true;
+    _hardTimeout?.cancel();
+    _minVisibleTimer?.cancel();
     widget.onFinish();
   }
 
@@ -109,6 +158,8 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
       statusBarColor: Colors.transparent,
       systemNavigationBarColor: Colors.transparent,
     ));
+    _hardTimeout?.cancel();
+    _minVisibleTimer?.cancel();
     _main.dispose();
     _pulse.dispose();
     super.dispose();
@@ -142,6 +193,8 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
                             assetPath: _kComposedSplash,
                             fit: BoxFit.cover,
                             cacheWidth: w.toInt().clamp(360, 900),
+                            onFirstFrame: _handleImageReady,
+                            onFrameError: _handleImageError,
                           ),
                         ),
                       ),
@@ -171,22 +224,27 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
                         ),
                       ),
                     ),
-                    Positioned(
-                      left: (w - logoSize * 1.08) / 2,
-                      top: logoCenterY - logoSize * 0.54,
-                      width: logoSize * 1.08,
-                      height: logoSize * 1.08,
-                      child: IgnorePointer(
-                        child: RepaintBoundary(
-                          child: CustomPaint(
-                            painter: _LogoPulsePainter(
-                              progress: _logoPulse.value,
-                              shimmer: _pulse.value,
+                    // Ring pulse — gated on the composed image being on
+                    // screen. Prevents the field failure where the ring drew
+                    // for ~800 ms on a black background before the artwork
+                    // faded in.
+                    if (_imageReady)
+                      Positioned(
+                        left: (w - logoSize * 1.08) / 2,
+                        top: logoCenterY - logoSize * 0.54,
+                        width: logoSize * 1.08,
+                        height: logoSize * 1.08,
+                        child: IgnorePointer(
+                          child: RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _LogoPulsePainter(
+                                progress: _logoPulse.value,
+                                shimmer: _pulse.value,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
                     Positioned.fill(
                       child: SplashParticleField(
                         particleCount: 24,
@@ -194,22 +252,24 @@ class _PremiumSplashScreenState extends State<PremiumSplashScreen>
                       ),
                     ),
                     // Determinate loader line near the bottom — premium, cheap,
-                    // and signals progress so a brief init wait never reads as a
-                    // frozen/half-loaded splash.
-                    Positioned(
-                      left: w * 0.5 - (w * 0.22),
-                      right: w * 0.5 - (w * 0.22),
-                      top: logoCenterY + logoSize * 0.62,
-                      child: IgnorePointer(
-                        child: Opacity(
-                          opacity: _imageFade.value,
-                          child: _SplashLoaderBar(
-                            progress: _loader.value,
-                            shimmer: _pulse.value,
+                    // and signals progress so a brief init wait never reads as
+                    // a frozen/half-loaded splash. Also gated on `_imageReady`
+                    // so it never appears alone on a black background.
+                    if (_imageReady)
+                      Positioned(
+                        left: w * 0.5 - (w * 0.22),
+                        right: w * 0.5 - (w * 0.22),
+                        top: logoCenterY + logoSize * 0.62,
+                        child: IgnorePointer(
+                          child: Opacity(
+                            opacity: _imageFade.value,
+                            child: _SplashLoaderBar(
+                              progress: _loader.value,
+                              shimmer: _pulse.value,
+                            ),
                           ),
                         ),
                       ),
-                    ),
                     if (_finalPulse.value > 0)
                       Positioned.fill(
                         child: IgnorePointer(

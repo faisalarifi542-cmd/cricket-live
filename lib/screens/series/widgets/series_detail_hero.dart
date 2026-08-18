@@ -16,7 +16,17 @@ class _DetailAppBar extends StatelessWidget {
           GestureDetector(
             onTap: onBack,
             behavior: HitTestBehavior.opaque,
-            child: Icon(Icons.arrow_back_rounded, color: c.text, size: 26),
+            // 44×44 hit area (was a bare 26px icon — a sub-minimum touch
+            // target). Left-aligned so the icon stays at the screen edge while
+            // the tap box extends inward.
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Icon(Icons.arrow_back_rounded, color: c.text, size: 26),
+              ),
+            ),
           ),
           const Spacer(),
           // Shared CRICPRO wordmark — same renderer as Home/Matches/More.
@@ -157,14 +167,15 @@ class SeriesDetailHero extends StatelessWidget {
                         Text(
                           small.toUpperCase(),
                           textAlign: TextAlign.center,
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: c.onImageText,
                             fontWeight: FontWeight.w700,
                             fontStyle: FontStyle.italic,
-                            fontSize: phone ? 10.5 : 12,
+                            fontSize: context.sp(phone ? 10.5 : 12),
                             letterSpacing: .5,
+                            height: 1.15,
                           ),
                         ),
                       Text(
@@ -176,7 +187,7 @@ class SeriesDetailHero extends StatelessWidget {
                           color: c.text,
                           fontWeight: FontWeight.w900,
                           fontStyle: FontStyle.italic,
-                          fontSize: phone ? 20 : 23,
+                          fontSize: context.sp(phone ? 19 : 23),
                           height: 1.04,
                           shadows: c.isDark
                               ? [
@@ -249,21 +260,37 @@ class SeriesDetailHero extends StatelessWidget {
   }
 
   /// Splits "Afghanistan Tour of India 2026" into ("Afghanistan Tour of",
-  /// "India 2026"). Falls back to (tourLabel, season) or ('', title).
+  /// "India 2026"). Handles the "to"/"vs"/"in" connectors too (not just the
+  /// literal "tour of"), and cleans dangling punctuation so a wrapped season
+  /// never reads "GERMANY," on its own line. Falls back to (tourLabel, season)
+  /// or ('', title).
   (String, String) _splitTitle() {
-    final full =
-        season != null && !title.contains(season!) ? '$title $season' : title;
-    final m = RegExp(r'^(.*\btour of\b)\s+(.*)$', caseSensitive: false)
+    final raw = shortSeriesTitle(title);
+    final full = season != null && !raw.contains(season!) ? '$raw $season' : raw;
+    // Split on the connector phrase joining the two sides of a tour/bilateral
+    // title ("… tour of …", "… to …", "… vs …", "… in …").
+    final m = RegExp(r'^(.*?\b(?:tour of|to|vs)\b)\s+(.*)$',
+            caseSensitive: false)
         .firstMatch(full);
     if (m != null) {
-      return (m.group(1)!.trim(), m.group(2)!.trim());
+      final small = _cleanTitlePart(m.group(1)!);
+      final big = _cleanTitlePart(m.group(2)!);
+      if (small.isNotEmpty && big.isNotEmpty) return (small, big);
     }
     if (season != null && full.endsWith(season!)) {
-      final base = full.substring(0, full.length - season!.length).trim();
+      final base = _cleanTitlePart(full.substring(0, full.length - season!.length));
       if (base.isNotEmpty) return (base, season!);
     }
-    return ('', full);
+    return ('', _cleanTitlePart(full));
   }
+
+  /// Trims trailing/leading punctuation and collapses a ", <year>" so a season
+  /// never wraps onto its own line as a bare "GERMANY," fragment.
+  static String _cleanTitlePart(String s) => s
+      .replaceAll(RegExp(r',\s*(?=\d{4}\b)'), ' ') // "Germany, 2026" -> "Germany 2026"
+      .replaceAll(RegExp(r'^[\s,–-]+|[\s,–-]+$'), '') // strip edge punctuation
+      .replaceAll(RegExp(r'\s{2,}'), ' ')
+      .trim();
 }
 
 class _HeroTeam extends StatelessWidget {
