@@ -183,6 +183,7 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
                                   child: _FullscreenIconButton(
                                     icon: Icons.close_rounded,
                                     onTap: _exit,
+                                    tooltip: 'Exit fullscreen',
                                   ),
                                 ),
                                 Positioned(
@@ -191,6 +192,7 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
                                   child: _FullscreenIconButton(
                                     icon: _fitIcon(_fit),
                                     onTap: _cycleFit,
+                                    tooltip: 'Change video fit',
                                   ),
                                 ),
                                 // Center play/pause with cyan glow (same style
@@ -282,25 +284,39 @@ class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
 }
 
 class _FullscreenIconButton extends StatelessWidget {
-  const _FullscreenIconButton({required this.icon, required this.onTap});
+  const _FullscreenIconButton({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
 
+  /// Accessible name for this icon-only overlay control.
+  final String tooltip;
+
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: .45),
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.white24),
+          child: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
         ),
-        child: Icon(icon, color: Colors.white, size: 22),
       ),
     );
   }
@@ -472,6 +488,7 @@ class _StatsSheet extends StatelessWidget {
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close',
                     icon: Icon(Icons.close_rounded, color: c.text),
                   ),
                 ],

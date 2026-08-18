@@ -23,44 +23,66 @@ class _ScheduleHeader extends StatelessWidget {
             ),
           ),
         ),
-        _GlassIconButton(icon: Icons.search_rounded, onTap: onSearch),
+        _GlassIconButton(
+          icon: Icons.search_rounded,
+          onTap: onSearch,
+          tooltip: 'Search matches',
+        ),
         const SizedBox(width: 10),
-        _GlassIconButton(icon: Icons.tune_rounded, onTap: onFilter),
+        _GlassIconButton(
+          icon: Icons.tune_rounded,
+          onTap: onFilter,
+          tooltip: 'Filter matches',
+        ),
       ],
     );
   }
 }
 
 class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({required this.icon, required this.onTap});
+  const _GlassIconButton({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
 
+  /// Accessible name for this icon-only control (no visible text label).
+  final String tooltip;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: c.isDark ? c.card.withValues(alpha: .55) : c.card,
-          border: Border.all(color: c.cyan.withValues(alpha: .35)),
-          boxShadow: c.isDark
-              ? [
-                  BoxShadow(
-                    color: c.cyan.withValues(alpha: .07),
-                    blurRadius: 12,
-                    spreadRadius: -4,
-                  ),
-                ]
-              : c.cardShadow,
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: c.isDark ? c.card.withValues(alpha: .55) : c.card,
+              border: Border.all(color: c.cyan.withValues(alpha: .35)),
+              boxShadow: c.isDark
+                  ? [
+                      BoxShadow(
+                        color: c.cyan.withValues(alpha: .07),
+                        blurRadius: 12,
+                        spreadRadius: -4,
+                      ),
+                    ]
+                  : c.cardShadow,
+            ),
+            child: Icon(icon, color: c.text, size: 21),
+          ),
         ),
-        child: Icon(icon, color: c.text, size: 21),
       ),
     );
   }
@@ -349,6 +371,7 @@ class _CategoryChip extends StatelessWidget {
                     width: 16,
                     height: 16,
                     color: selected ? Colors.white : c.cyan,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => Icon(
                       filter.icon,
                       size: 15,
@@ -409,6 +432,7 @@ class _SummaryRow extends StatelessWidget {
             width: 15,
             height: 15,
             color: c.cyan,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) =>
                 Icon(Icons.calendar_today_rounded, color: c.cyan, size: 15),
           ),

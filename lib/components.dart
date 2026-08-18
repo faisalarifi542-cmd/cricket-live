@@ -83,6 +83,8 @@ class StadiumImage extends StatelessWidget {
           clean,
           fit: fit,
           alignment: alignment,
+          // Pure background texture — never announced by a screen reader.
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) => const SizedBox.shrink(),
         );
         return Opacity(
@@ -101,6 +103,8 @@ class StadiumImage extends StatelessWidget {
       alignment: alignment,
       color: c.stadiumImageTint,
       colorBlendMode: c.stadiumImageBlend,
+      // Pure background texture — never announced by a screen reader.
+      excludeFromSemantics: true,
       errorBuilder: (_, __, ___) => const SizedBox.shrink(),
     );
     return Opacity(
@@ -124,18 +128,23 @@ class StadiumImage extends StatelessWidget {
     BlendMode? colorBlendMode,
   }) {
     if (url == null || url.isEmpty) return local;
-    return CachedNetworkImage(
-      imageUrl: url,
-      fit: fit,
-      alignment: alignment,
-      color: color,
-      colorBlendMode: colorBlendMode,
-      // Preserve the original frameBuilder behavior: show the bundled asset
-      // while the network image loads, swap in instantly (no fade flash), and
-      // fall back to the asset on any error.
-      fadeInDuration: Duration.zero,
-      placeholder: (context, _) => local,
-      errorWidget: (_, __, ___) => local,
+    // `CachedNetworkImage` exposes no `excludeFromSemantics`, so the decorative
+    // exclusion is applied by wrapping (the bundled-asset branches above set the
+    // flag directly). Keeps stadium backdrops silent for screen readers.
+    return ExcludeSemantics(
+      child: CachedNetworkImage(
+        imageUrl: url,
+        fit: fit,
+        alignment: alignment,
+        color: color,
+        colorBlendMode: colorBlendMode,
+        // Preserve the original frameBuilder behavior: show the bundled asset
+        // while the network image loads, swap in instantly (no fade flash), and
+        // fall back to the asset on any error.
+        fadeInDuration: Duration.zero,
+        placeholder: (context, _) => local,
+        errorWidget: (_, __, ___) => local,
+      ),
     );
   }
 }
@@ -287,16 +296,23 @@ class GlowIconButton extends StatelessWidget {
     required this.icon,
     this.onTap,
     this.badge,
+    this.tooltip,
   });
 
   final IconData icon;
   final VoidCallback? onTap;
   final String? badge;
 
+  /// Accessible name (and long-press tooltip) for this icon-only control.
+  /// Icon glyphs carry no text, so without this a screen reader announces a
+  /// bare "button". Callers should always pass one; it is optional only to
+  /// avoid breaking the decorative/no-op usages.
+  final String? tooltip;
+
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return Stack(
+    final button = Stack(
       clipBehavior: Clip.none,
       children: [
         InkWell(
@@ -341,6 +357,14 @@ class GlowIconButton extends StatelessWidget {
             ),
           )
       ],
+    );
+    if (tooltip == null) return button;
+    // `button: true` + label gives the control a real name and role. The badge
+    // count stays readable inside because it is genuine information.
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Tooltip(message: tooltip!, child: button),
     );
   }
 }
@@ -412,11 +436,16 @@ class AppHeader extends StatelessWidget {
 }
 
 class TeamBadge extends StatelessWidget {
-  const TeamBadge(this.team, {super.key, this.size = 76, this.borderColor});
+  const TeamBadge(this.team,
+      {super.key, this.size = 76, this.borderColor, this.excludeSemantics = false});
 
   final TeamInfo team;
   final double size;
   final Color? borderColor;
+
+  /// Forwarded to [TeamLogoWidget.excludeSemantics] — set true where the team
+  /// name already appears as adjacent text.
+  final bool excludeSemantics;
 
   @override
   Widget build(BuildContext context) {
@@ -428,6 +457,7 @@ class TeamBadge extends StatelessWidget {
       size: size,
       borderColor: borderColor,
       emoji: team.emoji,
+      excludeSemantics: excludeSemantics,
     );
   }
 }
@@ -442,6 +472,7 @@ class TeamLogoWidget extends StatelessWidget {
     this.size = 76,
     this.borderColor,
     this.emoji,
+    this.excludeSemantics = false,
   });
 
   final String? logoUrl;
@@ -451,6 +482,14 @@ class TeamLogoWidget extends StatelessWidget {
   final double size;
   final Color? borderColor;
   final String? emoji;
+
+  /// Set true where the team name is ALREADY announced by adjacent text (score
+  /// rows, points tables, team selectors). The badge then contributes nothing to
+  /// the accessibility tree instead of repeating the name a second time.
+  ///
+  /// Left false where the badge is the only carrier of the team identity (e.g.
+  /// logo-only hero columns), in which case it announces "<team> logo".
+  final bool excludeSemantics;
 
   // Standard logo size buckets so the same widget reads consistently across
   // screens. Callers with a responsive/hero size keep computing their own; these
@@ -462,6 +501,27 @@ class TeamLogoWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Single accessibility decision point for every rendering branch below
+    // (network logo, local asset/flag, initials circle).
+    //
+    // The badge is either silent — because the team name is already announced by
+    // adjacent text — or announced ONCE as "<team> logo". The inner bitmaps are
+    // all `excludeFromSemantics`, so a screen reader never reads the initials
+    // glyphs ("IND") or an anonymous "image" node on top of the label.
+    if (excludeSemantics) return ExcludeSemantics(child: _buildBadge(context));
+    final label =
+        teamName.trim().isEmpty ? abbreviation.trim() : teamName.trim();
+    if (label.isEmpty) return ExcludeSemantics(child: _buildBadge(context));
+    return Semantics(
+      container: true,
+      image: true,
+      label: '$label logo',
+      excludeSemantics: true,
+      child: _buildBadge(context),
+    );
+  }
+
+  Widget _buildBadge(BuildContext context) {
     final c = context.cric;
     // Team logo priority is admin-configurable via [TeamLogoResolver]
     // (default admin → local → api → initials). The `logoUrl` passed here has
@@ -499,12 +559,17 @@ class TeamLogoWidget extends StatelessWidget {
     // broken-image icon and server outages degrade gracefully.
     Widget networkError() => flag != null
         ? Image.asset(flag, fit: BoxFit.cover,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) => _fallbackCircle(context))
         : _fallbackCircle(context);
     final image = isAsset
         ? Image.asset(
             resolved,
             fit: fit,
+            // The logo bitmap itself is never announced; the whole badge is
+            // labelled once by the [Semantics] wrapper in [build] instead, so a
+            // screen reader says "India logo", not "India logo, image".
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) => _fallbackCircle(context),
           )
         : CachedNetworkImage(
@@ -642,6 +707,7 @@ class PlayerAvatarWidget extends StatelessWidget {
     this.size = 56,
     this.borderColor,
     this.accent,
+    this.excludeSemantics = false,
   });
 
   final String name;
@@ -651,6 +717,11 @@ class PlayerAvatarWidget extends StatelessWidget {
 
   /// Optional accent used to tint the initials fallback gradient.
   final Color? accent;
+
+  /// Set true where the player name is ALREADY announced by adjacent text
+  /// (squad rows, batting/bowling tables, commentary). The avatar then adds
+  /// nothing to the accessibility tree instead of repeating the name.
+  final bool excludeSemantics;
 
   bool get _hasImage {
     final u = imageUrl?.trim();
@@ -667,6 +738,22 @@ class PlayerAvatarWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // One accessibility decision for both branches (network photo / initials).
+    // The initials glyphs are decorative shorthand for the name, so they are
+    // never read out on their own.
+    if (excludeSemantics) return ExcludeSemantics(child: _buildAvatar(context));
+    final label = name.trim();
+    if (label.isEmpty) return ExcludeSemantics(child: _buildAvatar(context));
+    return Semantics(
+      container: true,
+      image: true,
+      label: label,
+      excludeSemantics: true,
+      child: _buildAvatar(context),
+    );
+  }
+
+  Widget _buildAvatar(BuildContext context) {
     final c = context.cric;
     final border = borderColor ?? c.cyan.withValues(alpha: .45);
     final tint = accent ?? c.cyan;
@@ -736,11 +823,16 @@ class PlayerAvatar extends StatelessWidget {
     required this.player,
     this.size = 62,
     this.borderColor,
+    this.excludeSemantics = false,
   });
 
   final PlayerInfo player;
   final double size;
   final Color? borderColor;
+
+  /// Forwarded to [PlayerAvatarWidget.excludeSemantics] — set true where the
+  /// player name already appears as adjacent text.
+  final bool excludeSemantics;
 
   @override
   Widget build(BuildContext context) {
@@ -756,9 +848,13 @@ class PlayerAvatar extends StatelessWidget {
         imageUrl: isNetwork ? asset : null,
         size: size,
         borderColor: borderColor,
+        excludeSemantics: excludeSemantics,
       );
     }
-    return Container(
+    // Local-asset branch: same accessibility contract as PlayerAvatarWidget —
+    // silent when the name is adjacent, otherwise announced once as the name.
+    final label = player.name.trim();
+    final badge = Container(
       width: size,
       height: size,
       clipBehavior: Clip.antiAlias,
@@ -770,8 +866,19 @@ class PlayerAvatar extends StatelessWidget {
       child: Image.asset(
         asset,
         fit: BoxFit.cover,
+        excludeFromSemantics: true,
         errorBuilder: (_, __, ___) => _initials(context),
       ),
+    );
+    if (excludeSemantics || label.isEmpty) {
+      return ExcludeSemantics(child: badge);
+    }
+    return Semantics(
+      container: true,
+      image: true,
+      label: label,
+      excludeSemantics: true,
+      child: badge,
     );
   }
 
@@ -815,6 +922,7 @@ class RankingAvatar extends StatelessWidget {
       child: Image.asset(
         asset,
         fit: BoxFit.cover,
+        excludeFromSemantics: true,
         errorBuilder: (_, __, ___) => Center(
           child: Text(
             label,

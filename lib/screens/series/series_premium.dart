@@ -382,6 +382,9 @@ class PremiumTeamLogo extends StatelessWidget {
         abbreviation: code,
         color: accent ?? c.cyan,
         size: size,
+        // Every caller (PremiumTeamColumn, series detail hero) captions the
+        // team code/name directly below this logo.
+        excludeSemantics: true,
       ),
     );
   }

@@ -1466,6 +1466,8 @@ class _HeroTeamBlock extends StatelessWidget {
             abbreviation: code,
             color: accent,
             size: math.max(1, logoSize - 6),
+            // The team code is rendered right below — don't say it twice.
+            excludeSemantics: true,
           ),
         ),
         const SizedBox(height: 2),

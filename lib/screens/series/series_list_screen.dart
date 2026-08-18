@@ -164,6 +164,7 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
                     SeriesNewAssets.screenBg,
                     fit: BoxFit.cover,
                     alignment: Alignment.topCenter,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                 ),
@@ -429,6 +430,7 @@ class _BellButton extends StatelessWidget {
         GlowIconButton(
           icon: Icons.notifications_none_rounded,
           onTap: onTap,
+          tooltip: 'Notifications',
         ),
         Positioned(
           top: 2,

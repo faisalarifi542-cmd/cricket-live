@@ -107,6 +107,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                   children: [
                     IconButton(
                       onPressed: () => Navigator.pop(context),
+                      tooltip: 'Back',
                       icon: Icon(Icons.arrow_back_rounded,
                           color: c.text, size: 28),
                     ),
@@ -124,6 +125,7 @@ class _RankingsScreenState extends State<RankingsScreen> {
                     GlowIconButton(
                       icon: Icons.tune_rounded,
                       onTap: _showGenderPicker,
+                      tooltip: 'Filter rankings',
                     ),
                   ],
                 ),
@@ -571,15 +573,19 @@ class _RankingImage extends StatelessWidget {
         border: Border.all(color: c.border, width: 1.5),
         color: c.card2,
       ),
-      child: image == null || image.isEmpty
-          ? _Initial(entry.name)
-          : CachedNetworkImage(
-              imageUrl: image,
-              fit: BoxFit.cover,
-              fadeInDuration: Duration.zero,
-              placeholder: (context, _) => _Initial(entry.name),
-              errorWidget: (_, __, ___) => _Initial(entry.name),
-            ),
+      // The rank, player name and country are all adjacent text in this row, so
+      // the avatar is redundant and stays out of the accessibility tree.
+      child: ExcludeSemantics(
+        child: image == null || image.isEmpty
+            ? _Initial(entry.name)
+            : CachedNetworkImage(
+                imageUrl: image,
+                fit: BoxFit.cover,
+                fadeInDuration: Duration.zero,
+                placeholder: (context, _) => _Initial(entry.name),
+                errorWidget: (_, __, ___) => _Initial(entry.name),
+              ),
+      ),
     );
   }
 }

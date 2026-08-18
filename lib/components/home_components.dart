@@ -51,6 +51,7 @@ class HomeHeroCard extends StatelessWidget {
             child: Image.asset(
               'assets/images/stadium_live.webp',
               fit: BoxFit.cover,
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) =>
                   const EmptyOrErrorImage(label: 'Stadium'),
             ),
@@ -239,7 +240,7 @@ class HomeHeroCard extends StatelessWidget {
 
     return Column(
       children: [
-        TeamBadge(team, size: badgeSize),
+        TeamBadge(team, size: badgeSize, excludeSemantics: true),
         const SizedBox(height: 10),
         Text(team.shortName,
             maxLines: 1,
@@ -279,9 +280,9 @@ class UpcomingSeriesMiniCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            TeamBadge(series.left, size: 46),
+            TeamBadge(series.left, size: 46, excludeSemantics: true),
             const SizedBox(width: 8),
-            TeamBadge(series.right, size: 46)
+            TeamBadge(series.right, size: 46, excludeSemantics: true)
           ]),
           const SizedBox(height: 14),
           Text(series.series,
@@ -320,13 +321,13 @@ class FeaturedFixtureCard extends StatelessWidget {
             const SizedBox(height: 10),
             Row(
               children: [
-                TeamBadge(fixture.left, size: 54),
+                TeamBadge(fixture.left, size: 54, excludeSemantics: true),
                 const SizedBox(width: 12),
                 Text('VS',
                     style: TextStyle(
                         color: context.cric.text, fontWeight: FontWeight.w900)),
                 const SizedBox(width: 12),
-                TeamBadge(fixture.right, size: 54),
+                TeamBadge(fixture.right, size: 54, excludeSemantics: true),
               ],
             ),
             const SizedBox(height: 14),
@@ -371,7 +372,7 @@ class RecentResultMiniCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Column(children: [
-                TeamBadge(result.left, size: 50),
+                TeamBadge(result.left, size: 50, excludeSemantics: true),
                 const SizedBox(height: 8),
                 Text(result.left.code,
                     style:
@@ -380,7 +381,7 @@ class RecentResultMiniCard extends StatelessWidget {
               Text('VS',
                   style: TextStyle(color: c.text, fontWeight: FontWeight.w900)),
               Column(children: [
-                TeamBadge(result.right, size: 50),
+                TeamBadge(result.right, size: 50, excludeSemantics: true),
                 const SizedBox(height: 8),
                 Text(result.right.code,
                     style:

@@ -24,6 +24,7 @@ class NotificationsScreen extends StatelessWidget {
               AppHeader(
                 leading: IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'Notifications',
               ),

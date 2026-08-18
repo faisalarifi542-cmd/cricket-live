@@ -255,21 +255,30 @@ class _NewsImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final src = source?.trim() ?? '';
+    // The article headline/subtitle always sit next to this thumbnail, so the
+    // image is redundant for a screen reader — it stays silent rather than
+    // announcing an unnamed "image" before every headline. The loading/error
+    // placeholders below are real Text, hence the outer ExcludeSemantics.
     if (src.startsWith('http://') || src.startsWith('https://')) {
-      return CachedNetworkImage(
-        imageUrl: src,
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.high,
-        fadeInDuration: Duration.zero,
-        placeholder: (context, _) => const EmptyOrErrorImage(label: 'Loading'),
-        errorWidget: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
+      return ExcludeSemantics(
+        child: CachedNetworkImage(
+          imageUrl: src,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
+          fadeInDuration: Duration.zero,
+          placeholder: (context, _) =>
+              const EmptyOrErrorImage(label: 'Loading'),
+          errorWidget: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
+        ),
       );
     }
-    return Image.asset(
-      src.isEmpty ? 'assets/images/stadium_live.webp' : src,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.high,
-      errorBuilder: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
+    return ExcludeSemantics(
+      child: Image.asset(
+        src.isEmpty ? 'assets/images/stadium_live.webp' : src,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) => EmptyOrErrorImage(label: fallbackLabel),
+      ),
     );
   }
 }

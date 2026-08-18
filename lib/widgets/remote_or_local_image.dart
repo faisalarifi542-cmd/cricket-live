@@ -53,6 +53,9 @@ class RemoteOrLocalImage extends StatelessWidget {
       height: height,
       color: color,
       colorBlendMode: colorBlendMode,
+      // Every call site is a decorative backdrop/texture behind real content,
+      // so the image contributes nothing to the accessibility tree.
+      excludeFromSemantics: true,
       opacity: opacity == null ? null : AlwaysStoppedAnimation(opacity!),
     );
 
@@ -60,19 +63,23 @@ class RemoteOrLocalImage extends StatelessWidget {
       return local;
     }
 
-    final cached = CachedNetworkImage(
-      imageUrl: remoteUrl,
-      fit: fit,
-      width: width,
-      height: height,
-      color: color,
-      colorBlendMode: colorBlendMode,
-      // While the network image downloads, show the bundled asset so there is
-      // never a blank gap; swap in instantly (no fade flash).
-      fadeInDuration: Duration.zero,
-      placeholder: (context, _) => local,
-      // Any failure (offline, 404, bad bytes) → bundled fallback.
-      errorWidget: (context, error, stackTrace) => local,
+    // `CachedNetworkImage` has no `excludeFromSemantics`, so the decorative
+    // exclusion is applied by wrapping instead.
+    final cached = ExcludeSemantics(
+      child: CachedNetworkImage(
+        imageUrl: remoteUrl,
+        fit: fit,
+        width: width,
+        height: height,
+        color: color,
+        colorBlendMode: colorBlendMode,
+        // While the network image downloads, show the bundled asset so there is
+        // never a blank gap; swap in instantly (no fade flash).
+        fadeInDuration: Duration.zero,
+        placeholder: (context, _) => local,
+        // Any failure (offline, 404, bad bytes) → bundled fallback.
+        errorWidget: (context, error, stackTrace) => local,
+      ),
     );
     // CachedNetworkImage has no `opacity` arg; preserve the original opacity via
     // a wrapping Opacity so the rendered result is identical.

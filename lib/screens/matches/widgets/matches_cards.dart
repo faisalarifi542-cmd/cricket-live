@@ -312,6 +312,8 @@ class _TeamBlock extends StatelessWidget {
             abbreviation: code,
             color: accent,
             size: 57,
+            // The code (and optional full name) follow as text below.
+            excludeSemantics: true,
           ),
         ),
         const SizedBox(height: 4),
@@ -407,6 +409,7 @@ class _VsCenterpiece extends StatelessWidget {
             width: visualWidth * 1.05,
             height: 70,
             fit: BoxFit.contain,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) => const SizedBox.shrink(),
           ),
           // Long diagonal electric light streak (RGB no-alpha → screen blend).
@@ -488,6 +491,7 @@ class _VenueRow extends StatelessWidget {
           width: 14,
           height: 14,
           color: c.cyan,
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) =>
               Icon(Icons.location_on_outlined, color: c.cyan, size: 15),
         ),
@@ -558,6 +562,7 @@ class _ActionButton extends StatelessWidget {
                 width: 16,
                 height: 16,
                 color: c.cyan,
+                excludeFromSemantics: true,
                 errorBuilder: (_, __, ___) => Icon(
                   icon ?? Icons.play_arrow_rounded,
                   size: 16,
@@ -709,6 +714,7 @@ class _DualSegment extends StatelessWidget {
             width: 15,
             height: 15,
             color: c.cyan,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) => Icon(icon, size: 15, color: c.cyan),
           ),
           const SizedBox(width: 7),

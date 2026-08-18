@@ -458,6 +458,8 @@ class _SquadToggle extends StatelessWidget {
                           abbreviation: items[i].label,
                           color: c.cyan,
                           size: TeamLogoWidget.miniSize,
+                          // The tab label beside it already names the team.
+                          excludeSemantics: true,
                         ),
                         const SizedBox(width: 6),
                       ],

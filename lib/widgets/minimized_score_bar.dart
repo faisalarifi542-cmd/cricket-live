@@ -444,6 +444,8 @@ class _TeamBlock extends StatelessWidget {
       abbreviation: short,
       color: color,
       size: logoSize,
+      // The code sits beside the logo in the adjacent text column.
+      excludeSemantics: true,
     );
 
     final align =

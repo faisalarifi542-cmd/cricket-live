@@ -605,6 +605,8 @@ class _CompactTeam extends StatelessWidget {
             abbreviation: code,
             color: accent,
             size: 44,
+            // The team code is rendered right below — don't say it twice.
+            excludeSemantics: true,
           ),
         ),
         const SizedBox(height: 6),
@@ -1462,6 +1464,8 @@ class _HomeTeamBlock extends StatelessWidget {
             abbreviation: code,
             color: accent,
             size: logoSize,
+            // The team code is rendered right below — don't say it twice.
+            excludeSemantics: true,
           ),
         ),
         const SizedBox(height: 4),

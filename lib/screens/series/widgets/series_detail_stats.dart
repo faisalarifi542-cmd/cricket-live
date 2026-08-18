@@ -268,6 +268,8 @@ class _PointsRow extends StatelessWidget {
             abbreviation: short,
             color: c.cyan,
             size: TeamLogoWidget.miniSize,
+            // Points-table row: the team code follows as text in the same row.
+            excludeSemantics: true,
           ),
           const SizedBox(width: 8),
           Expanded(

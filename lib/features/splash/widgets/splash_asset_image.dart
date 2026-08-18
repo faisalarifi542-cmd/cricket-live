@@ -56,6 +56,10 @@ class _SplashLocalImageState extends State<SplashLocalImage> {
       cacheWidth: widget.cacheWidth,
       cacheHeight: widget.cacheHeight,
       gaplessPlayback: true,
+      // Decorative launch artwork on a screen that exists for under a second and
+      // holds no actionable content — announcing it would only delay the real
+      // first screen for a screen-reader user.
+      excludeFromSemantics: true,
       // Fires the first time the image has been decoded and drawn. Used to
       // gate the splash overlays (ring, loader) on "the artwork is on screen".
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {

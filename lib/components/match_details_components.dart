@@ -193,7 +193,7 @@ class MatchDetailHeroCard extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TeamBadge(team, size: badge),
+        TeamBadge(team, size: badge, excludeSemantics: true),
         const SizedBox(height: 10),
         Text(
           team.shortName.toUpperCase(),

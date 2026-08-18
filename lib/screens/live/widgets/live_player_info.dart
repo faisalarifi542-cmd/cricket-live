@@ -126,6 +126,7 @@ class _HeaderActionButton extends StatelessWidget {
                 width: 22,
                 height: 22,
                 colorFilter: ColorFilter.mode(c.text, BlendMode.srcIn),
+                excludeFromSemantics: true,
                 placeholderBuilder: (_) =>
                     Icon(fallback, color: c.text, size: 22),
               )
@@ -646,6 +647,8 @@ class _TeamRow extends StatelessWidget {
       color: isStriker ? c.cyan : const Color(0xfff59e0b),
       size: 46,
       borderColor: isStriker ? c.cyan : c.border.withValues(alpha: .6),
+      // The team name sits beside the logo in the adjacent info column.
+      excludeSemantics: true,
     );
 
     final info = Column(

@@ -289,7 +289,13 @@ class _FallbackPlayerCard extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          PlayerAvatar(player: player, size: 110, borderColor: c.cyan),
+          PlayerAvatar(
+            player: player,
+            size: 110,
+            borderColor: c.cyan,
+            // The player name is the headline directly below this avatar.
+            excludeSemantics: true,
+          ),
           const SizedBox(height: 16),
           Text(player.name,
               maxLines: 2,

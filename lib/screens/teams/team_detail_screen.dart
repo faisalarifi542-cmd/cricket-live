@@ -89,6 +89,7 @@ class _TeamDetailScreenState extends State<TeamDetailScreen> {
                 AppHeader(
                   leading: IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
                     icon: Icon(Icons.arrow_back_rounded, color: c.text),
                   ),
                   title: 'Team',
@@ -250,6 +251,8 @@ class _TeamHero extends StatelessWidget {
             ),
             size: 92,
             borderColor: c.cyan.withValues(alpha: .45),
+            // The team name is the headline directly below this badge.
+            excludeSemantics: true,
           ),
           const SizedBox(height: 14),
           Text(

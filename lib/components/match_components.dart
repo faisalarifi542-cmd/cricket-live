@@ -155,7 +155,7 @@ class UpcomingMatchCard extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TeamBadge(team, size: size),
+        TeamBadge(team, size: size, excludeSemantics: true),
         const SizedBox(height: 12),
         Text(team.shortName,
             maxLines: 1,
@@ -321,7 +321,7 @@ class FinishedMatchCard extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        TeamBadge(team, size: size),
+        TeamBadge(team, size: size, excludeSemantics: true),
         const SizedBox(height: 10),
         Text(team.shortName,
             maxLines: 1,

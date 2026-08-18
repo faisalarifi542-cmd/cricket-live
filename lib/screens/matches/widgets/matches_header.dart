@@ -33,6 +33,7 @@ class _BellButton extends StatelessWidget {
     return GlowIconButton(
       icon: Icons.notifications_none_rounded,
       onTap: onTap,
+      tooltip: 'Notifications',
     );
   }
 }
@@ -52,6 +53,7 @@ class _SectionTitleRow extends StatelessWidget {
           width: 24,
           height: 24,
           color: c.cyan,
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) =>
               Icon(Icons.sports_cricket_rounded, color: c.cyan, size: 22),
         ),
@@ -285,6 +287,7 @@ class _CategoryChip extends StatelessWidget {
               width: 16,
               height: 16,
               color: selected ? Colors.white : c.cyan,
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) => Icon(
                 category.icon,
                 size: 15,

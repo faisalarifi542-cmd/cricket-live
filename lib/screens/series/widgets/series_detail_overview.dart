@@ -953,6 +953,7 @@ class _VenueTile extends StatelessWidget {
           Image.asset(
             SAsset.venueFor(venue),
             fit: BoxFit.cover,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) =>
                 const ColoredBox(color: Color(0xff0a1f3a)),
           ),

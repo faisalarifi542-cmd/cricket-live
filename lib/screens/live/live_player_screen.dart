@@ -1569,6 +1569,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                   child: Image.asset(
                     'assets/images/live_stream/overlays/cyan_radial_glow.webp',
                     fit: BoxFit.cover,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                 ),

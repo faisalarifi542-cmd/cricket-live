@@ -366,6 +366,7 @@ class _SeriesBadge extends StatelessWidget {
         child: Image.asset(
           logoAsset,
           fit: BoxFit.contain,
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) => _initialsFallback(c),
         ),
       ),
@@ -498,6 +499,8 @@ class _CardTeam extends StatelessWidget {
       abbreviation: upper,
       color: c.cyan,
       size: 44,
+      // The code is rendered directly below the logo — don't say it twice.
+      excludeSemantics: true,
     );
     final scored = innings.where((i) => i.hasRuns).toList();
     // Logo-ABOVE, centred column (same visual language as Home/Matches) so the
@@ -596,6 +599,7 @@ class _VsBadge extends StatelessWidget {
             width: 168,
             height: 118,
             fit: BoxFit.contain,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) => const SizedBox.shrink(),
           ),
           // 3) Wide diagonal electric light streak (RGB no-alpha asset → screen

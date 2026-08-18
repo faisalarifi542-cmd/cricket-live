@@ -51,9 +51,15 @@ class _NewsDetailScreenState extends State<NewsDetailScreen> {
               AppHeader(
                 leading: IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
                     icon: Icon(Icons.arrow_back_rounded, color: c.text)),
                 title: 'News Detail',
-                trailing: const [GlowIconButton(icon: Icons.share_outlined)],
+                trailing: const [
+                  GlowIconButton(
+                    icon: Icons.share_outlined,
+                    tooltip: 'Share',
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
               if (article == null)
@@ -377,22 +383,29 @@ class _ArticleImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final src = source?.trim() ?? '';
+    // Article hero art. The headline, source and body copy are all real text on
+    // this screen, and the API exposes no per-image caption/alt text, so the
+    // image is redundant rather than informative and stays silent.
     if (src.startsWith('http://') || src.startsWith('https://')) {
-      return CachedNetworkImage(
-        imageUrl: src,
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.high,
-        fadeInDuration: Duration.zero,
-        errorWidget: (_, __, ___) =>
-            const EmptyOrErrorImage(label: 'Article image'),
+      return ExcludeSemantics(
+        child: CachedNetworkImage(
+          imageUrl: src,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
+          fadeInDuration: Duration.zero,
+          errorWidget: (_, __, ___) =>
+              const EmptyOrErrorImage(label: 'Article image'),
+        ),
       );
     }
-    return Image.asset(
-      src.isEmpty ? 'assets/images/stadium_live.webp' : src,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.high,
-      errorBuilder: (_, __, ___) =>
-          const EmptyOrErrorImage(label: 'Article image'),
+    return ExcludeSemantics(
+      child: Image.asset(
+        src.isEmpty ? 'assets/images/stadium_live.webp' : src,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (_, __, ___) =>
+            const EmptyOrErrorImage(label: 'Article image'),
+      ),
     );
   }
 }

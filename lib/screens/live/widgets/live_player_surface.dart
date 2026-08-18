@@ -92,6 +92,7 @@ class _PlayerSurface extends StatelessWidget {
                     child: Image.asset(
                       'assets/images/live_stream/overlays/video_vignette_overlay_16x9.webp',
                       fit: BoxFit.cover,
+                      excludeFromSemantics: true,
                       errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                     ),
                   ),
@@ -139,6 +140,7 @@ class _PlayerSurface extends StatelessWidget {
                           'assets/images/live_stream/overlays/neon_play_button.webp',
                           width: 92,
                           height: 92,
+                          excludeFromSemantics: true,
                           errorBuilder: (_, __, ___) => Container(
                             width: 84,
                             height: 84,
@@ -165,6 +167,7 @@ class _PlayerSurface extends StatelessWidget {
                                 height: 34,
                                 colorFilter:
                                     ColorFilter.mode(c.cyan, BlendMode.srcIn),
+                                excludeFromSemantics: true,
                                 placeholderBuilder: (_) => Icon(
                                     Icons.play_arrow_rounded,
                                     color: c.cyan,
@@ -330,6 +333,7 @@ class _PlayerSurface extends StatelessWidget {
                                         'assets/images/live_stream/overlays/neon_play_button.webp',
                                         width: 88,
                                         height: 88,
+                                        excludeFromSemantics: true,
                                         errorBuilder: (_, __, ___) => Container(
                                           decoration: BoxDecoration(
                                             shape: BoxShape.circle,
@@ -356,6 +360,7 @@ class _PlayerSurface extends StatelessWidget {
                                         height: 30,
                                         colorFilter: ColorFilter.mode(
                                             c.cyan, BlendMode.srcIn),
+                                        excludeFromSemantics: true,
                                         placeholderBuilder: (_) => Icon(
                                             Icons.play_arrow_rounded,
                                             color: c.cyan,
@@ -430,6 +435,7 @@ class _PlayerPill extends StatelessWidget {
               width: 12,
               height: 12,
               colorFilter: ColorFilter.mode(c.cyan, BlendMode.srcIn),
+              excludeFromSemantics: true,
               placeholderBuilder: (_) => Icon(Icons.signal_cellular_alt_rounded,
                   color: c.cyan, size: 11),
             )
@@ -748,6 +754,7 @@ class _PortraitPlayerControls extends StatelessWidget {
                     height: 20,
                     colorFilter:
                         const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                    excludeFromSemantics: true,
                     placeholderBuilder: (_) =>
                         Icon(fallback, color: Colors.white, size: 20),
                   )

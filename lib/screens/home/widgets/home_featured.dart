@@ -525,6 +525,8 @@ class _MiniTeam extends StatelessWidget {
           abbreviation: code,
           color: accent,
           size: 36,
+          // The team code is rendered right below — don't say it twice.
+          excludeSemantics: true,
         ),
         const SizedBox(height: 5),
         Text(
@@ -618,12 +620,16 @@ class _FeaturedSeriesCard extends StatelessWidget {
               remoteKey: 'home_hero_bg_dark',
             ),
             if (series.hasImage)
-              CachedNetworkImage(
-                imageUrl: series.imageUrl,
-                fit: BoxFit.cover,
-                fadeInDuration: Duration.zero,
-                errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                placeholder: (context, _) => const SizedBox.shrink(),
+              // Decorative poster art layered over the stadium backdrop; the
+              // series title/date/venue are all real text below it.
+              ExcludeSemantics(
+                child: CachedNetworkImage(
+                  imageUrl: series.imageUrl,
+                  fit: BoxFit.cover,
+                  fadeInDuration: Duration.zero,
+                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  placeholder: (context, _) => const SizedBox.shrink(),
+                ),
               ),
             // Strong left-to-right + bottom gradient so the title/date/location
             // stay readable over any poster.

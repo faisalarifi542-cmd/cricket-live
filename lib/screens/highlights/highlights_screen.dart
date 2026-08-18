@@ -33,6 +33,7 @@ class HighlightsScreen extends StatelessWidget {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
                     icon:
                         Icon(Icons.arrow_back_rounded, color: c.text, size: 28),
                   ),
@@ -62,6 +63,7 @@ class HighlightsScreen extends StatelessWidget {
                   GlowIconButton(
                     icon: Icons.notifications_none_rounded,
                     onTap: onOpenNotifications,
+                    tooltip: 'Notifications',
                   ),
                 ],
               ),

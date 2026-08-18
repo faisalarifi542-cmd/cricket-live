@@ -99,6 +99,7 @@ class _StreamsSection extends StatelessWidget {
                     width: 16,
                     height: 16,
                     colorFilter: ColorFilter.mode(c.cyan, BlendMode.srcIn),
+                    excludeFromSemantics: true,
                     placeholderBuilder: (_) =>
                         Icon(Icons.bar_chart_rounded, color: c.cyan, size: 16),
                   ),
@@ -342,6 +343,7 @@ class _QualityTierCard extends StatelessWidget {
                           height: 16,
                           colorFilter:
                               ColorFilter.mode(c.cyan, BlendMode.srcIn),
+                          excludeFromSemantics: true,
                           placeholderBuilder: (_) => Icon(
                               Icons.check_circle_rounded,
                               color: c.cyan,
@@ -353,6 +355,7 @@ class _QualityTierCard extends StatelessWidget {
                           height: 16,
                           colorFilter: ColorFilter.mode(
                               c.muted.withValues(alpha: .7), BlendMode.srcIn),
+                          excludeFromSemantics: true,
                           placeholderBuilder: (_) => Icon(
                               Icons.radio_button_unchecked_rounded,
                               color: c.muted.withValues(alpha: .7),
@@ -396,6 +399,7 @@ class _QualityTierCard extends StatelessWidget {
                             height: 11,
                             colorFilter: ColorFilter.mode(
                                 selected ? c.cyan : c.muted, BlendMode.srcIn),
+                            excludeFromSemantics: true,
                             placeholderBuilder: (_) => Icon(
                                 Icons.diamond_outlined,
                                 color: selected ? c.cyan : c.muted,
@@ -476,6 +480,7 @@ class _CompactStreamStatus extends StatelessWidget {
                   child: Image.asset(
                     '$base/overlays/feature_strip_glass.webp',
                     fit: BoxFit.cover,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                 ),
@@ -525,6 +530,7 @@ class _CompactStreamStatus extends StatelessWidget {
                   child: Image.asset(
                     '$base/overlays/secure_info_card_glass.webp',
                     fit: BoxFit.cover,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
                 ),
@@ -542,6 +548,7 @@ class _CompactStreamStatus extends StatelessWidget {
                             '$base/overlays/blue_icon_badge_glow.webp',
                             width: 44,
                             height: 44,
+                            excludeFromSemantics: true,
                             errorBuilder: (_, __, ___) => Container(
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
@@ -555,6 +562,7 @@ class _CompactStreamStatus extends StatelessWidget {
                             height: 22,
                             colorFilter:
                                 ColorFilter.mode(c.cyan, BlendMode.srcIn),
+                            excludeFromSemantics: true,
                             placeholderBuilder: (_) => const Icon(
                                 Icons.lock_rounded,
                                 color: Colors.white,
@@ -599,6 +607,7 @@ class _CompactStreamStatus extends StatelessWidget {
                       height: 18,
                       colorFilter: ColorFilter.mode(
                           c.muted.withValues(alpha: .9), BlendMode.srcIn),
+                      excludeFromSemantics: true,
                       placeholderBuilder: (_) => Icon(
                           Icons.chevron_right_rounded,
                           color: c.muted,
@@ -645,6 +654,7 @@ class _StreamFeatureChip extends StatelessWidget {
             width: 19,
             height: 19,
             colorFilter: ColorFilter.mode(c.cyan, BlendMode.srcIn),
+            excludeFromSemantics: true,
             placeholderBuilder: (_) =>
                 Icon(Icons.bolt_rounded, color: c.cyan, size: 18),
           ),

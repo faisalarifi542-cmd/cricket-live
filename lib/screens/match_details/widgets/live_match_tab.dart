@@ -1961,35 +1961,42 @@ class _PlayerAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.cric;
     final image = resolvePlayerImageUrl(row);
+    // Every call site renders the player's name as text next to this avatar, so
+    // the photo (and the initials fallback) are excluded from semantics rather
+    // than announcing the same person twice.
     if (image == null) {
-      return Container(
-        width: 30,
-        height: 30,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [c.cyan.withValues(alpha: 0.30), c.card2],
+      return ExcludeSemantics(
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [c.cyan.withValues(alpha: 0.30), c.card2],
+            ),
+            border: Border.all(color: c.cyan.withValues(alpha: .4)),
           ),
-          border: Border.all(color: c.cyan.withValues(alpha: .4)),
-        ),
-        child: Text(
-          _initials(name),
-          style: TextStyle(
-            color: c.text,
-            fontWeight: FontWeight.w900,
-            fontSize: 11,
+          child: Text(
+            _initials(name),
+            style: TextStyle(
+              color: c.text,
+              fontWeight: FontWeight.w900,
+              fontSize: 11,
+            ),
           ),
         ),
       );
     }
-    return CircleAvatar(
-      radius: 15,
-      backgroundColor: c.card2,
-      backgroundImage: CachedNetworkImageProvider(
-        image,
+    return ExcludeSemantics(
+      child: CircleAvatar(
+        radius: 15,
+        backgroundColor: c.card2,
+        backgroundImage: CachedNetworkImageProvider(
+          image,
+        ),
       ),
     );
   }

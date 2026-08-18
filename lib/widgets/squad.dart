@@ -231,21 +231,25 @@ class _ReserveChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
-              radius: 13,
-              backgroundColor: c.card,
-              backgroundImage: image == null
-                  ? null
-                  : CachedNetworkImageProvider(
-                      image,
-                    ),
-              child: image == null
-                  ? Text(_initial(name),
-                      style: TextStyle(
-                          color: c.muted,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 11))
-                  : null,
+            // The player name is the adjacent Text, so this avatar — including
+            // its initial-letter fallback — is redundant for a screen reader.
+            ExcludeSemantics(
+              child: CircleAvatar(
+                radius: 13,
+                backgroundColor: c.card,
+                backgroundImage: image == null
+                    ? null
+                    : CachedNetworkImageProvider(
+                        image,
+                      ),
+                child: image == null
+                    ? Text(_initial(name),
+                        style: TextStyle(
+                            color: c.muted,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11))
+                    : null,
+              ),
             ),
             const SizedBox(width: 8),
             ConstrainedBox(
@@ -393,7 +397,14 @@ class _PlayerAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Shared resolver: admin → provider → initials, never a broken icon.
-    return PlayerAvatarWidget(name: name, imageUrl: image, size: 44);
+    // The squad row renders the player's name as text beside this avatar, so
+    // the photo stays silent rather than announcing the same person twice.
+    return PlayerAvatarWidget(
+      name: name,
+      imageUrl: image,
+      size: 44,
+      excludeSemantics: true,
+    );
   }
 }
 

@@ -80,15 +80,20 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
                 AppHeader(
                   leading: IconButton(
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Back',
                     icon: Icon(Icons.arrow_back_rounded, color: c.text),
                   ),
                   showLogo: true,
                   trailing: [
                     GlowIconButton(
-                        icon: Icons.notifications_none_rounded, onTap: () {}),
+                        icon: Icons.notifications_none_rounded,
+                        tooltip: 'Notifications',
+                        onTap: () {}),
                     const SizedBox(width: 8),
                     GlowIconButton(
-                        icon: Icons.more_vert_rounded, onTap: () {}),
+                        icon: Icons.more_vert_rounded,
+                        tooltip: 'More options',
+                        onTap: () {}),
                   ],
                 ),
                 const SizedBox(height: 18),

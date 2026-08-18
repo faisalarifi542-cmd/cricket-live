@@ -215,6 +215,7 @@ class SeriesLogoRing extends StatelessWidget {
     this.accent,
     this.fallback,
     this.logoRatio = 0.78,
+    this.excludeSemantics = false,
   });
 
   /// Outer diameter (includes the asset's glow margin).
@@ -228,6 +229,12 @@ class SeriesLogoRing extends StatelessWidget {
 
   /// Inner logo diameter as a fraction of [size] (the ring's clear hole).
   final double logoRatio;
+
+  /// Set true when the CALLER already captions the team name beside/below the
+  /// ring (e.g. [_HeroTeamBadge]). Left false for the tournament strip and the
+  /// bilateral pair, where the ring logos are the only thing identifying the
+  /// teams — there the badge is genuinely informative and must be announced.
+  final bool excludeSemantics;
 
   @override
   Widget build(BuildContext context) {
@@ -252,6 +259,7 @@ class SeriesLogoRing extends StatelessWidget {
                 // Transparent inner border so the flag fills the disc; the ring
                 // asset below is the visible frame.
                 borderColor: Colors.transparent,
+                excludeSemantics: excludeSemantics,
               ),
             ),
           )
@@ -280,6 +288,7 @@ class SeriesLogoRing extends StatelessWidget {
               width: size,
               height: size,
               fit: BoxFit.contain,
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) => DecoratedBox(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
@@ -348,6 +357,7 @@ class SeriesLogoRingPair extends StatelessWidget {
             child: Image.asset(
               SeriesNewAssets.bilateralConnector,
               fit: BoxFit.contain,
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) => Container(
                 height: 3,
                 decoration: BoxDecoration(
@@ -383,6 +393,7 @@ class SeriesLogoRingPair extends StatelessWidget {
               width: shield,
               height: shield,
               fit: BoxFit.contain,
+              excludeFromSemantics: true,
               errorBuilder: (_, __, ___) => Container(
                 width: shield,
                 height: shield,
@@ -595,6 +606,7 @@ class SeriesCtaButton extends StatelessWidget {
           SeriesNewAssets.chevronRight,
           height: height * .42,
           fit: BoxFit.contain,
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) => Icon(Icons.chevron_right_rounded,
               color: textColor, size: height * .54),
         ),
@@ -698,22 +710,32 @@ class _PosterFavoriteStarState extends State<_PosterFavoriteStar> {
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    return GestureDetector(
-      onTap: () => setState(() => _on = !_on),
-      behavior: HitTestBehavior.opaque,
-      child: _on
-          ? Icon(Icons.star_rounded, size: widget.size, color: c.warning)
-          : Image.asset(
-              SeriesNewAssets.favoriteStar,
-              width: widget.size,
-              height: widget.size,
-              fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => Icon(
-                Icons.star_border_rounded,
-                size: widget.size,
-                color: Colors.white.withValues(alpha: .85),
-              ),
-            ),
+    // Interactive image: the star bitmap IS the control and there is no adjacent
+    // text, so the semantics live on the tappable ancestor as a toggle (with
+    // state) while the artwork itself stays silent — no "button, image" echo.
+    return Semantics(
+      button: true,
+      toggled: _on,
+      label: 'Favorite series',
+      child: GestureDetector(
+        onTap: () => setState(() => _on = !_on),
+        behavior: HitTestBehavior.opaque,
+        child: ExcludeSemantics(
+          child: _on
+              ? Icon(Icons.star_rounded, size: widget.size, color: c.warning)
+              : Image.asset(
+                  SeriesNewAssets.favoriteStar,
+                  width: widget.size,
+                  height: widget.size,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Icon(
+                    Icons.star_border_rounded,
+                    size: widget.size,
+                    color: Colors.white.withValues(alpha: .85),
+                  ),
+                ),
+        ),
+      ),
     );
   }
 }
@@ -785,6 +807,7 @@ class SeriesBorderFrame extends StatelessWidget {
                 child: Image.asset(
                   background,
                   fit: BoxFit.cover,
+                  excludeFromSemantics: true,
                   errorBuilder: (_, __, ___) => ColoredBox(
                       color: c.isDark ? c.card : const Color(0xff0a1e3d)),
                 ),
@@ -1135,6 +1158,7 @@ class _SideArt extends StatelessWidget {
           child: Image.asset(
             asset,
             fit: BoxFit.contain,
+            excludeFromSemantics: true,
             errorBuilder: (_, __, ___) =>
                 Icon(fallbackIcon, color: c.warning, size: width * .6),
           ),
@@ -1483,6 +1507,9 @@ class _HeroTeamBadge extends StatelessWidget {
       ring: ring,
       team: team,
       accent: accent,
+      // When a caption is drawn below, the ring would repeat it; when there is
+      // no caption the ring stays the sole carrier of the team identity.
+      excludeSemantics: label.isNotEmpty,
     );
     if (label.isEmpty) return logo;
     return Column(
@@ -1626,6 +1653,7 @@ class SeriesFeaturedHeroPoster extends StatelessWidget {
                   child: Image.asset(
                     SeriesNewAssets.heroBorder,
                     fit: BoxFit.fill,
+                    excludeFromSemantics: true,
                     errorBuilder: (_, __, ___) => DecoratedBox(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(30),
@@ -1657,6 +1685,7 @@ class SeriesFeaturedHeroPoster extends StatelessWidget {
                             SeriesNewAssets.trophyGold,
                             height: m.hero * .2,
                             fit: BoxFit.contain,
+                            excludeFromSemantics: true,
                             errorBuilder: (_, __, ___) => Icon(
                                 Icons.emoji_events_rounded,
                                 color: c.warning,
@@ -1848,17 +1877,22 @@ class _HeroBackground extends StatelessWidget {
     Widget asset() => Image.asset(
           SeriesNewAssets.tournamentBg,
           fit: BoxFit.cover,
+          excludeFromSemantics: true,
           errorBuilder: (_, __, ___) =>
               ColoredBox(color: c.isDark ? c.card : const Color(0xff0a1e3d)),
         );
     final url = image?.trim() ?? '';
     if (url.startsWith('http')) {
-      return CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.cover,
-        fadeInDuration: Duration.zero,
-        placeholder: (context, _) => asset(),
-        errorWidget: (_, __, ___) => asset(),
+      // Decorative hero backdrop; `CachedNetworkImage` has no
+      // `excludeFromSemantics`, so wrap it instead.
+      return ExcludeSemantics(
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          fadeInDuration: Duration.zero,
+          placeholder: (context, _) => asset(),
+          errorWidget: (_, __, ___) => asset(),
+        ),
       );
     }
     return asset();

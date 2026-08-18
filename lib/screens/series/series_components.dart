@@ -1101,6 +1101,8 @@ class _SeriesTeamLogo extends StatelessWidget {
       abbreviation: team.shortName.isNotEmpty ? team.shortName : team.name,
       color: const Color(0xff22d3ee),
       size: size,
+      // Only used inside team columns that caption the code below the logo.
+      excludeSemantics: true,
     );
   }
 }
@@ -1295,6 +1297,8 @@ class _HeroTeamColumn extends StatelessWidget {
               abbreviation: 'TBD',
               color: c.cyan,
               size: 58,
+              // "TBD" is already captioned below; never announce a placeholder.
+              excludeSemantics: true,
             ),
           const SizedBox(height: 8),
           Text(
@@ -1432,6 +1436,10 @@ class SeriesPlayerAvatar extends StatelessWidget {
       imageUrl: imageUrl,
       size: size,
       borderColor: borderColor,
+      // Both call sites (squad grid, stats leaderboard rows) render the player
+      // name as text beside/below the avatar, so announcing it here too would
+      // read the name twice.
+      excludeSemantics: true,
     );
   }
 }

@@ -116,6 +116,7 @@ class MDIcon extends StatelessWidget {
       height: size,
       color: tint,
       filterQuality: FilterQuality.medium,
+      excludeFromSemantics: true,
       errorBuilder: (_, __, ___) => Icon(fallback, size: size, color: color),
     );
   }
@@ -211,6 +212,7 @@ class MDGlassPanel extends StatelessWidget {
               child: Image.asset(
                 bgAsset!,
                 fit: BoxFit.cover,
+                excludeFromSemantics: true,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
@@ -637,6 +639,8 @@ class MDTeamScoreBlock extends StatelessWidget {
             abbreviation: code,
             color: accent,
             size: logoSize,
+            // The team code is rendered right below — don't say it twice.
+            excludeSemantics: true,
           ),
         ),
         const SizedBox(height: 6),
@@ -1339,16 +1343,20 @@ class MDPlayerAvatar extends StatelessWidget {
         ),
         border: Border.all(color: ring.withValues(alpha: .55), width: 1.6),
       ),
-      child: hasImage
-          ? CachedNetworkImage(
-              imageUrl: imageUrl!,
-              key: ValueKey(imageUrl),
-              fit: BoxFit.cover,
-              fadeInDuration: Duration.zero,
-              placeholder: (context, _) => _initials(context),
-              errorWidget: (_, __, ___) => _initials(context),
-            )
-          : _initials(context),
+      // Player name is always rendered as text beside this avatar, so the photo
+      // (and its initials fallback) add nothing for a screen reader.
+      child: ExcludeSemantics(
+        child: hasImage
+            ? CachedNetworkImage(
+                imageUrl: imageUrl!,
+                key: ValueKey(imageUrl),
+                fit: BoxFit.cover,
+                fadeInDuration: Duration.zero,
+                placeholder: (context, _) => _initials(context),
+                errorWidget: (_, __, ___) => _initials(context),
+              )
+            : _initials(context),
+      ),
     );
   }
 
@@ -1455,6 +1463,8 @@ class MDTeamSelector extends StatelessWidget {
                           abbreviation: items[i].label,
                           color: c.cyan,
                           size: TeamLogoWidget.miniSize,
+                          // The tab label beside it already names the team.
+                          excludeSemantics: true,
                         ),
                         const SizedBox(width: 7),
                         Flexible(

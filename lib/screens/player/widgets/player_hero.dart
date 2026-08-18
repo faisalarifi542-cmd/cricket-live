@@ -220,17 +220,22 @@ class _PlayerPortrait extends StatelessWidget {
       child: () {
         // Gate the profile photo by the global player-image mode.
         final image = resolvePlayerImageUrl(player.image);
-        return image == null
-            ? _Initial(player.name, size: size * .32)
-            : CachedNetworkImage(
-                imageUrl: image,
-                fit: BoxFit.cover,
-                fadeInDuration: Duration.zero,
-                placeholder: (context, _) =>
-                    _Initial(player.name, size: size * .32),
-                errorWidget: (_, __, ___) =>
-                    _Initial(player.name, size: size * .32),
-              );
+        // The player's name is the hero headline directly beside this photo, so
+        // the image is redundant for a screen reader and stays silent (the
+        // initials fallback is likewise decorative shorthand for that name).
+        return ExcludeSemantics(
+          child: image == null
+              ? _Initial(player.name, size: size * .32)
+              : CachedNetworkImage(
+                  imageUrl: image,
+                  fit: BoxFit.cover,
+                  fadeInDuration: Duration.zero,
+                  placeholder: (context, _) =>
+                      _Initial(player.name, size: size * .32),
+                  errorWidget: (_, __, ___) =>
+                      _Initial(player.name, size: size * .32),
+                ),
+        );
       }(),
     );
   }
