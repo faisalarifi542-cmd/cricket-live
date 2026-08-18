@@ -11,6 +11,7 @@ import {
 import providerManager from '../../providers/provider-manager.js';
 import { probeProvider, toHealthStatus } from '../provider-probe.js';
 import logger from '../../lib/logger.js';
+import { validateProviderBaseUrl, isSafeRedirectTarget } from '../../lib/url-guard.js';
 import axios from 'axios';
 
 const TEST_PATHS = [
@@ -109,6 +110,13 @@ export default async function providerRoutes(fastify) {
     if (!slug || !name) {
       return reply.code(400).send({ success: false, error: 'slug and name required' });
     }
+    // SEC-3: reject an SSRF-capable base_url at the write boundary so a bad value
+    // never reaches the DB. Empty/absent stays allowed — base_url is optional and
+    // built-in providers do not use it.
+    if (base_url) {
+      const check = validateProviderBaseUrl(base_url);
+      if (!check.ok) return reply.code(400).send({ success: false, error: check.error });
+    }
     const meta = metadata && typeof metadata === 'object' ? { ...metadata } : {};
     const providerRole = String(role || meta.role || 'fallback').toLowerCase();
     const becomingPrimary = providerRole === 'primary';
@@ -170,6 +178,14 @@ export default async function providerRoutes(fastify) {
     const resolvedRole = String(body.role || incomingMeta.role || existing.role || 'fallback').toLowerCase();
     // Sync metadata.role so both stay consistent.
     mergedMeta.role = resolvedRole;
+
+    // SEC-3: only validate when the caller is actually CHANGING base_url. An
+    // untouched pre-existing value must not make an unrelated PUT fail (the probe
+    // route validates at fetch time, so a legacy row is still not exploitable).
+    if (body.base_url !== undefined && body.base_url) {
+      const check = validateProviderBaseUrl(body.base_url);
+      if (!check.ok) return reply.code(400).send({ success: false, error: check.error });
+    }
 
     const merged = {
       slug: body.slug !== undefined ? body.slug : existing.slug,
@@ -335,6 +351,16 @@ export default async function providerRoutes(fastify) {
     // Legacy fallback for unknown/custom providers only: exercise our own app
     // route shapes against the configured base_url.
     if (!provider.base_url) return reply.code(400).send({ success: false, error: 'Provider base URL is required' });
+    // SEC-3: base_url is admin-supplied and is about to become a server-side
+    // request, so it is an SSRF sink. Validated HERE (not only on write) so
+    // rows that predate the write-time check cannot bypass the guard.
+    const baseUrlCheck = validateProviderBaseUrl(provider.base_url);
+    if (!baseUrlCheck.ok) {
+      return reply.code(400).send({
+        success: false,
+        error: `Refusing to probe this provider: ${baseUrlCheck.error}`,
+      });
+    }
     const base = String(provider.base_url).replace(/\/+$/, '');
     const results = [];
     let status = 'healthy';
@@ -348,6 +374,14 @@ export default async function providerRoutes(fastify) {
         const res = await axios.get(`${base}${path}`, {
           timeout: Number(provider.timeout_ms || 8000),
           validateStatus: () => true,
+          // SEC-3: axios follows up to 5 redirects by default, so an allowed
+          // public host could 302 the probe to 169.254.169.254. Re-validate
+          // every hop instead of trusting only the initial URL.
+          beforeRedirect: (options) => {
+            if (!isSafeRedirectTarget(options.href)) {
+              throw new Error(`Blocked redirect to a private or non-http(s) address: ${options.href}`);
+            }
+          },
         });
         const ok = res.status >= 200 && res.status < 400 && res.data && typeof res.data !== 'string';
         const routeResult = {

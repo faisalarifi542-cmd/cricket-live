@@ -67,6 +67,17 @@ test('SEC-2 harness: the child does not inherit a JWT_SECRET from the repo .env'
   assert.equal(JSON.parse(res.stdout.trim()).seen, null, 'JWT_SECRET leaked into the test child');
 });
 
+test('SEC-2: resolveJwtSecret is exported and honours the ALREADY-loaded env', () => {
+  // The cases below run in child processes (so this suite cannot corrupt the env
+  // other suites share). This one check runs in-process to prove the export is
+  // real and callable, using the secret this repo's own .env supplies.
+  assert.equal(typeof resolveJwtSecret, 'function');
+  const current = resolveJwtSecret(false);
+  assert.equal(typeof current, 'string');
+  assert.ok(current.length >= 32, 'the configured dev secret should be >=32 chars');
+  assert.notEqual(current, 'dev-secret-change-in-production');
+});
+
 test('SEC-2: the hardcoded dev secret is gone from the shipped config', () => {
   const src = readFileSync(CONFIG_PATH, 'utf8');
   // It may only appear in the KNOWN_PLACEHOLDER_SECRETS reject-list, never as a

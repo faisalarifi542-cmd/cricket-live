@@ -138,7 +138,6 @@ test('primary matrix 8: priority normalisation keeps a sane primary priority', a
   ];
   for (const { existing, expected, why } of cases) {
     const conn = makeConn();
-    // eslint-disable-next-line no-await-in-loop
     await transactionWith(conn, (c) => setPrimaryBody(c, 7, { priority: existing }));
     const promote = conn.calls.filter((c) => c[0] === 'SQL')[1];
     assert.equal(promote[2][0], expected, `priority ${existing}: ${why}`);

@@ -65,7 +65,6 @@ export function resolveJwtSecret(isProd) {
 
   if (!secret) {
     // Dev with nothing configured: ephemeral key, never a published constant.
-    // eslint-disable-next-line no-console
     console.warn(
       '[config] JWT_SECRET is not set — generated a random secret for this ' +
         'process. Admin sessions will not survive a restart. Set JWT_SECRET in ' +
@@ -74,7 +73,6 @@ export function resolveJwtSecret(isProd) {
     return crypto.randomBytes(48).toString('base64url');
   }
 
-  // eslint-disable-next-line no-console
   console.warn(
     `[config] JWT_SECRET ${problem}. This is tolerated in development but is a ` +
       'fatal error when NODE_ENV=production.',
