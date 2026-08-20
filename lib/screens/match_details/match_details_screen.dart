@@ -778,168 +778,196 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
+    final hp = context.horizontalPadding;
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(gradient: c.bgGradient),
         child: SafeArea(
           child: RefreshIndicator(
             onRefresh: _refreshCurrentTab,
-            child: ListView(
+            // PERF (M7): was a plain `ListView` whose LAST child was the entire
+            // active tab. That made the tab body a single box child, so the
+            // Commentary tab's rows could not be viewport-culled and all 80 (then
+            // 160 after "View More") were built, laid out and painted every frame.
+            // A CustomScrollView lets the active tab contribute SLIVERS to this
+            // one viewport, so commentary rows build lazily. Same single
+            // controller and single viewport, so pull-to-refresh and the
+            // scroll-offset restore in _restoreScroll behave as before.
+            child: CustomScrollView(
               controller: _scrollController,
-              padding: EdgeInsets.fromLTRB(context.horizontalPadding, 10,
-                  context.horizontalPadding, context.detailBottomPadding),
-              children: [
-                MatchDetailsTopBar(
-                  onBack: () => Navigator.pop(context),
-                  onMinimize:
-                      _summaryData != null ? _showMinimizeOptions : null,
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(hp, 10, hp, 0),
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate([
+                      MatchDetailsTopBar(
+                        onBack: () => Navigator.pop(context),
+                        onMinimize:
+                            _summaryData != null ? _showMinimizeOptions : null,
+                      ),
+                      const SizedBox(height: 12),
+                      if (_matchId.isNotEmpty)
+                        _summaryData != null
+                            ? MatchHeroScoreCard(
+                                match: _matchFromDetail(_summaryData!))
+                            : FutureBuilder<
+                                ApiEnvelope<Map<String, dynamic>>>(
+                                future: _summaryFuture,
+                                builder: (context, snapshot) {
+                                  final data = snapshot.data?.data;
+                                  if (data == null) {
+                                    // Render the known summary (teams/venue/series the
+                                    // user just saw) immediately while the detail loads
+                                    // or if it fails — never a bare spinner or "TBD".
+                                    final known =
+                                        CricketMatch.knownSummary(_matchId);
+                                    if (snapshot.connectionState ==
+                                        ConnectionState.waiting) {
+                                      if (known != null) {
+                                        return MatchHeroScoreCard(match: known);
+                                      }
+                                      return const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                            vertical: 32),
+                                        child: Center(
+                                            child:
+                                                CircularProgressIndicator()),
+                                      );
+                                    }
+                                    if (snapshot.hasError) {
+                                      if (known != null) {
+                                        return MatchHeroScoreCard(match: known);
+                                      }
+                                      final isOffline = snapshot.error
+                                              is ApiClientException &&
+                                          (snapshot.error as ApiClientException)
+                                              .isNetwork;
+                                      if (isOffline) {
+                                        return CricOfflineCard(
+                                          onRetry: _refreshCurrentTab,
+                                        );
+                                      }
+                                      return PremiumCard(
+                                        padding: const EdgeInsets.all(24),
+                                        child: Text(
+                                          'Something went wrong. Pull to refresh.',
+                                          style: TextStyle(
+                                              color: c.muted, height: 1.5),
+                                        ),
+                                      );
+                                    }
+                                    if (known != null) {
+                                      return MatchHeroScoreCard(match: known);
+                                    }
+                                    return PremiumCard(
+                                      padding: const EdgeInsets.all(24),
+                                      child: Text(
+                                        'Match details are not available yet.',
+                                        style: TextStyle(
+                                            color: c.muted, height: 1.5),
+                                      ),
+                                    );
+                                  }
+                                  return MatchHeroScoreCard(
+                                      match: _matchFromDetail(data));
+                                },
+                              )
+                      else
+                        PremiumCard(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            'No match selected. Open a live or upcoming match from the Home or Matches screen.',
+                            style: TextStyle(color: c.muted, height: 1.5),
+                          ),
+                        ),
+                      const SizedBox(height: 10),
+                      _RefreshStatusRow(
+                        lastUpdatedAt: _lastUpdatedAt,
+                        onRefresh: _refreshCurrentTab,
+                        isStale: _isStale,
+                        isOffline: _isOffline,
+                      ),
+                      const SizedBox(height: 10),
+                      MatchDetailsTabBar(
+                        items: const [
+                          ('Info', Icons.info_outline_rounded, MDAsset.tabInfo),
+                          ('Live', Icons.podcasts_rounded, MDAsset.tabLive),
+                          (
+                            'Score',
+                            Icons.scoreboard_outlined,
+                            MDAsset.tabScorecard
+                          ),
+                          ('Squad', Icons.groups_rounded, MDAsset.tabSquad),
+                          (
+                            'Comm',
+                            Icons.chat_bubble_outline_rounded,
+                            MDAsset.tabCommentary
+                          ),
+                          (
+                            'Overs',
+                            Icons.sports_cricket_rounded,
+                            MDAsset.tabOvers
+                          ),
+                        ],
+                        selected: tab,
+                        onChanged: _setTab,
+                      ),
+                      const SizedBox(height: 12),
+                    ]),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                if (_matchId.isNotEmpty)
-                  _summaryData != null
-                      ? MatchHeroScoreCard(match: _matchFromDetail(_summaryData!))
-                      : FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
-                          future: _summaryFuture,
-                          builder: (context, snapshot) {
-                            final data = snapshot.data?.data;
-                            if (data == null) {
-                              // Render the known summary (teams/venue/series the
-                              // user just saw) immediately while the detail loads
-                              // or if it fails — never a bare spinner or "TBD".
-                              final known =
-                                  CricketMatch.knownSummary(_matchId);
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                if (known != null) {
-                                  return MatchHeroScoreCard(match: known);
-                                }
-                                return const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 32),
-                                  child: Center(
-                                      child: CircularProgressIndicator()),
-                                );
-                              }
-                              if (snapshot.hasError) {
-                                if (known != null) {
-                                  return MatchHeroScoreCard(match: known);
-                                }
-                                final isOffline = snapshot.error
-                                        is ApiClientException &&
-                                    (snapshot.error as ApiClientException)
-                                        .isNetwork;
-                                if (isOffline) {
-                                  return CricOfflineCard(
-                                    onRetry: _refreshCurrentTab,
-                                  );
-                                }
-                                return PremiumCard(
-                                  padding: const EdgeInsets.all(24),
-                                  child: Text(
-                                    'Something went wrong. Pull to refresh.',
-                                    style:
-                                        TextStyle(color: c.muted, height: 1.5),
-                                  ),
-                                );
-                              }
-                              if (known != null) {
-                                return MatchHeroScoreCard(match: known);
-                              }
-                              return PremiumCard(
+                SliverPadding(
+                  padding: EdgeInsets.symmetric(horizontal: hp),
+                  // Fades the incoming tab in over the same 280ms / easeOutCubic
+                  // the AnimatedSwitcher used. The KeyedSubtree preserves the old
+                  // behaviour of giving each tab a fresh element subtree (so a
+                  // tab's local state resets on switch, exactly as before).
+                  sliver: _SliverTabFade(
+                    tabKey: tab,
+                    sliver: KeyedSubtree(
+                      key: ValueKey(tab),
+                      child: _matchId.isNotEmpty && _tabFutures[tab] != null
+                          ? _tabData.containsKey(tab)
+                              ? _ApiMatchTabDataContent(
+                                  tab: tab,
+                                  data: _tabData[tab]!,
+                                  summaryData: _summaryData,
+                                  scorecardData: _tabData[2],
+                                  matchStatus:
+                                      _summaryData?['status']?.toString(),
+                                  fullCommentaryData: _tabData[4],
+                                  fallbackSummary:
+                                      CricketMatch.knownSummary(_matchId),
+                                  onViewMoreCommentary: () => _setTab(4),
+                                )
+                              : _ApiMatchTabFutureContent(
+                                  tab: tab,
+                                  future: _tabFutures[tab]!,
+                                  summaryData: _summaryData,
+                                  scorecardData: _tabData[2],
+                                  matchStatus:
+                                      _summaryData?['status']?.toString(),
+                                  fullCommentaryData: _tabData[4],
+                                  fallbackSummary:
+                                      CricketMatch.knownSummary(_matchId),
+                                  onViewMoreCommentary: () => _setTab(4),
+                                )
+                          : SliverToBoxAdapter(
+                              child: PremiumCard(
                                 padding: const EdgeInsets.all(24),
                                 child: Text(
-                                  'Match details are not available yet.',
-                                  style: TextStyle(color: c.muted, height: 1.5),
+                                  'No match selected.',
+                                  style:
+                                      TextStyle(color: c.muted, height: 1.5),
                                 ),
-                              );
-                            }
-                            return MatchHeroScoreCard(
-                                match: _matchFromDetail(data));
-                          },
-                        )
-                else
-                  PremiumCard(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'No match selected. Open a live or upcoming match from the Home or Matches screen.',
-                      style: TextStyle(color: c.muted, height: 1.5),
-                    ),
-                  ),
-                const SizedBox(height: 10),
-                _RefreshStatusRow(
-                  lastUpdatedAt: _lastUpdatedAt,
-                  onRefresh: _refreshCurrentTab,
-                  isStale: _isStale,
-                  isOffline: _isOffline,
-                ),
-                const SizedBox(height: 10),
-                MatchDetailsTabBar(
-                  items: const [
-                    ('Info', Icons.info_outline_rounded, MDAsset.tabInfo),
-                    ('Live', Icons.podcasts_rounded, MDAsset.tabLive),
-                    ('Score', Icons.scoreboard_outlined, MDAsset.tabScorecard),
-                    ('Squad', Icons.groups_rounded, MDAsset.tabSquad),
-                    (
-                      'Comm',
-                      Icons.chat_bubble_outline_rounded,
-                      MDAsset.tabCommentary
-                    ),
-                    ('Overs', Icons.sports_cricket_rounded, MDAsset.tabOvers),
-                  ],
-                  selected: tab,
-                  onChanged: _setTab,
-                ),
-                const SizedBox(height: 12),
-                if (_matchId.isNotEmpty && _tabFutures[tab] != null) ...[
-                  // Debug info - hidden in production
-                  // _ApiTabStatus(future: _tabFutures[tab]!),
-                  // const SizedBox(height: 16),
-                ],
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 280),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: child,
-                  ),
-                  child: KeyedSubtree(
-                    key: ValueKey(tab),
-                    child: _matchId.isNotEmpty && _tabFutures[tab] != null
-                        ? _tabData.containsKey(tab)
-                            ? _ApiMatchTabDataContent(
-                                tab: tab,
-                                data: _tabData[tab]!,
-                                summaryData: _summaryData,
-                                scorecardData: _tabData[2],
-                                matchStatus:
-                                    _summaryData?['status']?.toString(),
-                                fullCommentaryData: _tabData[4],
-                                fallbackSummary:
-                                    CricketMatch.knownSummary(_matchId),
-                                onViewMoreCommentary: () => _setTab(4),
-                              )
-                            : _ApiMatchTabFutureContent(
-                                tab: tab,
-                                future: _tabFutures[tab]!,
-                                summaryData: _summaryData,
-                                scorecardData: _tabData[2],
-                                matchStatus:
-                                    _summaryData?['status']?.toString(),
-                                fullCommentaryData: _tabData[4],
-                                fallbackSummary:
-                                    CricketMatch.knownSummary(_matchId),
-                                onViewMoreCommentary: () => _setTab(4),
-                              )
-                        : PremiumCard(
-                            padding: const EdgeInsets.all(24),
-                            child: Text(
-                              'No match selected.',
-                              style: TextStyle(color: c.muted, height: 1.5),
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                SliverToBoxAdapter(
+                  child: SizedBox(height: 16 + context.detailBottomPadding),
+                ),
               ],
             ),
           ),
@@ -947,5 +975,54 @@ class _MatchDetailsScreenState extends State<MatchDetailsScreen>
       ),
     );
   }
+}
+
+/// Cross-fades the active tab's sliver in, replacing the `AnimatedSwitcher` that
+/// used to wrap the tab body.
+///
+/// `AnimatedSwitcher` is a box widget and cannot host slivers, which the
+/// Commentary tab now needs in order to build its rows lazily. Duration and
+/// curve match the previous behaviour (280ms, `Curves.easeOutCubic`), and the
+/// controller starts settled at 1.0 so the first frame is not faded in — the
+/// same as `AnimatedSwitcher`'s initial, non-animated child.
+class _SliverTabFade extends StatefulWidget {
+  const _SliverTabFade({required this.tabKey, required this.sliver});
+
+  /// Changing this restarts the fade.
+  final Object tabKey;
+  final Widget sliver;
+
+  @override
+  State<_SliverTabFade> createState() => _SliverTabFadeState();
+}
+
+class _SliverTabFadeState extends State<_SliverTabFade>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+    value: 1,
+  );
+  late final CurvedAnimation _opacity =
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+
+  @override
+  void didUpdateWidget(_SliverTabFade oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tabKey != widget.tabKey) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _opacity.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      SliverFadeTransition(opacity: _opacity, sliver: widget.sliver);
 }
 

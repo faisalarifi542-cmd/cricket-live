@@ -117,6 +117,17 @@ class CommentaryCache {
     return [for (final k in store.order) store.items[k]!];
   }
 
+  /// Stable identity for a commentary item, safe for use as a widget key.
+  ///
+  /// Exposes the SAME canonical key the merge uses internally, so UI state that
+  /// must follow a specific delivery (e.g. which commentary row the user
+  /// expanded) stays attached to that delivery even as newer balls are prepended
+  /// and the list re-sorts. Keying such state positionally is wrong: index 0 is
+  /// a different ball after every poll.
+  ///
+  /// Purely additive — merge/sort behaviour is unchanged.
+  String identityFor(Map<String, dynamic> item) => _keyFor(item);
+
   /// Drops everything cached for a match (both buckets). Call when a match is
   /// known to be fully reloaded cleanly.
   void clearMatch(String matchId) {

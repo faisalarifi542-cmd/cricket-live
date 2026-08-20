@@ -1,28 +1,32 @@
 part of '../match_details_screen.dart';
 
-class _CommentaryTimelineItem extends StatefulWidget {
+/// One commentary row (a real delivery or a non-ball note).
+///
+/// Expansion state is deliberately NOT held here. The rows are built lazily by a
+/// `SliverList.builder`, so a row's `State` is destroyed as soon as it scrolls
+/// out of the viewport — local state would silently collapse. `_CommentaryPanel`
+/// owns it instead, keyed by the item's canonical identity, so an expanded row
+/// survives scrolling AND stays attached to its own delivery when a poll
+/// prepends newer balls.
+class _CommentaryTimelineItem extends StatelessWidget {
   const _CommentaryTimelineItem({
+    super.key,
     required this.row,
     required this.isFirst,
     required this.isLast,
+    required this.expanded,
+    required this.onToggleExpanded,
   });
 
   final Map<String, dynamic> row;
   final bool isFirst;
   final bool isLast;
-
-  @override
-  State<_CommentaryTimelineItem> createState() =>
-      _CommentaryTimelineItemState();
-}
-
-class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
-  bool _expanded = false;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
 
   @override
   Widget build(BuildContext context) {
     final c = context.cric;
-    final row = widget.row;
 
     // Trust the server-normalized feed. Never re-guess event types here.
     final isBall = truthy(row['isBall']) || truthy(row['is_ball']);
@@ -53,7 +57,7 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
     String team,
     bool isWicket,
   ) {
-    final runs = str(widget.row['runs'], fallback: '0');
+    final runs = str(row['runs'], fallback: '0');
     final Color tone = switch (type) {
       'wicket' => const Color(0xffb05cff),
       'six' => const Color(0xff38f28b),
@@ -108,8 +112,8 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
             ),
           ),
           _TimelineRail(
-            isFirst: widget.isFirst,
-            isLast: widget.isLast,
+            isFirst: isFirst,
+            isLast: isLast,
             width: compact ? 42 : 46,
             child: MDBallChip(
               label: ballLabel,
@@ -139,17 +143,16 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
                         const Spacer(),
                         if (text.isNotEmpty)
                           _ExpandChevron(
-                            expanded: _expanded,
-                            onTap: () =>
-                                setState(() => _expanded = !_expanded),
+                            expanded: expanded,
+                            onTap: onToggleExpanded,
                           ),
                       ],
                     ),
                     if (text.isNotEmpty) ...[
                       const SizedBox(height: 7),
                       Text(text,
-                          maxLines: _expanded ? null : 3,
-                          overflow: _expanded
+                          maxLines: expanded ? null : 3,
+                          overflow: expanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
                           style: TextStyle(
@@ -191,8 +194,8 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
           // No fake over/team for notes — just a clean spacer.
           const SizedBox(width: 40),
           _TimelineRail(
-            isFirst: widget.isFirst,
-            isLast: widget.isLast,
+            isFirst: isFirst,
+            isLast: isLast,
             child: Container(
               width: 16,
               height: 16,
@@ -224,17 +227,16 @@ class _CommentaryTimelineItemState extends State<_CommentaryTimelineItem> {
                         const Spacer(),
                         if (text.isNotEmpty)
                           _ExpandChevron(
-                            expanded: _expanded,
-                            onTap: () =>
-                                setState(() => _expanded = !_expanded),
+                            expanded: expanded,
+                            onTap: onToggleExpanded,
                           ),
                       ],
                     ),
                     if (text.isNotEmpty) ...[
                       const SizedBox(height: 7),
                       Text(text,
-                          maxLines: _expanded ? null : 3,
-                          overflow: _expanded
+                          maxLines: expanded ? null : 3,
+                          overflow: expanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
                           style: TextStyle(

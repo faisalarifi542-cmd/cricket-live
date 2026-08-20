@@ -1,5 +1,8 @@
 part of '../match_details_screen.dart';
 
+/// Loading/error/data wrapper for a tab body. Returns a **sliver** so the
+/// commentary tab can contribute a lazily-built `SliverList` to the parent
+/// viewport (see `_CommentaryPanel`).
 class _ApiMatchTabFutureContent extends StatelessWidget {
   const _ApiMatchTabFutureContent(
       {required this.tab,
@@ -22,17 +25,23 @@ class _ApiMatchTabFutureContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // `FutureBuilder` is a composite widget with no render object of its own, so
+    // returning slivers from its builder makes it a valid sliver child.
     return FutureBuilder<ApiEnvelope<Map<String, dynamic>>>(
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 28),
-            child: Center(child: CircularProgressIndicator()),
+          return const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: Center(child: CircularProgressIndicator()),
+            ),
           );
         }
         if (snapshot.hasError) {
-          return _MatchTabErrorCard(error: snapshot.error);
+          return SliverToBoxAdapter(
+            child: _MatchTabErrorCard(error: snapshot.error),
+          );
         }
         final data = snapshot.data?.data ?? const <String, dynamic>{};
         return _ApiMatchTabDataContent(
@@ -77,6 +86,18 @@ class _ApiMatchTabDataContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Returns a SLIVER. Only the Commentary tab is sliver-native (it needs to be,
+    // so its rows build lazily against the parent viewport); the other five tabs
+    // stay ordinary box widgets and are adapted here, leaving their internals
+    // untouched.
+    if (tab == 4 && data.isNotEmpty) {
+      return _CommentaryPanel(data: data, matchStatus: matchStatus);
+    }
+    return SliverToBoxAdapter(child: _boxBody(context));
+  }
+
+  /// The five box-based tab bodies. Commentary (4) never reaches this.
+  Widget _boxBody(BuildContext context) {
     // The Live tab manages its own empty state and also draws from
     // summaryData, so it must build even when the live-center payload is empty.
     if (tab == 1) {
@@ -104,7 +125,6 @@ class _ApiMatchTabDataContent extends StatelessWidget {
       0 => _InfoPanel(data: data),
       2 => _ScorecardPanel(data: data, matchStatus: matchStatus),
       3 => _SquadsPanel(data: data),
-      4 => _CommentaryPanel(data: data, matchStatus: matchStatus),
       _ => _OversPanel(data: data),
     };
   }
@@ -731,6 +751,15 @@ class _YetToBatCard extends StatelessWidget {
   }
 }
 
+/// Commentary tab body. Returns a **sliver**, not a box.
+///
+/// PERF (M7): the rows used to be emitted by a `for` loop inside a `Column`,
+/// which sat inside a single child of the parent `ListView`. That materialised
+/// every row up front — measured 80 rows / ~3 971 RenderObjects, growing to
+/// 160 / ~7 415 after one "View More" — and every 5s poll rebuilt all of them.
+/// Emitting a `SliverList.builder` into the parent's own viewport instead means
+/// only the rows near the viewport are ever built, so cost scales with the
+/// screen rather than with the length of the feed.
 class _CommentaryPanel extends StatefulWidget {
   const _CommentaryPanel({required this.data, this.matchStatus});
 
@@ -746,6 +775,27 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
   int _shown = 80;
 
   static const _pageSize = 80;
+
+  /// Which rows the user expanded, keyed by the item's canonical identity
+  /// (innings + over.ball) rather than by index.
+  ///
+  /// This state CANNOT live in the row widget any more: rows are built lazily,
+  /// so a row's `State` is discarded the moment it scrolls out of view and the
+  /// expansion would silently collapse. Keying by identity also fixes a latent
+  /// bug in the old positional behaviour — when a poll prepended a new ball, the
+  /// expanded flag stayed on the same *index*, so it jumped to a different
+  /// delivery. Now it follows the delivery the user actually opened.
+  final Set<String> _expandedKeys = <String>{};
+
+  bool _isExpanded(Map<String, dynamic> row) =>
+      _expandedKeys.contains(CommentaryCache.instance.identityFor(row));
+
+  void _toggleExpanded(Map<String, dynamic> row) {
+    final key = CommentaryCache.instance.identityFor(row);
+    setState(() {
+      if (!_expandedKeys.remove(key)) _expandedKeys.add(key);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -785,11 +835,13 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
           widget.matchStatus!.toLowerCase() == 'scheduled' ||
           widget.matchStatus!.toLowerCase() == 'not_started';
 
-      return _MatchDataStateCard(
-        icon: Icons.chat_bubble_outline_rounded,
-        text: isUpcoming
-            ? 'Commentary will appear when the match starts.'
-            : 'Commentary is not available from the provider yet.',
+      return SliverToBoxAdapter(
+        child: _MatchDataStateCard(
+          icon: Icons.chat_bubble_outline_rounded,
+          text: isUpcoming
+              ? 'Commentary will appear when the match starts.'
+              : 'Commentary is not available from the provider yet.',
+        ),
       );
     }
 
@@ -803,35 +855,56 @@ class _CommentaryPanelState extends State<_CommentaryPanel> {
     final visible = filtered.length > _shown ? _shown : filtered.length;
     final hasMore = filtered.length > visible;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ScrollableSegmentedTabs(
-          items: const ['All', 'Wickets', 'Boundaries', 'Key Events'],
-          selected: filter,
-          onChanged: (value) => setState(() {
-            filter = value;
-            _shown = _pageSize; // reset paging when switching filters
-          }),
-          height: 44,
-        ),
-        const SizedBox(height: 12),
-        if (filtered.isEmpty)
-          _MatchDataStateCard(
-              icon: Icons.filter_alt_off_rounded, text: emptyText),
-        for (var i = 0; i < visible; i++)
-          _CommentaryTimelineItem(
-            row: apiMap(filtered[i]),
-            isFirst: i == 0,
-            isLast: i == visible - 1,
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ScrollableSegmentedTabs(
+                items: const ['All', 'Wickets', 'Boundaries', 'Key Events'],
+                selected: filter,
+                onChanged: (value) => setState(() {
+                  filter = value;
+                  _shown = _pageSize; // reset paging when switching filters
+                }),
+                height: 44,
+              ),
+              const SizedBox(height: 12),
+              if (filtered.isEmpty)
+                _MatchDataStateCard(
+                    icon: Icons.filter_alt_off_rounded, text: emptyText),
+            ],
           ),
+        ),
+        // THE FIX: lazily built rows. `itemBuilder` is only invoked for indices
+        // near the viewport, so an 80- or 160-item feed mounts the same handful
+        // of rows. Keys are the canonical item identity so that when a poll
+        // prepends a newer ball, Flutter re-associates existing elements with
+        // their own row instead of shifting every row's content up by one.
+        SliverList.builder(
+          itemCount: visible,
+          itemBuilder: (context, i) {
+            final row = apiMap(filtered[i]);
+            return _CommentaryTimelineItem(
+              key: ValueKey(CommentaryCache.instance.identityFor(row)),
+              row: row,
+              isFirst: i == 0,
+              isLast: i == visible - 1,
+              expanded: _isExpanded(row),
+              onToggleExpanded: () => _toggleExpanded(row),
+            );
+          },
+        ),
         if (hasMore)
-          Padding(
-            padding: const EdgeInsets.only(top: 4, bottom: 4),
-            child: MDViewMore(
-              label: 'View More Commentary',
-              icon: Icons.keyboard_arrow_down_rounded,
-              onTap: () => setState(() => _shown += _pageSize),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: MDViewMore(
+                label: 'View More Commentary',
+                icon: Icons.keyboard_arrow_down_rounded,
+                onTap: () => setState(() => _shown += _pageSize),
+              ),
             ),
           ),
       ],
